@@ -21,6 +21,9 @@ function rowToClient(row: Record<string, unknown>): Client {
     color: row.color as string,
     invoiceEmail: row.invoice_email as string,
     invoiceScheduleWeeks: row.invoice_schedule_weeks as number | null,
+    invoiceScheduleAnchor: (row.invoice_schedule_anchor as string | null) ?? null,
+    invoiceScheduleEnabled: (row.invoice_schedule_enabled as boolean) ?? false,
+    invoiceScheduleAutoSend: (row.invoice_schedule_auto_send as boolean) ?? true,
     lastInvoiceSent: row.last_invoice_sent as string | null,
     createdAt: row.created_at as string,
   }
@@ -34,6 +37,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     rate: Number(row.rate),
     currency: row.currency as string,
     status: row.status as Project["status"],
+    color: (row.color as string) ?? "",
     createdAt: row.created_at as string,
   }
 }
@@ -82,6 +86,13 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     payoutCurrency: (row.payout_currency as string) ?? "USD",
     payoutMinAmount: Number(row.payout_min_amount ?? 50),
     payoutNotes: (row.payout_notes as string) ?? "",
+    emailSubject: (row.email_subject as string) ?? "",
+    emailGreeting: (row.email_greeting as string) ?? "",
+    emailSignature: (row.email_signature as string) ?? "",
+    emailAccentColor: (row.email_accent_color as string) ?? "#111827",
+    emailFromAddress: (row.email_from_address as string) ?? "",
+    timezone: (row.timezone as string) ?? "",
+    defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
   }
 }
 
@@ -153,6 +164,9 @@ export class SupabaseProvider implements DataProvider {
         color: client.color,
         invoice_email: client.invoiceEmail,
         invoice_schedule_weeks: client.invoiceScheduleWeeks,
+        invoice_schedule_anchor: client.invoiceScheduleAnchor,
+        invoice_schedule_enabled: client.invoiceScheduleEnabled ?? false,
+        invoice_schedule_auto_send: client.invoiceScheduleAutoSend ?? true,
       })
       .select()
       .single()
@@ -171,6 +185,12 @@ export class SupabaseProvider implements DataProvider {
       row.invoice_email = updates.invoiceEmail
     if (updates.invoiceScheduleWeeks !== undefined)
       row.invoice_schedule_weeks = updates.invoiceScheduleWeeks
+    if (updates.invoiceScheduleAnchor !== undefined)
+      row.invoice_schedule_anchor = updates.invoiceScheduleAnchor
+    if (updates.invoiceScheduleEnabled !== undefined)
+      row.invoice_schedule_enabled = updates.invoiceScheduleEnabled
+    if (updates.invoiceScheduleAutoSend !== undefined)
+      row.invoice_schedule_auto_send = updates.invoiceScheduleAutoSend
     if (updates.lastInvoiceSent !== undefined)
       row.last_invoice_sent = updates.lastInvoiceSent
     const { error } = await this.db.from("clients").update(row).eq("id", id)
@@ -212,6 +232,7 @@ export class SupabaseProvider implements DataProvider {
         rate: project.rate,
         currency: project.currency,
         status: project.status,
+        color: project.color ?? "",
       })
       .select()
       .single()
@@ -226,6 +247,7 @@ export class SupabaseProvider implements DataProvider {
     if (updates.rate !== undefined) row.rate = updates.rate
     if (updates.currency !== undefined) row.currency = updates.currency
     if (updates.status !== undefined) row.status = updates.status
+    if (updates.color !== undefined) row.color = updates.color
     const { error } = await this.db.from("projects").update(row).eq("id", id)
     if (error) throw error
   }
@@ -374,6 +396,19 @@ export class SupabaseProvider implements DataProvider {
       row.payout_min_amount = updates.payoutMinAmount
     if (updates.payoutNotes !== undefined)
       row.payout_notes = updates.payoutNotes
+    if (updates.emailSubject !== undefined)
+      row.email_subject = updates.emailSubject
+    if (updates.emailGreeting !== undefined)
+      row.email_greeting = updates.emailGreeting
+    if (updates.emailSignature !== undefined)
+      row.email_signature = updates.emailSignature
+    if (updates.emailAccentColor !== undefined)
+      row.email_accent_color = updates.emailAccentColor
+    if (updates.emailFromAddress !== undefined)
+      row.email_from_address = updates.emailFromAddress
+    if (updates.timezone !== undefined) row.timezone = updates.timezone
+    if (updates.defaultInvoiceDueDays !== undefined)
+      row.default_invoice_due_days = updates.defaultInvoiceDueDays
     const { error } = await this.db
       .from("settings")
       .update(row)

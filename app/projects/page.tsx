@@ -55,7 +55,22 @@ const emptyForm = {
   rate: "",
   currency: "USD",
   status: "active" as Project["status"],
+  color: "",
 }
+
+const PROJECT_COLORS = [
+  "",
+  "#6366f1",
+  "#8b5cf6",
+  "#ec4899",
+  "#f43f5e",
+  "#f97316",
+  "#eab308",
+  "#22c55e",
+  "#14b8a6",
+  "#06b6d4",
+  "#3b82f6",
+]
 
 const statusStyles: Record<Project["status"], string> = {
   active: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -93,6 +108,7 @@ export default function ProjectsPage() {
       rate: project.rate.toString(),
       currency: project.currency,
       status: project.status,
+      color: project.color ?? "",
     })
     setDialogOpen(true)
   }
@@ -112,6 +128,7 @@ export default function ProjectsPage() {
       rate: parseFloat(form.rate) || 0,
       currency: form.currency,
       status: form.status,
+      color: form.color,
     }
     if (editing) {
       await updateProject(editing.id, payload)
@@ -200,12 +217,13 @@ export default function ProjectsPage() {
                   <TableRow key={project.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        {client && (
-                          <div
-                            className="size-2 rounded-full"
-                            style={{ backgroundColor: client.color }}
-                          />
-                        )}
+                        <div
+                          className="size-2 rounded-full"
+                          style={{
+                            backgroundColor:
+                              project.color || client?.color || "transparent",
+                          }}
+                        />
                         <span className="font-medium">{project.name}</span>
                       </div>
                     </TableCell>
@@ -345,6 +363,46 @@ export default function ProjectsPage() {
                   <SelectItem value="on-hold">On Hold</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Color</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                {PROJECT_COLORS.map((color) => {
+                  const isClientFallback = color === ""
+                  const fallbackClientColor = getClient(form.clientId)?.color
+                  const display = isClientFallback
+                    ? fallbackClientColor
+                    : color
+                  const selected = form.color === color
+                  return (
+                    <button
+                      key={color || "client-default"}
+                      type="button"
+                      onClick={() => setForm({ ...form, color })}
+                      title={isClientFallback ? "Use client color" : color}
+                      className="relative size-7 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all"
+                      style={{
+                        backgroundColor: display ?? "transparent",
+                        backgroundImage: isClientFallback && !display
+                          ? "repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.2) 3px, rgba(255,255,255,0.2) 6px)"
+                          : undefined,
+                        ["--tw-ring-color" as string]: selected
+                          ? display ?? "var(--foreground)"
+                          : "transparent",
+                      }}
+                    >
+                      {isClientFallback && (
+                        <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-white/80">
+                          C
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                <span className="font-mono">C</span> = inherit from client.
+              </p>
             </div>
           </div>
           <DialogFooter>

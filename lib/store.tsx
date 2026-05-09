@@ -21,6 +21,7 @@ import type {
 } from "./types"
 import { defaultSettings } from "./types"
 import { getDataProvider } from "./db"
+import { localDateString } from "./datetime"
 
 const TIMER_KEY = "timetracker-active-timer"
 
@@ -346,7 +347,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       endTime: now.toISOString(),
       duration,
       billable: current.billable,
-      date: start.toISOString().split("T")[0],
+      date: localDateString(start, data.settings.timezone),
     })
 
     if (typeof window !== "undefined") {
@@ -354,7 +355,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     setData((d) => ({ ...d, activeTimer: null }))
     return entry
-  }, [data.activeTimer, addTimeEntry])
+  }, [data.activeTimer, data.settings.timezone, addTimeEntry])
 
   const clearTimer = useCallback(() => {
     if (typeof window !== "undefined") {

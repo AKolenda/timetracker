@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -47,6 +48,9 @@ const emptyForm = {
   color: CLIENT_COLORS[0],
   invoiceEmail: "",
   invoiceScheduleWeeks: "" as string,
+  invoiceScheduleEnabled: false,
+  invoiceScheduleAnchor: "" as string,
+  invoiceScheduleAutoSend: true,
 }
 
 export default function ClientsPage() {
@@ -72,6 +76,9 @@ export default function ClientsPage() {
       color: client.color,
       invoiceEmail: client.invoiceEmail ?? "",
       invoiceScheduleWeeks: client.invoiceScheduleWeeks?.toString() ?? "",
+      invoiceScheduleEnabled: client.invoiceScheduleEnabled ?? false,
+      invoiceScheduleAnchor: client.invoiceScheduleAnchor ?? "",
+      invoiceScheduleAutoSend: client.invoiceScheduleAutoSend ?? true,
     })
     setDialogOpen(true)
   }
@@ -91,6 +98,9 @@ export default function ClientsPage() {
       invoiceScheduleWeeks: form.invoiceScheduleWeeks
         ? parseInt(form.invoiceScheduleWeeks)
         : null,
+      invoiceScheduleAnchor: form.invoiceScheduleAnchor || null,
+      invoiceScheduleEnabled: form.invoiceScheduleEnabled,
+      invoiceScheduleAutoSend: form.invoiceScheduleAutoSend,
       lastInvoiceSent: null as string | null,
     }
     if (editing) {
@@ -186,6 +196,13 @@ export default function ClientsPage() {
                     <span>{projects.length} projects</span>
                     {client.phone && <span>{client.phone}</span>}
                   </div>
+                  {client.invoiceScheduleEnabled && client.invoiceScheduleWeeks ? (
+                    <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                      <span className="size-1.5 rounded-full bg-emerald-500" />
+                      Auto-invoice every {client.invoiceScheduleWeeks}w
+                      {!client.invoiceScheduleAutoSend && " (draft only)"}
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             )
@@ -250,20 +267,77 @@ export default function ClientsPage() {
                 placeholder="billing@acme.com"
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="schedule-weeks">
-                Auto-Invoice Every (weeks)
-              </Label>
-              <Input
-                id="schedule-weeks"
-                type="number"
-                min="1"
-                value={form.invoiceScheduleWeeks}
-                onChange={(e) =>
-                  setForm({ ...form, invoiceScheduleWeeks: e.target.value })
-                }
-                placeholder="e.g. 2"
-              />
+            <div className="grid gap-3 rounded-md border p-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="schedule-enabled"
+                  checked={form.invoiceScheduleEnabled}
+                  onCheckedChange={(v) =>
+                    setForm({ ...form, invoiceScheduleEnabled: !!v })
+                  }
+                  className="mt-0.5"
+                />
+                <div className="grid gap-0.5">
+                  <Label htmlFor="schedule-enabled" className="text-sm font-medium">
+                    Auto-invoice on a schedule
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Automatically build an invoice from billable time + uninvoiced expenses on the chosen interval.
+                  </p>
+                </div>
+              </div>
+              {form.invoiceScheduleEnabled && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="schedule-weeks" className="text-xs">
+                        Every (weeks)
+                      </Label>
+                      <Input
+                        id="schedule-weeks"
+                        type="number"
+                        min="1"
+                        value={form.invoiceScheduleWeeks}
+                        onChange={(e) =>
+                          setForm({ ...form, invoiceScheduleWeeks: e.target.value })
+                        }
+                        placeholder="2"
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="schedule-anchor" className="text-xs">
+                        First send date
+                      </Label>
+                      <Input
+                        id="schedule-anchor"
+                        type="date"
+                        value={form.invoiceScheduleAnchor}
+                        onChange={(e) =>
+                          setForm({ ...form, invoiceScheduleAnchor: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id="schedule-autosend"
+                      checked={form.invoiceScheduleAutoSend}
+                      onCheckedChange={(v) =>
+                        setForm({ ...form, invoiceScheduleAutoSend: !!v })
+                      }
+                      className="mt-0.5"
+                    />
+                    <div className="grid gap-0.5">
+                      <Label htmlFor="schedule-autosend" className="text-sm font-medium">
+                        Email automatically
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Off → invoice is created as a draft for you to review.
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             <div className="grid gap-2">
               <Label>Color</Label>

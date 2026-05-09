@@ -8,6 +8,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { StoreProvider } from "@/lib/store"
 import { Toaster } from "@/components/ui/sonner"
+import { TimerTabIndicator } from "@/components/timer-tab-indicator"
 import { cn } from "@/lib/utils"
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
@@ -37,6 +38,7 @@ export default function RootLayout({
         <ThemeProvider>
           <TooltipProvider>
             <StoreProvider>
+              <TimerTabIndicator />
               <SidebarProvider>
                 <AppSidebar />
                 <SidebarInset className="min-w-0">

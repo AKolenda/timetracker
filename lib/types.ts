@@ -7,6 +7,9 @@ export interface Client {
   color: string
   invoiceEmail: string
   invoiceScheduleWeeks: number | null
+  invoiceScheduleAnchor: string | null
+  invoiceScheduleEnabled: boolean
+  invoiceScheduleAutoSend: boolean
   lastInvoiceSent: string | null
   createdAt: string
 }
@@ -18,6 +21,7 @@ export interface Project {
   rate: number
   currency: string
   status: "active" | "completed" | "on-hold"
+  color: string
   createdAt: string
 }
 
@@ -67,6 +71,13 @@ export interface Settings {
   payoutCurrency: string
   payoutMinAmount: number
   payoutNotes: string
+  emailSubject: string
+  emailGreeting: string
+  emailSignature: string
+  emailAccentColor: string
+  emailFromAddress: string
+  timezone: string
+  defaultInvoiceDueDays: number
 }
 
 export interface Invoice {
@@ -122,4 +133,11 @@ export const defaultSettings: Settings = {
   payoutCurrency: "USD",
   payoutMinAmount: 50,
   payoutNotes: "",
+  emailSubject: "Invoice {{invoiceNumber}} from {{businessName}}",
+  emailGreeting: "Hi {{clientName}},\n\nPlease find your invoice below. Let me know if you have any questions.",
+  emailSignature: "Thanks,\n{{businessName}}",
+  emailAccentColor: "#111827",
+  emailFromAddress: "",
+  timezone: "",
+  defaultInvoiceDueDays: 30,
 }

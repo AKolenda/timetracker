@@ -156,6 +156,28 @@ export default function TrackerPage() {
     toast("Timer discarded")
   }
 
+  function handleResume(entry: TimeEntry) {
+    if (activeTimer) {
+      toast.error("Stop the running timer first")
+      return
+    }
+    const project = getProject(entry.projectId)
+    if (!project || project.status !== "active") {
+      toast.error("Project is not active")
+      return
+    }
+    startTimer({
+      projectId: entry.projectId,
+      description: entry.description,
+      startTime: new Date().toISOString(),
+      billable: entry.billable,
+    })
+    setTimerProject(entry.projectId)
+    setTimerDesc(entry.description)
+    setTimerBillable(entry.billable)
+    toast.success(`Resumed: ${entry.description || project.name}`)
+  }
+
   async function handleManualSave() {
     if (!manualForm.projectId) {
       toast.error("Select a project")
@@ -392,7 +414,9 @@ export default function TrackerPage() {
             </p>
           </CardContent>
         ) : (
-          <Table>
+          <CardContent className="pb-4">
+            <div className="overflow-hidden rounded-lg border">
+              <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Description</TableHead>
@@ -400,7 +424,7 @@ export default function TrackerPage() {
                 <TableHead>Date</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead>Amount</TableHead>
-                <TableHead className="w-16" />
+                <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -460,6 +484,19 @@ export default function TrackerPage() {
                         <Button
                           variant="ghost"
                           size="icon-xs"
+                          onClick={() => handleResume(entry)}
+                          disabled={!!activeTimer}
+                          title={
+                            activeTimer
+                              ? "Stop the running timer first"
+                              : "Resume this work"
+                          }
+                        >
+                          <Play className="size-3.5 fill-current" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
                           onClick={() => openEdit(entry)}
                         >
                           <Pencil className="size-3.5" />
@@ -477,7 +514,9 @@ export default function TrackerPage() {
                 )
               })}
             </TableBody>
-          </Table>
+              </Table>
+            </div>
+          </CardContent>
         )}
       </Card>
 

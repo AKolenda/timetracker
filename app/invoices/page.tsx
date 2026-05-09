@@ -134,7 +134,7 @@ export default function InvoicesPage() {
     setSelectedClientId(data.clients[0]?.id ?? "")
     setTaxRate("0")
     setNotes("")
-    setDueDays("30")
+    setDueDays(String(data.settings.defaultInvoiceDueDays ?? 30))
     setSelectedEntries(new Set())
     setSelectedExpenses(new Set())
     setCreateOpen(true)
@@ -225,7 +225,9 @@ export default function InvoicesPage() {
 
     const invoiceNumber = `${data.settings.invoicePrefix}${data.settings.nextInvoiceNumber}`
     const today = format(new Date(), "yyyy-MM-dd")
-    const due = format(addDays(new Date(), parseInt(dueDays) || 30), "yyyy-MM-dd")
+    const parsedDueDays = parseInt(dueDays)
+    const dueOffset = Number.isFinite(parsedDueDays) ? parsedDueDays : 30
+    const due = format(addDays(new Date(), dueOffset), "yyyy-MM-dd")
 
     await addInvoice(
       {
@@ -475,7 +477,7 @@ export default function InvoicesPage() {
 
       {/* Create Invoice Dialog — full-width responsive */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Invoice</DialogTitle>
           </DialogHeader>
@@ -515,11 +517,18 @@ export default function InvoicesPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="due-days">Due in (days)</Label>
+                <Label htmlFor="due-days">
+                  Due in (days)
+                  {dueDays === "0" && (
+                    <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                      on receipt
+                    </span>
+                  )}
+                </Label>
                 <Input
                   id="due-days"
                   type="number"
-                  min="1"
+                  min="0"
                   value={dueDays}
                   onChange={(e) => setDueDays(e.target.value)}
                 />
@@ -803,7 +812,7 @@ export default function InvoicesPage() {
         open={!!previewInvoice}
         onOpenChange={(open) => !open && setPreviewInvoice(null)}
       >
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0">
+        <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto p-0">
           {previewInvoice && (
             <InvoicePreview
               invoice={previewInvoice}

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
-import { formatCurrency } from "@/lib/format"
+import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
 
 export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY) {
@@ -58,136 +58,65 @@ export async function POST(request: Request) {
     )
   }
 
-  const fromEmail = settings?.business_email || "invoices@timetracker.app"
+  const fromAddress =
+    settings?.email_from_address || settings?.business_email || "invoices@resend.dev"
   const businessName = settings?.business_name || "TimeTracker"
 
-  const itemsHtml = (lineItems ?? [])
-    .map(
-      (item: Record<string, unknown>) => `
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;">
-          ${item.description}
-        </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;">
-          ${item.quantity}
-        </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;">
-          ${formatCurrency(Number(item.unit_price))}
-        </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;font-weight:500;">
-          ${formatCurrency(Number(item.amount))}
-        </td>
-      </tr>`
-    )
-    .join("")
-
-  let remittanceHtml = ""
-  if (settings?.remittance_first_name || settings?.remittance_bank_name) {
-    const lines: string[] = []
-    if (settings.remittance_first_name || settings.remittance_last_name) {
-      lines.push(
-        `<strong>Pay to:</strong> ${settings.remittance_first_name} ${settings.remittance_last_name}`
-      )
-    }
-    if (settings.remittance_bank_name)
-      lines.push(`<strong>Bank:</strong> ${settings.remittance_bank_name}`)
-    if (settings.remittance_routing_number)
-      lines.push(
-        `<strong>Routing:</strong> ${settings.remittance_routing_number}`
-      )
-    if (settings.remittance_account_number)
-      lines.push(
-        `<strong>Account:</strong> ${settings.remittance_account_number}`
-      )
-    if (settings.remittance_notes) lines.push(settings.remittance_notes)
-
-    remittanceHtml = `
-      <div style="margin-top:24px;padding:16px;border:2px dashed #d1d5db;border-radius:8px;">
-        <p style="margin:0 0 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#6b7280;">
-          Remittance Information
-        </p>
-        ${lines.map((l) => `<p style="margin:4px 0;font-size:14px;">${l}</p>`).join("")}
-      </div>`
+  const data: EmailInvoiceData = {
+    invoiceNumber: invoice.invoice_number,
+    issueDate: invoice.issue_date,
+    dueDate: invoice.due_date,
+    subtotal: Number(invoice.subtotal),
+    tax: Number(invoice.tax),
+    total: Number(invoice.total),
+    notes: invoice.notes ?? "",
+    lineItems: (lineItems ?? []).map((item) => ({
+      description: String(item.description),
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unit_price),
+      amount: Number(item.amount),
+    })),
+    client: {
+      name: client.name,
+      email: recipientEmail,
+    },
+    business: {
+      name: businessName,
+      email: settings?.business_email ?? "",
+      phone: settings?.business_phone ?? "",
+      address: settings?.business_address ?? "",
+    },
+    remittance: {
+      firstName: settings?.remittance_first_name,
+      lastName: settings?.remittance_last_name,
+      bankName: settings?.remittance_bank_name,
+      routingNumber: settings?.remittance_routing_number,
+      accountNumber: settings?.remittance_account_number,
+      notes: settings?.remittance_notes,
+    },
+    template: {
+      subject:
+        settings?.email_subject || "Invoice {{invoiceNumber}} from {{businessName}}",
+      greeting:
+        settings?.email_greeting ||
+        "Hi {{clientName}},\n\nPlease find your invoice below.",
+      signature: settings?.email_signature || "Thanks,\n{{businessName}}",
+      accentColor: settings?.email_accent_color || "#111827",
+    },
   }
 
-  const html = `
-    <div style="max-width:600px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;">
-      <div style="padding:24px 0;border-bottom:2px solid #111827;">
-        <h1 style="margin:0;font-size:20px;">${businessName}</h1>
-        ${settings?.business_email ? `<p style="margin:4px 0 0;font-size:13px;color:#6b7280;">${settings.business_email}</p>` : ""}
-        ${settings?.business_phone ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${settings.business_phone}</p>` : ""}
-      </div>
-
-      <div style="padding:24px 0;">
-        <table style="width:100%;">
-          <tr>
-            <td style="vertical-align:top;">
-              <p style="margin:0;font-size:12px;color:#6b7280;">Bill To</p>
-              <p style="margin:4px 0 0;font-size:15px;font-weight:600;">${client.name}</p>
-              ${client.email ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${client.email}</p>` : ""}
-            </td>
-            <td style="vertical-align:top;text-align:right;">
-              <p style="margin:0;font-size:24px;font-weight:700;font-family:monospace;">${invoice.invoice_number}</p>
-              <p style="margin:4px 0 0;font-size:13px;color:#6b7280;">
-                Issued: ${invoice.issue_date}<br/>
-                Due: ${invoice.due_date}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </div>
-
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr style="background:#f9fafb;">
-            <th style="padding:8px 12px;text-align:left;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Description</th>
-            <th style="padding:8px 12px;text-align:right;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Qty</th>
-            <th style="padding:8px 12px;text-align:right;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Rate</th>
-            <th style="padding:8px 12px;text-align:right;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Amount</th>
-          </tr>
-        </thead>
-        <tbody>${itemsHtml}</tbody>
-      </table>
-
-      <div style="margin-top:16px;margin-left:auto;width:250px;">
-        <table style="width:100%;">
-          <tr>
-            <td style="padding:4px 0;font-size:14px;color:#6b7280;">Subtotal</td>
-            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${formatCurrency(Number(invoice.subtotal))}</td>
-          </tr>
-          <tr>
-            <td style="padding:4px 0;font-size:14px;color:#6b7280;">Tax</td>
-            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${formatCurrency(Number(invoice.tax))}</td>
-          </tr>
-          <tr style="border-top:2px solid #111827;">
-            <td style="padding:8px 0;font-size:16px;font-weight:700;">Total</td>
-            <td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;font-family:monospace;">${formatCurrency(Number(invoice.total))}</td>
-          </tr>
-        </table>
-      </div>
-
-      ${invoice.notes ? `<div style="margin-top:24px;padding:12px;background:#f9fafb;border-radius:6px;"><p style="margin:0;font-size:13px;color:#6b7280;">${invoice.notes}</p></div>` : ""}
-
-      ${remittanceHtml}
-
-      <p style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;text-align:center;">
-        Generated by ${businessName}
-      </p>
-    </div>
-  `
+  const html = buildEmailHtml(data)
+  const subject = buildSubject(data)
 
   try {
     const { error } = await resend.emails.send({
-      from: `${businessName} <${fromEmail}>`,
+      from: `${businessName} <${fromAddress}>`,
       to: recipientEmail,
-      subject: `Invoice ${invoice.invoice_number} from ${businessName}`,
+      subject,
       html,
     })
     if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
     await supabase

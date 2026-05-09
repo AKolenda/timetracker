@@ -32,6 +32,23 @@ interface DayData {
   hours: number
   entries: number
   paymentsDue: { invoiceNumber: string; total: number }[]
+  scheduledSends: {
+    clientId: string
+    clientName: string
+    color: string
+    autoSend: boolean
+  }[]
+}
+
+function emptyDay(): DayData {
+  return {
+    earnings: 0,
+    expenses: 0,
+    hours: 0,
+    entries: 0,
+    paymentsDue: [],
+    scheduledSends: [],
+  }
 }
 
 export default function CalendarPage() {
@@ -50,13 +67,7 @@ export default function CalendarPage() {
 
     for (const entry of data.timeEntries) {
       const key = entry.date
-      const existing = map.get(key) ?? {
-        earnings: 0,
-        expenses: 0,
-        hours: 0,
-        entries: 0,
-        paymentsDue: [],
-      }
+      const existing = map.get(key) ?? emptyDay()
       existing.hours += entry.duration
       existing.entries += 1
       if (entry.billable) {
@@ -70,13 +81,7 @@ export default function CalendarPage() {
 
     for (const expense of data.expenses) {
       const key = expense.date
-      const existing = map.get(key) ?? {
-        earnings: 0,
-        expenses: 0,
-        hours: 0,
-        entries: 0,
-        paymentsDue: [],
-      }
+      const existing = map.get(key) ?? emptyDay()
       existing.expenses += expense.amount
       map.set(key, existing)
     }
@@ -84,13 +89,7 @@ export default function CalendarPage() {
     for (const invoice of data.invoices) {
       if (invoice.status === "paid") continue
       const key = invoice.dueDate
-      const existing = map.get(key) ?? {
-        earnings: 0,
-        expenses: 0,
-        hours: 0,
-        entries: 0,
-        paymentsDue: [],
-      }
+      const existing = map.get(key) ?? emptyDay()
       existing.paymentsDue.push({
         invoiceNumber: invoice.invoiceNumber,
         total: invoice.total,
@@ -98,8 +97,39 @@ export default function CalendarPage() {
       map.set(key, existing)
     }
 
+    const horizonStart = startOfWeek(startOfMonth(currentMonth))
+    const horizonEnd = endOfWeek(endOfMonth(addMonths(currentMonth, 6)))
+    const ONE_DAY = 86_400_000
+    for (const client of data.clients) {
+      if (!client.invoiceScheduleEnabled || !client.invoiceScheduleWeeks) continue
+      const weeks = client.invoiceScheduleWeeks
+      let next: Date | null = null
+      if (client.lastInvoiceSent) {
+        next = new Date(
+          new Date(client.lastInvoiceSent).getTime() + weeks * 7 * ONE_DAY
+        )
+      } else if (client.invoiceScheduleAnchor) {
+        next = new Date(client.invoiceScheduleAnchor)
+      }
+      if (!next) continue
+      while (next <= horizonEnd) {
+        if (next >= horizonStart) {
+          const key = format(next, "yyyy-MM-dd")
+          const existing = map.get(key) ?? emptyDay()
+          existing.scheduledSends.push({
+            clientId: client.id,
+            clientName: client.name,
+            color: client.color,
+            autoSend: client.invoiceScheduleAutoSend,
+          })
+          map.set(key, existing)
+        }
+        next = new Date(next.getTime() + weeks * 7 * ONE_DAY)
+      }
+    }
+
     return map
-  }, [data.timeEntries, data.expenses, data.invoices, getProject])
+  }, [data.timeEntries, data.expenses, data.invoices, data.clients, getProject, currentMonth])
 
   const monthTotals = useMemo(() => {
     let earnings = 0
@@ -312,6 +342,11 @@ export default function CalendarPage() {
                             Due: {formatCurrency(dayData.paymentsDue.reduce((s, p) => s + p.total, 0))}
                           </div>
                         )}
+                        {dayData.scheduledSends.length > 0 && (
+                          <div className="truncate rounded bg-amber-500/15 px-1 text-[9px] font-medium text-amber-700 dark:text-amber-400">
+                            ✉ Auto-send ({dayData.scheduledSends.length})
+                          </div>
+                        )}
                       </div>
                     )}
                   </button>
@@ -448,6 +483,39 @@ export default function CalendarPage() {
                               </span>
                             </div>
                           ))}
+                        </div>
+                      </>
+                    )}
+
+                  {selectedDayData &&
+                    selectedDayData.scheduledSends.length > 0 && (
+                      <>
+                        <Separator />
+                        <div>
+                          <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                            Automated Email Being Sent
+                          </p>
+                          <div className="space-y-1.5">
+                            {selectedDayData.scheduledSends.map((s) => (
+                              <div
+                                key={s.clientId}
+                                className="flex items-center justify-between gap-2 rounded-md bg-amber-500/10 px-2 py-1.5"
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div
+                                    className="size-2 shrink-0 rounded-full"
+                                    style={{ backgroundColor: s.color }}
+                                  />
+                                  <span className="truncate text-sm font-medium">
+                                    {s.clientName}
+                                  </span>
+                                </div>
+                                <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                                  {s.autoSend ? "Auto-send" : "Draft only"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </>
                     )}
