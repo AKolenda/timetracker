@@ -61,6 +61,7 @@ import {
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
+import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import type { TimeEntry } from "@/lib/types"
 
@@ -215,7 +216,7 @@ export default function TrackerPage() {
       startTime: entry.startTime || "",
       endTime: entry.endTime || "",
       billable: entry.billable,
-      date: new Date(entry.date),
+      date: parseLocalDate(entry.date),
     })
     setEditOpen(true)
   }
@@ -240,7 +241,7 @@ export default function TrackerPage() {
     }
     const startDt = new Date(editForm.startTime)
     const endDt = new Date(editForm.endTime)
-    const dateStr = format(editForm.date, "yyyy-MM-dd")
+    const dateStr = localDateString(new Date(), data.settings.timezone)
 
     await updateTimeEntry(editEntry.id, {
       description: editForm.description,
@@ -428,7 +429,7 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedEntries.map((entry) => {
+              {sortedEntries.map((entry, idx) => {
                 const project = getProject(entry.projectId)
                 const client = project
                   ? getClient(project.clientId)
@@ -437,8 +438,52 @@ export default function TrackerPage() {
                   entry.billable && project
                     ? (entry.duration / 3600) * project.rate
                     : 0
+                const prev = sortedEntries[idx - 1]
+                const showDivider = !prev || prev.date !== entry.date
+                const dayEntries = sortedEntries.filter(
+                  (e) => e.date === entry.date
+                )
+                const dayTotal = dayEntries.reduce(
+                  (sum, e) => sum + e.duration,
+                  0
+                )
+                const dayAmount = dayEntries.reduce((sum, e) => {
+                  const p = getProject(e.projectId)
+                  return e.billable && p
+                    ? sum + (e.duration / 3600) * p.rate
+                    : sum
+                }, 0)
 
-                return (
+                const rows = []
+                if (showDivider) {
+                  rows.push(
+                    <TableRow
+                      key={`divider-${entry.date}`}
+                      className="bg-muted/40 hover:bg-muted/40"
+                    >
+                      <TableCell
+                        colSpan={6}
+                        className="py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span>
+                            {format(parseLocalDate(entry.date), "EEEE, MMM d, yyyy")}
+                          </span>
+                          <span className="font-mono normal-case tracking-normal">
+                            {formatDuration(dayTotal)}
+                            {dayAmount > 0 && (
+                              <>
+                                {" · "}
+                                {formatCurrency(dayAmount, project?.currency)}
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                }
+                rows.push(
                   <TableRow key={entry.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -469,7 +514,7 @@ export default function TrackerPage() {
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(new Date(entry.date), "MMM d, yyyy")}
+                      {format(parseLocalDate(entry.date), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {formatDuration(entry.duration)}
@@ -512,6 +557,7 @@ export default function TrackerPage() {
                     </TableCell>
                   </TableRow>
                 )
+                return rows
               })}
             </TableBody>
               </Table>
@@ -785,35 +831,9 @@ export default function TrackerPage() {
                 {editDuration > 0 ? formatDuration(editDuration) : "—"}
               </span>
             </div>
-            <div className="grid gap-2">
-              <Label>Date</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "justify-start text-left font-normal",
-                      !editForm.date && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="size-4" data-icon="inline-start" />
-                    {editForm.date
-                      ? format(editForm.date, "PPP")
-                      : "Pick a date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={editForm.date}
-                    onSelect={(d) =>
-                      d && setEditForm({ ...editForm, date: d })
-                    }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Saving will move this entry to today&apos;s date.
+            </p>
             <div className="flex items-center gap-2">
               <Checkbox
                 id="edit-billable"

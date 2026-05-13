@@ -1,3 +1,11 @@
+// Parse a "YYYY-MM-DD" date string as a local-midnight Date.
+// new Date("YYYY-MM-DD") parses as UTC midnight, which shifts to the previous
+// day when rendered in negative-UTC timezones. Use this for display parsing.
+export function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number)
+  return new Date(y, (m || 1) - 1, d || 1)
+}
+
 // Returns YYYY-MM-DD for the given Date in the given IANA timezone.
 // Empty / invalid timezone falls back to the browser's local timezone.
 export function localDateString(date: Date, timezone?: string): string {
