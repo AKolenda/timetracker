@@ -201,6 +201,7 @@ export default function SettingsPage() {
       />
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6">
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium">
@@ -278,6 +279,98 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">
+              Remittance Information
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              This information appears on your invoices so clients know how to pay you
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="rem-first">First Name</Label>
+                <Input
+                  id="rem-first"
+                  value={form.remittanceFirstName}
+                  onChange={(e) =>
+                    setForm({ ...form, remittanceFirstName: e.target.value })
+                  }
+                  placeholder="John"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="rem-last">Last Name</Label>
+                <Input
+                  id="rem-last"
+                  value={form.remittanceLastName}
+                  onChange={(e) =>
+                    setForm({ ...form, remittanceLastName: e.target.value })
+                  }
+                  placeholder="Doe"
+                />
+              </div>
+            </div>
+            <Separator />
+            <div className="grid gap-2">
+              <Label htmlFor="rem-bank">Bank Name</Label>
+              <Input
+                id="rem-bank"
+                value={form.remittanceBankName}
+                onChange={(e) =>
+                  setForm({ ...form, remittanceBankName: e.target.value })
+                }
+                placeholder="Chase Bank"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="rem-routing">Routing Number</Label>
+                <Input
+                  id="rem-routing"
+                  value={form.remittanceRoutingNumber}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      remittanceRoutingNumber: e.target.value,
+                    })
+                  }
+                  placeholder="021000021"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="rem-account">Account Number</Label>
+                <Input
+                  id="rem-account"
+                  value={form.remittanceAccountNumber}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      remittanceAccountNumber: e.target.value,
+                    })
+                  }
+                  placeholder="123456789"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="rem-notes">Additional Notes</Label>
+              <Textarea
+                id="rem-notes"
+                value={form.remittanceNotes}
+                onChange={(e) =>
+                  setForm({ ...form, remittanceNotes: e.target.value })
+                }
+                placeholder="Wire transfer instructions, Zelle info, etc."
+                rows={3}
+              />
+            </div>
+          </CardContent>
+        </Card>
+        </div>
 
         <div className="grid gap-6">
           <Card>
@@ -611,96 +704,6 @@ export default function SettingsPage() {
           </Card>
         </div>
 
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">
-              Remittance Information
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              This information appears on your invoices so clients know how to pay you
-            </p>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="rem-first">First Name</Label>
-                <Input
-                  id="rem-first"
-                  value={form.remittanceFirstName}
-                  onChange={(e) =>
-                    setForm({ ...form, remittanceFirstName: e.target.value })
-                  }
-                  placeholder="John"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="rem-last">Last Name</Label>
-                <Input
-                  id="rem-last"
-                  value={form.remittanceLastName}
-                  onChange={(e) =>
-                    setForm({ ...form, remittanceLastName: e.target.value })
-                  }
-                  placeholder="Doe"
-                />
-              </div>
-            </div>
-            <Separator />
-            <div className="grid gap-2">
-              <Label htmlFor="rem-bank">Bank Name</Label>
-              <Input
-                id="rem-bank"
-                value={form.remittanceBankName}
-                onChange={(e) =>
-                  setForm({ ...form, remittanceBankName: e.target.value })
-                }
-                placeholder="Chase Bank"
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="rem-routing">Routing Number</Label>
-                <Input
-                  id="rem-routing"
-                  value={form.remittanceRoutingNumber}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      remittanceRoutingNumber: e.target.value,
-                    })
-                  }
-                  placeholder="021000021"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="rem-account">Account Number</Label>
-                <Input
-                  id="rem-account"
-                  value={form.remittanceAccountNumber}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      remittanceAccountNumber: e.target.value,
-                    })
-                  }
-                  placeholder="123456789"
-                />
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="rem-notes">Additional Notes</Label>
-              <Textarea
-                id="rem-notes"
-                value={form.remittanceNotes}
-                onChange={(e) =>
-                  setForm({ ...form, remittanceNotes: e.target.value })
-                }
-                placeholder="Wire transfer instructions, Zelle info, etc."
-                rows={3}
-              />
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Payout Threshold Dialog */}

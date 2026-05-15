@@ -9,6 +9,7 @@ import {
   Pencil,
   Clock,
   CalendarIcon,
+  ChevronRight,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -127,6 +128,7 @@ export default function TrackerPage() {
   })
 
   const [deleteTarget, setDeleteTarget] = useState<TimeEntry | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   const activeTimer = data.activeTimer
 
@@ -173,6 +175,12 @@ export default function TrackerPage() {
       startTime: new Date().toISOString(),
       billable: entry.billable,
     })
+    // Bump the source entry to today so it sits under today's divider and you
+    // don't have to scroll back to last week to resume it again next time.
+    const today = localDateString(new Date(), data.settings.timezone)
+    if (entry.date !== today) {
+      updateTimeEntry(entry.id, { date: today })
+    }
     setTimerProject(entry.projectId)
     setTimerDesc(entry.description)
     setTimerBillable(entry.billable)
@@ -266,11 +274,32 @@ export default function TrackerPage() {
 
   const sortedEntries = useMemo(
     () =>
-      [...data.timeEntries].sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-      ),
+      [...data.timeEntries].sort((a, b) => {
+        const dateCmp = b.date.localeCompare(a.date)
+        if (dateCmp !== 0) return dateCmp
+        const groupA = `${a.description}\0${a.projectId}`
+        const groupB = `${b.description}\0${b.projectId}`
+        const groupCmp = groupA.localeCompare(groupB)
+        if (groupCmp !== 0) return groupCmp
+        return (b.startTime ?? "").localeCompare(a.startTime ?? "")
+      }),
     [data.timeEntries]
   )
+
+  // Collapse consecutive entries with the same date+description+project into groups
+  const entryGroups = useMemo(() => {
+    const groups: { key: string; date: string; entries: TimeEntry[] }[] = []
+    for (const entry of sortedEntries) {
+      const key = `${entry.date}\0${entry.description}\0${entry.projectId}`
+      const last = groups[groups.length - 1]
+      if (last && last.key === key) {
+        last.entries.push(entry)
+      } else {
+        groups.push({ key, date: entry.date, entries: [entry] })
+      }
+    }
+    return groups
+  }, [sortedEntries])
 
   return (
     <>
@@ -429,36 +458,35 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedEntries.map((entry, idx) => {
-                const project = getProject(entry.projectId)
+              {entryGroups.map((group, gi) => {
+                const first = group.entries[0]
+                const project = getProject(first.projectId)
                 const client = project
                   ? getClient(project.clientId)
                   : undefined
-                const amount =
-                  entry.billable && project
-                    ? (entry.duration / 3600) * project.rate
-                    : 0
-                const prev = sortedEntries[idx - 1]
-                const showDivider = !prev || prev.date !== entry.date
-                const dayEntries = sortedEntries.filter(
-                  (e) => e.date === entry.date
-                )
-                const dayTotal = dayEntries.reduce(
-                  (sum, e) => sum + e.duration,
-                  0
-                )
-                const dayAmount = dayEntries.reduce((sum, e) => {
+                const prevGroup = entryGroups[gi - 1]
+                const showDivider = !prevGroup || prevGroup.date !== group.date
+                const isMulti = group.entries.length > 1
+                const isExpanded = expandedGroups.has(group.key)
+                const totalDuration = group.entries.reduce((s, e) => s + e.duration, 0)
+                const totalAmount = group.entries.reduce((s, e) => {
                   const p = getProject(e.projectId)
-                  return e.billable && p
-                    ? sum + (e.duration / 3600) * p.rate
-                    : sum
+                  return e.billable && p ? s + (e.duration / 3600) * p.rate : s
                 }, 0)
 
-                const rows = []
+                const rows: React.ReactNode[] = []
+
+                {/* Day divider */}
                 if (showDivider) {
+                  const dayEntries = sortedEntries.filter((e) => e.date === group.date)
+                  const dayTotal = dayEntries.reduce((s, e) => s + e.duration, 0)
+                  const dayAmount = dayEntries.reduce((s, e) => {
+                    const p = getProject(e.projectId)
+                    return e.billable && p ? s + (e.duration / 3600) * p.rate : s
+                  }, 0)
                   rows.push(
                     <TableRow
-                      key={`divider-${entry.date}`}
+                      key={`divider-${group.date}`}
                       className="bg-muted/40 hover:bg-muted/40"
                     >
                       <TableCell
@@ -467,7 +495,7 @@ export default function TrackerPage() {
                       >
                         <div className="flex items-center justify-between">
                           <span>
-                            {format(parseLocalDate(entry.date), "EEEE, MMM d, yyyy")}
+                            {format(parseLocalDate(group.date), "EEEE, MMM d, yyyy")}
                           </span>
                           <span className="font-mono normal-case tracking-normal">
                             {formatDuration(dayTotal)}
@@ -483,14 +511,43 @@ export default function TrackerPage() {
                     </TableRow>
                   )
                 }
+
+                {/* Summary row (or single-entry row) */}
                 rows.push(
-                  <TableRow key={entry.id}>
+                  <TableRow
+                    key={`group-${group.key}`}
+                    className={cn(
+                      isMulti && "cursor-pointer select-none",
+                      isMulti && isExpanded && "border-b-0"
+                    )}
+                    onClick={isMulti ? () => setExpandedGroups((prev) => {
+                      const next = new Set(prev)
+                      next.has(group.key) ? next.delete(group.key) : next.add(group.key)
+                      return next
+                    }) : undefined}
+                  >
                     <TableCell>
                       <div className="flex items-center gap-2">
+                        {isMulti && (
+                          <ChevronRight
+                            className={cn(
+                              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                              isExpanded && "rotate-90"
+                            )}
+                          />
+                        )}
                         <span className="font-medium">
-                          {entry.description || "Untitled"}
+                          {first.description || "Untitled"}
                         </span>
-                        {entry.billable && (
+                        {isMulti && (
+                          <Badge
+                            variant="secondary"
+                            className="font-mono text-[10px]"
+                          >
+                            {group.entries.length}
+                          </Badge>
+                        )}
+                        {first.billable && (
                           <Badge
                             variant="secondary"
                             className="bg-emerald-500/10 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
@@ -514,49 +571,110 @@ export default function TrackerPage() {
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(parseLocalDate(entry.date), "MMM d, yyyy")}
+                      {format(parseLocalDate(first.date), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
-                      {formatDuration(entry.duration)}
+                      {formatDuration(isMulti ? totalDuration : first.duration)}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
-                      {amount > 0
-                        ? formatCurrency(amount, project?.currency)
+                      {(isMulti ? totalAmount : (first.billable && project ? (first.duration / 3600) * project.rate : 0)) > 0
+                        ? formatCurrency(
+                            isMulti ? totalAmount : (first.duration / 3600) * (project?.rate ?? 0),
+                            project?.currency
+                          )
                         : "—"}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-0.5">
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => handleResume(entry)}
-                          disabled={!!activeTimer}
-                          title={
-                            activeTimer
-                              ? "Stop the running timer first"
-                              : "Resume this work"
-                          }
-                        >
-                          <Play className="size-3.5 fill-current" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => openEdit(entry)}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => setDeleteTarget(entry)}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
+                      {!isMulti && (
+                        <div className="flex items-center gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => handleResume(first)}
+                            disabled={!!activeTimer}
+                            title={activeTimer ? "Stop the running timer first" : "Resume this work"}
+                          >
+                            <Play className="size-3.5 fill-current" />
+                          </Button>
+                          <Button variant="ghost" size="icon-xs" onClick={() => openEdit(first)}>
+                            <Pencil className="size-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(first)}>
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      )}
+                      {isMulti && !isExpanded && (
+                        <div className="flex items-center gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={(e) => { e.stopPropagation(); handleResume(first) }}
+                            disabled={!!activeTimer}
+                            title={activeTimer ? "Stop the running timer first" : "Resume this work"}
+                          >
+                            <Play className="size-3.5 fill-current" />
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 )
+
+                {/* Expanded sub-rows */}
+                if (isMulti && isExpanded) {
+                  group.entries.forEach((entry) => {
+                    const amt =
+                      entry.billable && project
+                        ? (entry.duration / 3600) * project.rate
+                        : 0
+                    rows.push(
+                      <TableRow key={entry.id} className="bg-muted/20">
+                        <TableCell>
+                          <div className="flex items-center gap-2 pl-5">
+                            <span className="text-sm text-muted-foreground">
+                              {entry.startTime
+                                ? format(new Date(entry.startTime), "h:mm a")
+                                : "—"}
+                              {" → "}
+                              {entry.endTime
+                                ? format(new Date(entry.endTime), "h:mm a")
+                                : "—"}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell />
+                        <TableCell />
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {formatDuration(entry.duration)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {amt > 0 ? formatCurrency(amt, project?.currency) : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => handleResume(entry)}
+                              disabled={!!activeTimer}
+                              title={activeTimer ? "Stop the running timer first" : "Resume this work"}
+                            >
+                              <Play className="size-3.5 fill-current" />
+                            </Button>
+                            <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}>
+                              <Pencil className="size-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(entry)}>
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                }
+
                 return rows
               })}
             </TableBody>

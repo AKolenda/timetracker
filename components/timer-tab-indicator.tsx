@@ -87,7 +87,6 @@ export function TimerTabIndicator() {
     if (!runningFaviconRef.current) {
       runningFaviconRef.current = buildFavicon(true)
     }
-    setFavicon(runningFaviconRef.current)
 
     const project = getProject(timer.projectId)
     const client = project ? getClient(project.clientId) : undefined
@@ -95,15 +94,52 @@ export function TimerTabIndicator() {
       timer.description ||
       "Tracking"
 
+    // Re-apply the favicon on every tick. Chrome's tab-discard / Memory Saver
+    // can wipe the custom favicon (reverting to the HTML default) after the
+    // tab has been backgrounded for several minutes. Re-setting link.href to
+    // the same cached data URL is cheap and keeps the stopwatch sticky.
     const tick = () => {
       const elapsed = Date.now() - new Date(timer.startTime).getTime()
       document.title = `${formatElapsed(elapsed)} — ${label} | ${DEFAULT_TITLE}`
+      if (runningFaviconRef.current) {
+        setFavicon(runningFaviconRef.current)
+      }
     }
 
     tick()
     const id = window.setInterval(tick, 1000)
+
+    // When the tab becomes visible/focused again, force an immediate tick so
+    // we recover instantly from background-timer throttling (Chrome clamps
+    // setInterval to ~1/min after 5 min hidden) or tab freezing.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick()
+    }
+    const onFocus = () => tick()
+    document.addEventListener("visibilitychange", onVisible)
+    window.addEventListener("focus", onFocus)
+    window.addEventListener("pageshow", onFocus)
+
+    // Defensive: if anything else (e.g. Chrome on tab unfreeze) rewrites
+    // <link rel="icon">, immediately put ours back.
+    const head = document.head
+    const observer = new MutationObserver(() => {
+      const link = document.querySelector<HTMLLinkElement>("link[rel~='icon']")
+      if (
+        runningFaviconRef.current &&
+        (!link || link.href !== runningFaviconRef.current)
+      ) {
+        setFavicon(runningFaviconRef.current)
+      }
+    })
+    observer.observe(head, { childList: true, subtree: true, attributes: true, attributeFilter: ["href"] })
+
     return () => {
       window.clearInterval(id)
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("focus", onFocus)
+      window.removeEventListener("pageshow", onFocus)
+      observer.disconnect()
     }
   }, [timer, getProject, getClient])
 
