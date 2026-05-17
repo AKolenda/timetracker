@@ -272,19 +272,32 @@ export default function TrackerPage() {
     setDeleteTarget(null)
   }
 
-  const sortedEntries = useMemo(
-    () =>
-      [...data.timeEntries].sort((a, b) => {
-        const dateCmp = b.date.localeCompare(a.date)
-        if (dateCmp !== 0) return dateCmp
-        const groupA = `${a.description}\0${a.projectId}`
-        const groupB = `${b.description}\0${b.projectId}`
-        const groupCmp = groupA.localeCompare(groupB)
-        if (groupCmp !== 0) return groupCmp
-        return (b.startTime ?? "").localeCompare(a.startTime ?? "")
-      }),
-    [data.timeEntries]
-  )
+  const sortedEntries = useMemo(() => {
+    const entries = [...data.timeEntries]
+
+    // For each (date+description+project) group, find the newest startTime.
+    // We sort groups by that "latest session" so the thing you just worked on
+    // is always at the top of each day.
+    const groupLatest: Record<string, string> = {}
+    for (const e of entries) {
+      const key = `${e.date}\0${e.description}\0${e.projectId}`
+      const st = e.startTime ?? ""
+      if (!groupLatest[key] || st > groupLatest[key]) groupLatest[key] = st
+    }
+
+    return entries.sort((a, b) => {
+      // Primary: date descending
+      const dateCmp = b.date.localeCompare(a.date)
+      if (dateCmp !== 0) return dateCmp
+      // Secondary: group with the most recent session first
+      const keyA = `${a.date}\0${a.description}\0${a.projectId}`
+      const keyB = `${b.date}\0${b.description}\0${b.projectId}`
+      const latestCmp = (groupLatest[keyB] ?? "").localeCompare(groupLatest[keyA] ?? "")
+      if (latestCmp !== 0) return latestCmp
+      // Tertiary: within the same group, newest first
+      return (b.startTime ?? "").localeCompare(a.startTime ?? "")
+    })
+  }, [data.timeEntries])
 
   // Collapse consecutive entries with the same date+description+project into groups
   const entryGroups = useMemo(() => {
