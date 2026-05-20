@@ -1,4 +1,5 @@
 import type {
+  ActiveTimer,
   Client,
   Project,
   TimeEntry,
@@ -38,6 +39,10 @@ export interface DataProvider {
   // Settings
   getSettings(): Promise<Settings>
   updateSettings(updates: Partial<Settings>): Promise<void>
+
+  // Active Timer (persisted so it syncs across browsers)
+  getActiveTimer(): Promise<ActiveTimer | null>
+  setActiveTimer(timer: ActiveTimer | null): Promise<void>
 
   // Invoices
   getInvoices(): Promise<Invoice[]>

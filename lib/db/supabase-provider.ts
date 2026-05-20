@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type {
+  ActiveTimer,
   Client,
   Project,
   TimeEntry,
@@ -412,6 +413,24 @@ export class SupabaseProvider implements DataProvider {
     const { error } = await this.db
       .from("settings")
       .update(row)
+      .eq("id", "default")
+    if (error) throw error
+  }
+
+  async getActiveTimer(): Promise<ActiveTimer | null> {
+    const { data, error } = await this.db
+      .from("settings")
+      .select("active_timer")
+      .eq("id", "default")
+      .maybeSingle()
+    if (error) throw error
+    return (data?.active_timer as ActiveTimer | null) ?? null
+  }
+
+  async setActiveTimer(timer: ActiveTimer | null): Promise<void> {
+    const { error } = await this.db
+      .from("settings")
+      .update({ active_timer: timer })
       .eq("id", "default")
     if (error) throw error
   }

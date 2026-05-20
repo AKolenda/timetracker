@@ -95,12 +95,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         db.getSettings(),
       ])
 
+    // Load active timer from Supabase (cross-browser), fall back to localStorage
     let activeTimer: ActiveTimer | null = null
-    if (typeof window !== "undefined") {
+    try {
+      activeTimer = await db.getActiveTimer()
+    } catch {}
+    if (!activeTimer && typeof window !== "undefined") {
       try {
         const raw = localStorage.getItem(TIMER_KEY)
         if (raw) activeTimer = JSON.parse(raw)
       } catch {}
+    }
+    // Keep localStorage in sync as a fast cache for same-browser tab sync
+    if (typeof window !== "undefined") {
+      if (activeTimer) {
+        localStorage.setItem(TIMER_KEY, JSON.stringify(activeTimer))
+      } else {
+        localStorage.removeItem(TIMER_KEY)
+      }
     }
 
     setData({
@@ -118,6 +130,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     loadAll()
   }, [loadAll])
+
+  // Sync the active timer across tabs. The `storage` event fires in OTHER
+  // tabs when localStorage is written, so starting / stopping / discarding
+  // in one tab instantly updates every other open tab.
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== TIMER_KEY) return
+      const next: ActiveTimer | null = e.newValue ? JSON.parse(e.newValue) : null
+      setData((d) => ({ ...d, activeTimer: next }))
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [])
 
   const refresh = useCallback(async () => {
     await loadAll()
@@ -323,12 +348,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
-  // --- Timer (stays in localStorage — ephemeral, client-only) ---
-  const startTimer = useCallback((timer: ActiveTimer) => {
+  // --- Timer (Supabase for cross-browser, localStorage for fast same-browser tab sync) ---
+  const startTimer = useCallback(async (timer: ActiveTimer) => {
     if (typeof window !== "undefined") {
       localStorage.setItem(TIMER_KEY, JSON.stringify(timer))
     }
     setData((d) => ({ ...d, activeTimer: timer }))
+    try {
+      const db = getDataProvider()
+      await db.setActiveTimer(timer)
+    } catch {}
   }, [])
 
   const stopTimer = useCallback(async () => {
@@ -354,14 +383,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem(TIMER_KEY)
     }
     setData((d) => ({ ...d, activeTimer: null }))
+    try {
+      const db = getDataProvider()
+      await db.setActiveTimer(null)
+    } catch {}
     return entry
   }, [data.activeTimer, data.settings.timezone, addTimeEntry])
 
-  const clearTimer = useCallback(() => {
+  const clearTimer = useCallback(async () => {
     if (typeof window !== "undefined") {
       localStorage.removeItem(TIMER_KEY)
     }
     setData((d) => ({ ...d, activeTimer: null }))
+    try {
+      const db = getDataProvider()
+      await db.setActiveTimer(null)
+    } catch {}
   }, [])
 
   // --- Lookups ---
