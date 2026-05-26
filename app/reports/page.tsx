@@ -268,22 +268,15 @@ export default function ReportsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Net Profit
+              Total Payout
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div
-              className={cn(
-                "font-mono text-2xl font-bold",
-                totalRevenue - totalExpenses >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-red-600 dark:text-red-400"
-              )}
-            >
-              {formatCurrency(totalRevenue - totalExpenses)}
+            <div className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+              {formatCurrency(totalRevenue + totalExpenses)}
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
-              after expenses
+              revenue + billable expenses
             </p>
           </CardContent>
         </Card>
@@ -310,7 +303,7 @@ export default function ReportsPage() {
                     <TableHead>Billable</TableHead>
                     <TableHead>Revenue</TableHead>
                     <TableHead>Expenses</TableHead>
-                    <TableHead>Net</TableHead>
+                    <TableHead>Payout</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -343,15 +336,8 @@ export default function ReportsPage() {
                       <TableCell className="font-mono text-xs text-red-600 dark:text-red-400">
                         {formatCurrency(row.expenses)}
                       </TableCell>
-                      <TableCell
-                        className={cn(
-                          "font-mono text-xs font-medium",
-                          row.revenue - row.expenses >= 0
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-red-600 dark:text-red-400"
-                        )}
-                      >
-                        {formatCurrency(row.revenue - row.expenses)}
+                      <TableCell className="font-mono text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(row.revenue + row.expenses)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -376,7 +362,7 @@ export default function ReportsPage() {
                     <TableHead>Hours</TableHead>
                     <TableHead>Revenue</TableHead>
                     <TableHead>Expenses</TableHead>
-                    <TableHead>Net</TableHead>
+                    <TableHead>Payout</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -409,15 +395,8 @@ export default function ReportsPage() {
                       <TableCell className="font-mono text-xs text-red-600 dark:text-red-400">
                         {formatCurrency(row.expenses)}
                       </TableCell>
-                      <TableCell
-                        className={cn(
-                          "font-mono text-xs font-medium",
-                          row.revenue - row.expenses >= 0
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-red-600 dark:text-red-400"
-                        )}
-                      >
-                        {formatCurrency(row.revenue - row.expenses)}
+                      <TableCell className="font-mono text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(row.revenue + row.expenses)}
                       </TableCell>
                     </TableRow>
                   ))}

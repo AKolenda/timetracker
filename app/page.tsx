@@ -105,16 +105,16 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Net Revenue
+              Total Payout
             </CardTitle>
             <TrendingUp className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold">
-              {formatCurrency(totalRevenue - totalExpenses)}
+              {formatCurrency(totalRevenue + totalExpenses)}
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
-              after expenses
+              revenue + billable expenses
             </p>
           </CardContent>
         </Card>
