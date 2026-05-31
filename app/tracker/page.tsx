@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import {
   Play,
+  Pause,
   Square,
   Plus,
   Trash2,
@@ -66,19 +67,33 @@ import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { cn } from "@/lib/utils"
 import type { TimeEntry } from "@/lib/types"
 
-function LiveTimer({ startTime }: { startTime: string }) {
+function LiveTimer({
+  startTime,
+  pausedAt,
+  accumulatedPause = 0,
+}: {
+  startTime: string
+  pausedAt?: string | null
+  accumulatedPause?: number
+}) {
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
     function tick() {
-      setElapsed(
-        Math.floor((Date.now() - new Date(startTime).getTime()) / 1000)
-      )
+      const now = Date.now()
+      const total = Math.floor((now - new Date(startTime).getTime()) / 1000)
+      let paused = accumulatedPause
+      if (pausedAt) {
+        paused += Math.floor((now - new Date(pausedAt).getTime()) / 1000)
+      }
+      setElapsed(Math.max(0, total - paused))
     }
     tick()
+    // If paused, no need to tick every second
+    if (pausedAt) return
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [startTime])
+  }, [startTime, pausedAt, accumulatedPause])
 
   return (
     <span className="font-mono text-3xl font-bold tabular-nums tracking-tight">
@@ -102,6 +117,8 @@ export default function TrackerPage() {
     data,
     startTimer,
     stopTimer,
+    pauseTimer,
+    resumeTimer,
     clearTimer,
     addTimeEntry,
     updateTimeEntry,
@@ -410,11 +427,20 @@ export default function TrackerPage() {
               <div className="flex items-center gap-4 rounded-lg border bg-muted/30 px-4 py-3">
                 <Clock className="size-5 shrink-0 text-muted-foreground" />
                 {activeTimer ? (
-                  <LiveTimer startTime={activeTimer.startTime} />
+                  <LiveTimer
+                    startTime={activeTimer.startTime}
+                    pausedAt={activeTimer.pausedAt}
+                    accumulatedPause={activeTimer.accumulatedPause}
+                  />
                 ) : (
                   <span className="font-mono text-3xl font-bold tabular-nums tracking-tight text-muted-foreground">
                     00:00:00
                   </span>
+                )}
+                {activeTimer?.pausedAt && (
+                  <Badge variant="secondary" className="animate-pulse text-xs">
+                    Paused
+                  </Badge>
                 )}
                 <div className="ml-auto flex gap-2">
                   {activeTimer ? (
@@ -422,6 +448,23 @@ export default function TrackerPage() {
                       <Button variant="outline" onClick={handleDiscard}>
                         Discard
                       </Button>
+                      {activeTimer.pausedAt ? (
+                        <Button
+                          onClick={resumeTimer}
+                          className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                        >
+                          <Play className="size-3.5" data-icon="inline-start" />
+                          Resume
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={pauseTimer}
+                          variant="outline"
+                        >
+                          <Pause className="size-3.5" data-icon="inline-start" />
+                          Pause
+                        </Button>
+                      )}
                       <Button
                         onClick={handleStop}
                         className="bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"

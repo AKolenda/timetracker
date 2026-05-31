@@ -52,6 +52,8 @@ export interface ActiveTimer {
   description: string
   startTime: string
   billable: boolean
+  pausedAt?: string | null
+  accumulatedPause?: number
 }
 
 export interface Settings {
@@ -78,6 +80,7 @@ export interface Settings {
   emailFromAddress: string
   timezone: string
   defaultInvoiceDueDays: number
+  displayCurrency: string
 }
 
 export interface Invoice {
@@ -140,4 +143,5 @@ export const defaultSettings: Settings = {
   emailFromAddress: "",
   timezone: "",
   defaultInvoiceDueDays: 30,
+  displayCurrency: "",
 }

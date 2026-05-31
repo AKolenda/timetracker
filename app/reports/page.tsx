@@ -28,11 +28,14 @@ import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatHours } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { useExchangeRate } from "@/lib/use-exchange-rate"
 
 type DateRange = { from: Date; to: Date }
 
 export default function ReportsPage() {
   const { data, getClient, getProject } = useStore()
+  const displayCurrency = data.settings.displayCurrency
+  const { rate } = useExchangeRate("USD", displayCurrency)
   const [range, setRange] = useState<DateRange>({
     from: startOfMonth(new Date()),
     to: endOfMonth(new Date()),
@@ -245,6 +248,11 @@ export default function ReportsPage() {
             <div className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
               {formatCurrency(totalRevenue)}
             </div>
+            {rate && (
+              <p className="mt-0.5 font-mono text-sm text-muted-foreground">
+                ≈ {formatCurrency(totalRevenue * rate, displayCurrency)}
+              </p>
+            )}
             <p className="mt-1 font-mono text-xs text-muted-foreground">
               {formatHours(billableHours)}h billable
             </p>
@@ -275,6 +283,11 @@ export default function ReportsPage() {
             <div className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
               {formatCurrency(totalRevenue + totalExpenses)}
             </div>
+            {rate && (
+              <p className="mt-0.5 font-mono text-sm text-muted-foreground">
+                ≈ {formatCurrency((totalRevenue + totalExpenses) * rate, displayCurrency)}
+              </p>
+            )}
             <p className="mt-1 font-mono text-xs text-muted-foreground">
               revenue + billable expenses
             </p>

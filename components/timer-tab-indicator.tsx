@@ -13,7 +13,7 @@ function formatElapsed(ms: number): string {
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
 }
 
-function buildFavicon(running: boolean): string {
+function buildFavicon(state: "running" | "paused" | "idle"): string {
   const size = 64
   const canvas = document.createElement("canvas")
   canvas.width = size
@@ -21,30 +21,41 @@ function buildFavicon(running: boolean): string {
   const ctx = canvas.getContext("2d")
   if (!ctx) return ""
 
-  ctx.fillStyle = running ? "#dc2626" : "#0a0a0a"
+  ctx.fillStyle = state === "running" ? "#dc2626" : state === "paused" ? "#d97706" : "#0a0a0a"
   ctx.beginPath()
   ctx.roundRect(0, 0, size, size, 14)
   ctx.fill()
 
   ctx.strokeStyle = "#ffffff"
+  ctx.fillStyle = "#ffffff"
   ctx.lineWidth = 5
   ctx.lineCap = "round"
   const cx = size / 2
   const cy = size / 2
   const r = 18
 
-  ctx.beginPath()
-  ctx.arc(cx, cy, r, 0, Math.PI * 2)
-  ctx.stroke()
+  if (state === "paused") {
+    // Draw pause bars
+    const barW = 7
+    const barH = 26
+    const gap = 5
+    ctx.fillRect(cx - gap - barW, cy - barH / 2, barW, barH)
+    ctx.fillRect(cx + gap, cy - barH / 2, barW, barH)
+  } else {
+    // Draw stopwatch
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.stroke()
 
-  ctx.beginPath()
-  ctx.moveTo(cx, cy)
-  ctx.lineTo(cx, cy - r + 4)
-  ctx.stroke()
-  ctx.beginPath()
-  ctx.moveTo(cx, cy)
-  ctx.lineTo(cx + r - 8, cy)
-  ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cx, cy)
+    ctx.lineTo(cx, cy - r + 4)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cx, cy)
+    ctx.lineTo(cx + r - 8, cy)
+    ctx.stroke()
+  }
 
   return canvas.toDataURL("image/png")
 }
@@ -67,6 +78,7 @@ export function TimerTabIndicator() {
 
   const defaultFaviconRef = useRef<string | null>(null)
   const runningFaviconRef = useRef<string | null>(null)
+  const pausedFaviconRef = useRef<string | null>(null)
 
   useEffect(() => {
     const link = document.querySelector<HTMLLinkElement>("link[rel~='icon']")
@@ -85,8 +97,14 @@ export function TimerTabIndicator() {
     }
 
     if (!runningFaviconRef.current) {
-      runningFaviconRef.current = buildFavicon(true)
+      runningFaviconRef.current = buildFavicon("running")
     }
+    if (!pausedFaviconRef.current) {
+      pausedFaviconRef.current = buildFavicon("paused")
+    }
+
+    const isPaused = !!timer.pausedAt
+    const activeFavicon = isPaused ? pausedFaviconRef.current : runningFaviconRef.current
 
     const project = getProject(timer.projectId)
     const client = project ? getClient(project.clientId) : undefined
@@ -99,15 +117,22 @@ export function TimerTabIndicator() {
     // tab has been backgrounded for several minutes. Re-setting link.href to
     // the same cached data URL is cheap and keeps the stopwatch sticky.
     const tick = () => {
-      const elapsed = Date.now() - new Date(timer.startTime).getTime()
-      document.title = `${formatElapsed(elapsed)} — ${label} | ${DEFAULT_TITLE}`
-      if (runningFaviconRef.current) {
-        setFavicon(runningFaviconRef.current)
+      const now = Date.now()
+      let totalPaused = timer.accumulatedPause ? timer.accumulatedPause * 1000 : 0
+      if (timer.pausedAt) {
+        totalPaused += now - new Date(timer.pausedAt).getTime()
+      }
+      const elapsed = now - new Date(timer.startTime).getTime() - totalPaused
+      const prefix = isPaused ? "⏸ " : ""
+      document.title = `${prefix}${formatElapsed(Math.max(0, elapsed))} — ${label} | ${DEFAULT_TITLE}`
+      if (activeFavicon) {
+        setFavicon(activeFavicon)
       }
     }
 
     tick()
-    const id = window.setInterval(tick, 1000)
+    // When paused, tick less frequently (just for favicon recovery)
+    const id = window.setInterval(tick, isPaused ? 5000 : 1000)
 
     // When the tab becomes visible/focused again, force an immediate tick so
     // we recover instantly from background-timer throttling (Chrome clamps
@@ -126,10 +151,10 @@ export function TimerTabIndicator() {
     const observer = new MutationObserver(() => {
       const link = document.querySelector<HTMLLinkElement>("link[rel~='icon']")
       if (
-        runningFaviconRef.current &&
-        (!link || link.href !== runningFaviconRef.current)
+        activeFavicon &&
+        (!link || link.href !== activeFavicon)
       ) {
-        setFavicon(runningFaviconRef.current)
+        setFavicon(activeFavicon)
       }
     })
     observer.observe(head, { childList: true, subtree: true, attributes: true, attributeFilter: ["href"] })

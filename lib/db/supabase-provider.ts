@@ -94,6 +94,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     emailFromAddress: (row.email_from_address as string) ?? "",
     timezone: (row.timezone as string) ?? "",
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
+    displayCurrency: (row.display_currency as string) ?? "",
   }
 }
 
@@ -410,6 +411,8 @@ export class SupabaseProvider implements DataProvider {
     if (updates.timezone !== undefined) row.timezone = updates.timezone
     if (updates.defaultInvoiceDueDays !== undefined)
       row.default_invoice_due_days = updates.defaultInvoiceDueDays
+    if (updates.displayCurrency !== undefined)
+      row.display_currency = updates.displayCurrency
     const { error } = await this.db
       .from("settings")
       .update(row)

@@ -66,6 +66,8 @@ interface StoreContext {
 
   startTimer: (timer: ActiveTimer) => void
   stopTimer: () => Promise<TimeEntry | null>
+  pauseTimer: () => void
+  resumeTimer: () => void
   clearTimer: () => void
 
   getClient: (id: string) => Client | undefined
@@ -367,14 +369,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const now = new Date()
     const start = new Date(current.startTime)
-    const duration = Math.floor((now.getTime() - start.getTime()) / 1000)
+    // Subtract accumulated pause time + any active pause right now
+    let totalPaused = current.accumulatedPause ?? 0
+    if (current.pausedAt) {
+      totalPaused += Math.floor((now.getTime() - new Date(current.pausedAt).getTime()) / 1000)
+    }
+    const duration = Math.floor((now.getTime() - start.getTime()) / 1000) - totalPaused
 
     entry = await addTimeEntry({
       projectId: current.projectId,
       description: current.description,
       startTime: current.startTime,
       endTime: now.toISOString(),
-      duration,
+      duration: Math.max(0, duration),
       billable: current.billable,
       date: localDateString(start, data.settings.timezone),
     })
@@ -389,6 +396,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch {}
     return entry
   }, [data.activeTimer, data.settings.timezone, addTimeEntry])
+
+  const pauseTimer = useCallback(async () => {
+    const current = data.activeTimer
+    if (!current || current.pausedAt) return
+    const paused: ActiveTimer = {
+      ...current,
+      pausedAt: new Date().toISOString(),
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem(TIMER_KEY, JSON.stringify(paused))
+    }
+    setData((d) => ({ ...d, activeTimer: paused }))
+    try {
+      const db = getDataProvider()
+      await db.setActiveTimer(paused)
+    } catch {}
+  }, [data.activeTimer])
+
+  const resumeTimer = useCallback(async () => {
+    const current = data.activeTimer
+    if (!current || !current.pausedAt) return
+    const pausedMs = Date.now() - new Date(current.pausedAt).getTime()
+    const resumed: ActiveTimer = {
+      ...current,
+      pausedAt: null,
+      accumulatedPause: (current.accumulatedPause ?? 0) + Math.floor(pausedMs / 1000),
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem(TIMER_KEY, JSON.stringify(resumed))
+    }
+    setData((d) => ({ ...d, activeTimer: resumed }))
+    try {
+      const db = getDataProvider()
+      await db.setActiveTimer(resumed)
+    } catch {}
+  }, [data.activeTimer])
 
   const clearTimer = useCallback(async () => {
     if (typeof window !== "undefined") {
@@ -456,6 +499,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         deleteInvoice,
         startTimer,
         stopTimer,
+        pauseTimer,
+        resumeTimer,
         clearTimer,
         getClient,
         getProject,

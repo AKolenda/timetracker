@@ -128,6 +128,7 @@ export default function SettingsPage() {
         nextInvoiceNumber: form.nextInvoiceNumber,
         timezone: form.timezone,
         defaultInvoiceDueDays: form.defaultInvoiceDueDays,
+        displayCurrency: form.displayCurrency === "none" ? "" : form.displayCurrency,
       })
       toast.success("Settings saved")
     } catch {
@@ -459,6 +460,28 @@ export default function SettingsPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Default due-date offset when creating a new invoice. <code className="font-mono">0</code> = due on receipt.
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="display-currency">Display Currency</Label>
+                <Select
+                  value={form.displayCurrency || ""}
+                  onValueChange={(v) => setForm({ ...form, displayCurrency: v })}
+                >
+                  <SelectTrigger id="display-currency">
+                    <SelectValue placeholder="None (show USD only)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None (show USD only)</SelectItem>
+                    {CURRENCIES.filter((c) => c.value !== "USD").map((c) => (
+                      <SelectItem key={c.value} value={c.value}>
+                        {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Show a converted total alongside USD on dashboard &amp; reports. Rate refreshes daily from frankfurter.app.
                 </p>
               </div>
               <Separator />
