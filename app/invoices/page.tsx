@@ -1,7 +1,16 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Plus, Send, Trash2, FileText, Eye, Pencil } from "lucide-react"
+import {
+  Plus,
+  Send,
+  Trash2,
+  FileText,
+  Eye,
+  Pencil,
+  Download,
+  Loader2,
+} from "lucide-react"
 import { toast } from "sonner"
 import { format, addDays } from "date-fns"
 
@@ -78,6 +87,7 @@ export default function InvoicesPage() {
   const [editInvoice, setEditInvoice] = useState<Invoice | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Invoice | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
   const [selectedClientId, setSelectedClientId] = useState("")
   const [taxRate, setTaxRate] = useState("0")
@@ -302,6 +312,24 @@ export default function InvoicesPage() {
     }
   }
 
+  async function handleDownload(invoice: Invoice) {
+    setDownloadingId(invoice.id)
+    try {
+      const { downloadInvoicePdf } = await import("@/lib/invoice-pdf")
+      await downloadInvoicePdf(
+        invoice,
+        getClient(invoice.clientId),
+        data.settings
+      )
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to generate PDF"
+      )
+    } finally {
+      setDownloadingId(null)
+    }
+  }
+
   async function confirmDelete() {
     if (!deleteTarget) return
     // Un-mark expenses that were on this invoice
@@ -442,6 +470,19 @@ export default function InvoicesPage() {
                           onClick={() => setPreviewInvoice(inv)}
                         >
                           <Eye className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => handleDownload(inv)}
+                          disabled={downloadingId === inv.id}
+                          title="Download PDF"
+                        >
+                          {downloadingId === inv.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Download className="size-3.5" />
+                          )}
                         </Button>
                         <Button
                           variant="ghost"
@@ -818,6 +859,8 @@ export default function InvoicesPage() {
               invoice={previewInvoice}
               client={getClient(previewInvoice.clientId)}
               settings={data.settings}
+              onDownload={() => handleDownload(previewInvoice)}
+              downloading={downloadingId === previewInvoice.id}
             />
           )}
         </DialogContent>
@@ -858,20 +901,34 @@ function InvoicePreview({
   invoice,
   client,
   settings,
+  onDownload,
+  downloading,
 }: {
   invoice: Invoice
   client: ReturnType<ReturnType<typeof useStore>["getClient"]>
   settings: ReturnType<typeof useStore>["data"]["settings"]
+  onDownload: () => void
+  downloading: boolean
 }) {
   return (
     <>
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-3">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-background px-6 py-3">
         <DialogTitle className="text-base font-semibold">
           {invoice.invoiceNumber}
         </DialogTitle>
-        <Badge variant="secondary" className={statusStyles[invoice.status]}>
-          {invoice.status}
-        </Badge>
+        <div className="flex items-center gap-3">
+          <Badge variant="secondary" className={statusStyles[invoice.status]}>
+            {invoice.status}
+          </Badge>
+          <Button size="sm" onClick={onDownload} disabled={downloading}>
+            {downloading ? (
+              <Loader2 className="size-4 animate-spin" data-icon="inline-start" />
+            ) : (
+              <Download className="size-4" data-icon="inline-start" />
+            )}
+            Download PDF
+          </Button>
+        </div>
       </div>
       <div className="mx-auto w-full max-w-[8.5in] bg-white px-[0.75in] py-[0.5in] text-black dark:bg-white">
         <div className="flex items-start justify-between border-b-2 border-black pb-4">
