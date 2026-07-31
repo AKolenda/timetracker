@@ -446,15 +446,20 @@ export default function InvoicesPage() {
                           handleStatusChange(inv.id, v as Invoice["status"])
                         }
                       >
-                        <SelectTrigger className="h-7 w-[100px] border-0 bg-transparent p-0 shadow-none">
-                          <Badge
-                            variant="secondary"
-                            className={statusStyles[inv.status]}
-                          >
-                            {inv.status}
-                          </Badge>
+                        <SelectTrigger
+                          aria-label={`Change status for ${inv.invoiceNumber}`}
+                          className="h-7 w-[100px] border-0 bg-transparent p-0 shadow-none"
+                        >
+                          <SelectValue>
+                            <Badge
+                              variant="secondary"
+                              className={statusStyles[inv.status]}
+                            >
+                              {inv.status}
+                            </Badge>
+                          </SelectValue>
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent position="popper" align="start">
                           <SelectItem value="draft">Draft</SelectItem>
                           <SelectItem value="sent">Sent</SelectItem>
                           <SelectItem value="paid">Paid</SelectItem>
