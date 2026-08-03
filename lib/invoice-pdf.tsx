@@ -212,7 +212,9 @@ export function InvoicePdfDocument({
               <Text style={styles.businessMeta}>{settings.businessPhone}</Text>
             ) : null}
             {settings.businessAddress ? (
-              <Text style={styles.businessMeta}>{settings.businessAddress}</Text>
+              <Text style={styles.businessMeta}>
+                {settings.businessAddress}
+              </Text>
             ) : null}
           </View>
           <Text style={styles.invoiceNumberBig}>{invoice.invoiceNumber}</Text>
@@ -237,7 +239,9 @@ export function InvoicePdfDocument({
             </Text>
             <Text style={styles.dateLine}>
               <Text style={styles.dateLabel}>Due: </Text>
-              {fmtDate(invoice.dueDate)}
+              {invoice.dueDate === invoice.issueDate
+                ? "Due on receipt"
+                : fmtDate(invoice.dueDate)}
             </Text>
           </View>
         </View>
@@ -252,14 +256,18 @@ export function InvoicePdfDocument({
           </View>
           {invoice.lineItems.map((item) => (
             <View style={styles.tableRow} key={item.id} wrap={false}>
-              <Text style={[styles.td, styles.colDesc]}>{item.description}</Text>
+              <Text style={[styles.td, styles.colDesc]}>
+                {item.description}
+              </Text>
               <Text style={[styles.td, styles.colNum, styles.mono]}>
                 {item.quantity}
               </Text>
               <Text style={[styles.td, styles.colNum, styles.mono]}>
                 {formatCurrency(item.unitPrice)}
               </Text>
-              <Text style={[styles.td, styles.colNum, styles.mono, styles.bold]}>
+              <Text
+                style={[styles.td, styles.colNum, styles.mono, styles.bold]}
+              >
                 {formatCurrency(item.amount)}
               </Text>
             </View>
@@ -276,7 +284,9 @@ export function InvoicePdfDocument({
           </View>
           <View style={styles.totalsRow}>
             <Text style={styles.totalsLabel}>Tax</Text>
-            <Text style={styles.totalsValue}>{formatCurrency(invoice.tax)}</Text>
+            <Text style={styles.totalsValue}>
+              {formatCurrency(invoice.tax)}
+            </Text>
           </View>
           <View style={styles.grandTotalRow}>
             <Text style={styles.grandTotalLabel}>Total</Text>
@@ -313,13 +323,17 @@ export function InvoicePdfDocument({
             {settings.remittanceRoutingNumber ? (
               <Text style={styles.remittanceLine}>
                 <Text style={styles.remittanceMuted}>Routing: </Text>
-                <Text style={styles.mono}>{settings.remittanceRoutingNumber}</Text>
+                <Text style={styles.mono}>
+                  {settings.remittanceRoutingNumber}
+                </Text>
               </Text>
             ) : null}
             {settings.remittanceAccountNumber ? (
               <Text style={styles.remittanceLine}>
                 <Text style={styles.remittanceMuted}>Account: </Text>
-                <Text style={styles.mono}>{settings.remittanceAccountNumber}</Text>
+                <Text style={styles.mono}>
+                  {settings.remittanceAccountNumber}
+                </Text>
               </Text>
             ) : null}
             {settings.remittanceNotes ? (
@@ -349,11 +363,7 @@ export async function downloadInvoicePdf(
   settings: Settings
 ): Promise<void> {
   const blob = await pdf(
-    <InvoicePdfDocument
-      invoice={invoice}
-      client={client}
-      settings={settings}
-    />
+    <InvoicePdfDocument invoice={invoice} client={client} settings={settings} />
   ).toBlob()
 
   const url = URL.createObjectURL(blob)

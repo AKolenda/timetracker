@@ -42,7 +42,7 @@ export interface EmailInvoiceData {
   }
 }
 
-function applyVars(
+export function applyEmailTemplateVariables(
   template: string,
   vars: Record<string, string>
 ): string {
@@ -65,31 +65,33 @@ function nl2br(s: string): string {
 export function buildSubject(data: EmailInvoiceData): string {
   const fallback = `Invoice ${data.invoiceNumber} from ${data.business.name}`
   const tpl = data.template.subject?.trim() || fallback
-  return applyVars(tpl, {
+  return applyEmailTemplateVariables(tpl, {
     invoiceNumber: data.invoiceNumber,
     businessName: data.business.name,
     clientName: data.client.name,
     total: formatCurrency(data.total),
-    dueDate: data.dueDate,
+    dueDate: data.dueDate === data.issueDate ? "Due on receipt" : data.dueDate,
   })
 }
 
 export function buildEmailHtml(data: EmailInvoiceData): string {
   const accent = data.template.accentColor || "#111827"
+  const dueLabel =
+    data.dueDate === data.issueDate ? "Due on receipt" : data.dueDate
   const vars = {
     invoiceNumber: data.invoiceNumber,
     businessName: data.business.name,
     clientName: data.client.name,
     total: formatCurrency(data.total),
-    dueDate: data.dueDate,
+    dueDate: dueLabel,
   }
 
   const greetingHtml = data.template.greeting?.trim()
-    ? `<div style="margin:24px 0;font-size:14px;line-height:1.6;color:#374151;">${nl2br(applyVars(data.template.greeting, vars))}</div>`
+    ? `<div style="margin:24px 0;font-size:14px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.greeting, vars))}</div>`
     : ""
 
   const signatureHtml = data.template.signature?.trim()
-    ? `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:13px;line-height:1.6;color:#374151;">${nl2br(applyVars(data.template.signature, vars))}</div>`
+    ? `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:13px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.signature, vars))}</div>`
     : ""
 
   const itemsHtml = data.lineItems
@@ -117,7 +119,9 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
   if (r && (r.firstName || r.bankName)) {
     const lines: string[] = []
     if (r.firstName || r.lastName)
-      lines.push(`<strong>Pay to:</strong> ${escapeHtml(`${r.firstName ?? ""} ${r.lastName ?? ""}`.trim())}`)
+      lines.push(
+        `<strong>Pay to:</strong> ${escapeHtml(`${r.firstName ?? ""} ${r.lastName ?? ""}`.trim())}`
+      )
     if (r.bankName)
       lines.push(`<strong>Bank:</strong> ${escapeHtml(r.bankName)}`)
     if (r.routingNumber)
@@ -157,7 +161,7 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
               <p style="margin:0;font-size:24px;font-weight:700;font-family:monospace;color:${accent};">${escapeHtml(data.invoiceNumber)}</p>
               <p style="margin:4px 0 0;font-size:13px;color:#6b7280;">
                 Issued: ${escapeHtml(data.issueDate)}<br/>
-                Due: ${escapeHtml(data.dueDate)}
+                Due: ${escapeHtml(dueLabel)}
               </p>
             </td>
           </tr>

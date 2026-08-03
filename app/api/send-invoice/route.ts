@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server"
 import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
-import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
+import {
+  buildEmailHtml,
+  buildSubject,
+  type EmailInvoiceData,
+} from "@/lib/email-template"
 
 export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY) {
@@ -13,10 +17,39 @@ export async function POST(request: Request) {
 
   const resend = new Resend(process.env.RESEND_API_KEY)
 
-  const { invoiceId } = await request.json()
+  const body = (await request.json()) as {
+    invoiceId?: unknown
+    subject?: unknown
+    message?: unknown
+  }
+  const invoiceId =
+    typeof body.invoiceId === "string" ? body.invoiceId.trim() : ""
+  const customSubject =
+    typeof body.subject === "string" ? body.subject.trim() : undefined
+  const customMessage =
+    typeof body.message === "string" ? body.message.trim() : undefined
+
   if (!invoiceId) {
     return NextResponse.json(
       { error: "invoiceId is required" },
+      { status: 400 }
+    )
+  }
+  if (body.subject !== undefined && !customSubject) {
+    return NextResponse.json(
+      { error: "Email subject is required" },
+      { status: 400 }
+    )
+  }
+  if (customSubject && customSubject.length > 200) {
+    return NextResponse.json(
+      { error: "Email subject must be 200 characters or fewer" },
+      { status: 400 }
+    )
+  }
+  if (customMessage && customMessage.length > 5000) {
+    return NextResponse.json(
+      { error: "Email message must be 5,000 characters or fewer" },
       { status: 400 }
     )
   }
@@ -59,7 +92,9 @@ export async function POST(request: Request) {
   }
 
   const fromAddress =
-    settings?.email_from_address || settings?.business_email || "invoices@resend.dev"
+    settings?.email_from_address ||
+    settings?.business_email ||
+    "invoices@resend.dev"
   const businessName = settings?.business_name || "TimeTracker"
 
   const data: EmailInvoiceData = {
@@ -96,10 +131,14 @@ export async function POST(request: Request) {
     },
     template: {
       subject:
-        settings?.email_subject || "Invoice {{invoiceNumber}} from {{businessName}}",
+        customSubject ||
+        settings?.email_subject ||
+        "Invoice {{invoiceNumber}} from {{businessName}}",
       greeting:
-        settings?.email_greeting ||
-        "Hi {{clientName}},\n\nPlease find your invoice below.",
+        customMessage !== undefined
+          ? customMessage
+          : settings?.email_greeting ||
+            "Hi {{clientName}},\n\nPlease find your invoice below.",
       signature: settings?.email_signature || "Thanks,\n{{businessName}}",
       accentColor: settings?.email_accent_color || "#111827",
     },

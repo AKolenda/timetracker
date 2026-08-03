@@ -12,7 +12,7 @@ import {
   Loader2,
 } from "lucide-react"
 import { toast } from "sonner"
-import { format, addDays } from "date-fns"
+import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -56,6 +56,7 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import { PageHeader } from "@/components/page-header"
+import { applyEmailTemplateVariables } from "@/lib/email-template"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatHours } from "@/lib/format"
 import type { Invoice, InvoiceLineItem, TimeEntry, Expense } from "@/lib/types"
@@ -67,6 +68,12 @@ const statusStyles: Record<Invoice["status"], string> = {
   overdue: "bg-red-500/10 text-red-600 dark:text-red-400",
 }
 
+function invoiceDueLabel(invoice: Invoice): string {
+  return invoice.dueDate === invoice.issueDate
+    ? "Due on receipt"
+    : format(parseISO(invoice.dueDate), "MMM d, yyyy")
+}
+
 export default function InvoicesPage() {
   const {
     data,
@@ -76,7 +83,6 @@ export default function InvoicesPage() {
     updateExpense,
     updateSettings,
     getClient,
-    getProject,
     getTimeEntriesByProject,
     getExpensesByProject,
     getProjectsByClient,
@@ -85,6 +91,7 @@ export default function InvoicesPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [previewInvoice, setPreviewInvoice] = useState<Invoice | null>(null)
   const [editInvoice, setEditInvoice] = useState<Invoice | null>(null)
+  const [sendInvoice, setSendInvoice] = useState<Invoice | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Invoice | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
@@ -94,12 +101,18 @@ export default function InvoicesPage() {
   const [notes, setNotes] = useState("")
   const [dueDays, setDueDays] = useState("30")
   const [selectedEntries, setSelectedEntries] = useState<Set<string>>(new Set())
-  const [selectedExpenses, setSelectedExpenses] = useState<Set<string>>(new Set())
+  const [selectedExpenses, setSelectedExpenses] = useState<Set<string>>(
+    new Set()
+  )
 
   // Edit form state
   const [editNotes, setEditNotes] = useState("")
   const [editDueDays, setEditDueDays] = useState("")
   const [editTax, setEditTax] = useState("")
+
+  // Per-send email overrides
+  const [sendSubject, setSendSubject] = useState("")
+  const [sendMessage, setSendMessage] = useState("")
 
   const clientProjects = useMemo(
     () => (selectedClientId ? getProjectsByClient(selectedClientId) : []),
@@ -141,20 +154,65 @@ export default function InvoicesPage() {
   }, [clientProjects, getExpensesByProject])
 
   function openCreate() {
+    const configuredDueDays = Number(data.settings.defaultInvoiceDueDays)
+    const defaultDueDays =
+      Number.isFinite(configuredDueDays) && configuredDueDays >= 0
+        ? configuredDueDays
+        : 30
     setSelectedClientId(data.clients[0]?.id ?? "")
     setTaxRate("0")
     setNotes("")
-    setDueDays(String(data.settings.defaultInvoiceDueDays ?? 30))
+    setDueDays(String(defaultDueDays))
     setSelectedEntries(new Set())
     setSelectedExpenses(new Set())
     setCreateOpen(true)
   }
 
   function openEdit(invoice: Invoice) {
+    const currentDueDays = differenceInCalendarDays(
+      parseISO(invoice.dueDate),
+      parseISO(invoice.issueDate)
+    )
     setEditInvoice(invoice)
     setEditNotes(invoice.notes)
-    setEditDueDays("")
+    setEditDueDays(String(Math.max(0, currentDueDays)))
     setEditTax(invoice.tax.toString())
+  }
+
+  function openSend(invoice: Invoice) {
+    const client = getClient(invoice.clientId)
+    const email = client?.invoiceEmail || client?.email
+    if (!email) {
+      toast.error("Client has no invoice email configured")
+      return
+    }
+
+    const dueLabel =
+      invoice.dueDate === invoice.issueDate ? "Due on receipt" : invoice.dueDate
+    const variables = {
+      invoiceNumber: invoice.invoiceNumber,
+      businessName: data.settings.businessName || "TimeTracker",
+      clientName: client?.name ?? "",
+      total: formatCurrency(invoice.total),
+      dueDate: dueLabel,
+    }
+    const subjectTemplate =
+      data.settings.emailSubject ||
+      "Invoice {{invoiceNumber}} from {{businessName}}"
+    const resolvedSubject = applyEmailTemplateVariables(
+      subjectTemplate,
+      variables
+    )
+
+    setSendInvoice(invoice)
+    setSendSubject(
+      invoice.status === "sent"
+        ? `Reissued: ${resolvedSubject}`
+        : resolvedSubject
+    )
+    setSendMessage(
+      applyEmailTemplateVariables(data.settings.emailGreeting || "", variables)
+    )
   }
 
   function toggleEntry(id: string) {
@@ -235,9 +293,12 @@ export default function InvoicesPage() {
 
     const invoiceNumber = `${data.settings.invoicePrefix}${data.settings.nextInvoiceNumber}`
     const today = format(new Date(), "yyyy-MM-dd")
-    const parsedDueDays = parseInt(dueDays)
-    const dueOffset = Number.isFinite(parsedDueDays) ? parsedDueDays : 30
-    const due = format(addDays(new Date(), dueOffset), "yyyy-MM-dd")
+    const parsedDueDays = Number.parseInt(dueDays, 10)
+    if (!Number.isFinite(parsedDueDays) || parsedDueDays < 0) {
+      toast.error("Due days must be 0 or greater")
+      return
+    }
+    const due = format(addDays(parseISO(today), parsedDueDays), "yyyy-MM-dd")
 
     await addInvoice(
       {
@@ -269,27 +330,43 @@ export default function InvoicesPage() {
 
   async function handleEditSave() {
     if (!editInvoice) return
-    const updates: Partial<Invoice> = {
-      notes: editNotes,
-      tax: parseFloat(editTax) || 0,
-      total: editInvoice.subtotal + (parseFloat(editTax) || 0),
+    const parsedDueDays = Number.parseInt(editDueDays, 10)
+    if (!Number.isFinite(parsedDueDays) || parsedDueDays < 0) {
+      toast.error("Due days must be 0 or greater")
+      return
     }
-    if (editDueDays) {
-      updates.dueDate = format(
-        addDays(new Date(editInvoice.issueDate), parseInt(editDueDays) || 30),
+    const parsedTax = Number.parseFloat(editTax)
+    const taxAmount = Number.isFinite(parsedTax) ? parsedTax : 0
+    const updates: Partial<Invoice> = {
+      status: editInvoice.status,
+      notes: editNotes,
+      tax: taxAmount,
+      total: editInvoice.subtotal + taxAmount,
+      dueDate: format(
+        addDays(parseISO(editInvoice.issueDate), parsedDueDays),
         "yyyy-MM-dd"
-      )
+      ),
     }
     await updateInvoice(editInvoice.id, updates)
-    toast.success("Invoice updated")
+    toast.success(
+      parsedDueDays === 0
+        ? "Invoice updated — due on receipt"
+        : "Invoice updated"
+    )
     setEditInvoice(null)
   }
 
-  async function handleSend(invoice: Invoice) {
+  async function handleSend() {
+    if (!sendInvoice) return
+    const invoice = sendInvoice
     const client = getClient(invoice.clientId)
     const email = client?.invoiceEmail || client?.email
     if (!email) {
       toast.error("Client has no invoice email configured")
+      return
+    }
+    if (!sendSubject.trim()) {
+      toast.error("Email subject is required")
       return
     }
     setSendingId(invoice.id)
@@ -297,14 +374,21 @@ export default function InvoicesPage() {
       const res = await fetch("/api/send-invoice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceId: invoice.id }),
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          subject: sendSubject.trim(),
+          message: sendMessage.trim(),
+        }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || "Failed to send")
       }
       await updateInvoice(invoice.id, { status: "sent" })
-      toast.success(`Invoice sent to ${email}`)
+      toast.success(
+        `${invoice.status === "sent" ? "Invoice reissued" : "Invoice sent"} to ${email}`
+      )
+      setSendInvoice(null)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to send invoice")
     } finally {
@@ -322,9 +406,7 @@ export default function InvoicesPage() {
         data.settings
       )
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to generate PDF"
-      )
+      toast.error(err instanceof Error ? err.message : "Failed to generate PDF")
     } finally {
       setDownloadingId(null)
     }
@@ -425,16 +507,14 @@ export default function InvoicesPage() {
                             style={{ backgroundColor: client.color }}
                           />
                         )}
-                        <span className="text-sm">
-                          {client?.name ?? "—"}
-                        </span>
+                        <span className="text-sm">{client?.name ?? "—"}</span>
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {format(new Date(inv.issueDate), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(new Date(inv.dueDate), "MMM d, yyyy")}
+                      {invoiceDueLabel(inv)}
                     </TableCell>
                     <TableCell className="font-mono text-sm font-medium">
                       {formatCurrency(inv.total)}
@@ -499,8 +579,14 @@ export default function InvoicesPage() {
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          onClick={() => handleSend(inv)}
+                          onClick={() => openSend(inv)}
                           disabled={sendingId === inv.id}
+                          aria-label={`${inv.status === "sent" ? "Reissue" : "Send"} ${inv.invoiceNumber}`}
+                          title={
+                            inv.status === "sent"
+                              ? "Reissue invoice"
+                              : "Send invoice"
+                          }
                         >
                           <Send className="size-3.5" />
                         </Button>
@@ -523,7 +609,7 @@ export default function InvoicesPage() {
 
       {/* Create Invoice Dialog — full-width responsive */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Create Invoice</DialogTitle>
           </DialogHeader>
@@ -716,7 +802,9 @@ export default function InvoicesPage() {
                 <div className="rounded-md border p-4">
                   <div className="flex justify-between py-1 text-sm">
                     <span className="text-muted-foreground">Subtotal</span>
-                    <span className="font-mono">{formatCurrency(subtotal)}</span>
+                    <span className="font-mono">
+                      {formatCurrency(subtotal)}
+                    </span>
                   </div>
                   <div className="flex justify-between py-1 text-sm">
                     <span className="text-muted-foreground">
@@ -749,9 +837,7 @@ export default function InvoicesPage() {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>
-              Edit Invoice {editInvoice?.invoiceNumber}
-            </DialogTitle>
+            <DialogTitle>Edit Invoice {editInvoice?.invoiceNumber}</DialogTitle>
           </DialogHeader>
           {editInvoice && (
             <div className="grid gap-4 py-4">
@@ -779,15 +865,20 @@ export default function InvoicesPage() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="edit-due">Extend due (days from issue)</Label>
+                  <Label htmlFor="edit-due">Due in (days from issue)</Label>
                   <Input
                     id="edit-due"
                     type="number"
-                    min="1"
+                    min="0"
                     value={editDueDays}
                     onChange={(e) => setEditDueDays(e.target.value)}
                     placeholder="30"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    {editDueDays === "0"
+                      ? "Due on receipt"
+                      : "Use 0 for due on receipt"}
+                  </p>
                 </div>
               </div>
               <div className="grid gap-2">
@@ -839,15 +930,87 @@ export default function InvoicesPage() {
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
+            <Button onClick={handleEditSave}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send / Reissue Invoice Dialog */}
+      <Dialog
+        open={!!sendInvoice}
+        onOpenChange={(open) => !open && setSendInvoice(null)}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {sendInvoice?.status === "sent" ? "Reissue" : "Send"} Invoice{" "}
+              {sendInvoice?.invoiceNumber}
+            </DialogTitle>
+          </DialogHeader>
+          {sendInvoice && (
+            <div className="grid gap-4 py-4">
+              <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted-foreground">To</span>
+                  <span className="truncate font-medium">
+                    {getClient(sendInvoice.clientId)?.invoiceEmail ||
+                      getClient(sendInvoice.clientId)?.email}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-4">
+                  <span className="text-muted-foreground">Payment terms</span>
+                  <span className="font-medium">
+                    {invoiceDueLabel(sendInvoice)}
+                  </span>
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="send-subject">Subject</Label>
+                <Input
+                  id="send-subject"
+                  value={sendSubject}
+                  onChange={(e) => setSendSubject(e.target.value)}
+                  maxLength={200}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="send-message">Message / note</Label>
+                <Textarea
+                  id="send-message"
+                  value={sendMessage}
+                  onChange={(e) => setSendMessage(e.target.value)}
+                  rows={6}
+                  maxLength={5000}
+                  placeholder="Add a note for this invoice email"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This only changes this email. Your default template stays the
+                  same.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" disabled={!!sendingId}>
+                Cancel
+              </Button>
+            </DialogClose>
             <Button
-              onClick={async () => {
-                if (editInvoice) {
-                  await handleStatusChange(editInvoice.id, editInvoice.status)
-                  await handleEditSave()
-                }
-              }}
+              onClick={handleSend}
+              disabled={!!sendingId || !sendSubject.trim()}
             >
-              Save Changes
+              {sendingId ? (
+                <Loader2
+                  className="size-4 animate-spin"
+                  data-icon="inline-start"
+                />
+              ) : (
+                <Send className="size-4" data-icon="inline-start" />
+              )}
+              {sendInvoice?.status === "sent"
+                ? "Reissue Invoice"
+                : "Send Invoice"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -858,7 +1021,7 @@ export default function InvoicesPage() {
         open={!!previewInvoice}
         onOpenChange={(open) => !open && setPreviewInvoice(null)}
       >
-        <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto p-0">
+        <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto p-0 sm:max-w-4xl">
           {previewInvoice && (
             <InvoicePreview
               invoice={previewInvoice}
@@ -883,15 +1046,15 @@ export default function InvoicesPage() {
               This will permanently delete invoice{" "}
               {deleteTarget?.invoiceNumber ?? ""} (
               {deleteTarget ? formatCurrency(deleteTarget.total) : ""}).
-              Expenses from this invoice will become available for future invoices.
-              This action cannot be undone.
+              Expenses from this invoice will become available for future
+              invoices. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="text-destructive-foreground bg-destructive hover:bg-destructive/90"
             >
               Delete
             </AlertDialogAction>
@@ -927,7 +1090,10 @@ function InvoicePreview({
           </Badge>
           <Button size="sm" onClick={onDownload} disabled={downloading}>
             {downloading ? (
-              <Loader2 className="size-4 animate-spin" data-icon="inline-start" />
+              <Loader2
+                className="size-4 animate-spin"
+                data-icon="inline-start"
+              />
             ) : (
               <Download className="size-4" data-icon="inline-start" />
             )}
@@ -950,7 +1116,7 @@ function InvoicePreview({
               <p className="text-sm text-gray-500">{settings.businessPhone}</p>
             )}
             {settings.businessAddress && (
-              <p className="mt-1 whitespace-pre-line text-sm text-gray-500">
+              <p className="mt-1 text-sm whitespace-pre-line text-gray-500">
                 {settings.businessAddress}
               </p>
             )}
@@ -964,7 +1130,7 @@ function InvoicePreview({
 
         <div className="mt-8 flex justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-gray-400">
+            <p className="text-xs font-medium tracking-wider text-gray-400 uppercase">
               Bill To
             </p>
             <p className="mt-2 text-lg font-semibold">{client?.name ?? "—"}</p>
@@ -972,7 +1138,7 @@ function InvoicePreview({
               <p className="text-sm text-gray-500">{client.email}</p>
             )}
             {client?.address && (
-              <p className="whitespace-pre-line text-sm text-gray-500">
+              <p className="text-sm whitespace-pre-line text-gray-500">
                 {client.address}
               </p>
             )}
@@ -984,7 +1150,7 @@ function InvoicePreview({
             </p>
             <p className="mt-1 text-sm text-gray-500">
               <span className="font-medium text-gray-700">Due:</span>{" "}
-              {format(new Date(invoice.dueDate), "MMM d, yyyy")}
+              {invoiceDueLabel(invoice)}
             </p>
           </div>
         </div>
@@ -992,16 +1158,16 @@ function InvoicePreview({
         <table className="mt-8 w-full border-collapse">
           <thead>
             <tr className="bg-gray-50">
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="border-b-2 border-gray-200 px-4 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Description
               </th>
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Qty
               </th>
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Rate
               </th>
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Amount
               </th>
             </tr>
@@ -1026,10 +1192,12 @@ function InvoicePreview({
           </tbody>
         </table>
 
-        <div className="ml-auto mt-6 w-72">
+        <div className="mt-6 ml-auto w-72">
           <div className="flex justify-between py-2 text-sm">
             <span className="text-gray-500">Subtotal</span>
-            <span className="font-mono">{formatCurrency(invoice.subtotal)}</span>
+            <span className="font-mono">
+              {formatCurrency(invoice.subtotal)}
+            </span>
           </div>
           <div className="flex justify-between py-2 text-sm">
             <span className="text-gray-500">Tax</span>
@@ -1044,7 +1212,7 @@ function InvoicePreview({
         {invoice.notes && (
           <div className="mt-8 rounded-md bg-gray-50 p-4">
             <p className="text-xs font-medium text-gray-500">Notes</p>
-            <p className="mt-1 whitespace-pre-line text-sm text-gray-700">
+            <p className="mt-1 text-sm whitespace-pre-line text-gray-700">
               {invoice.notes}
             </p>
           </div>
@@ -1052,7 +1220,7 @@ function InvoicePreview({
 
         {(settings.remittanceFirstName || settings.remittanceBankName) && (
           <div className="mt-8 rounded-lg border-2 border-dashed border-gray-300 p-5">
-            <p className="mb-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+            <p className="mb-3 text-[11px] font-bold tracking-wider text-gray-500 uppercase">
               Remittance Information
             </p>
             {(settings.remittanceFirstName || settings.remittanceLastName) && (
@@ -1084,7 +1252,7 @@ function InvoicePreview({
               </p>
             )}
             {settings.remittanceNotes && (
-              <p className="mt-2 whitespace-pre-line text-xs text-gray-500">
+              <p className="mt-2 text-xs whitespace-pre-line text-gray-500">
                 {settings.remittanceNotes}
               </p>
             )}
