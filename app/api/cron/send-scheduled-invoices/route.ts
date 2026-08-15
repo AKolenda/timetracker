@@ -194,7 +194,12 @@ export async function POST(request: Request) {
     const total = subtotal
     const invoiceNumber = `${settings?.invoice_prefix ?? "INV-"}${settings?.next_invoice_number ?? 1}`
     const issueDate = todayIso()
-    const dueDate = addDaysIso(issueDate, Number(settings?.default_invoice_due_days) || 30)
+    const configuredDueDays = Number(settings?.default_invoice_due_days)
+    const dueDays =
+      Number.isFinite(configuredDueDays) && configuredDueDays >= 0
+        ? configuredDueDays
+        : 30
+    const dueDate = addDaysIso(issueDate, dueDays)
 
     if (dryRun) {
       results.push({

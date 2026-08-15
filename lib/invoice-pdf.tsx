@@ -50,6 +50,26 @@ const styles = StyleSheet.create({
     fontFamily: "Courier-Bold",
     textAlign: "right",
   },
+  headerTotalLabel: {
+    marginTop: 8,
+    fontSize: 8,
+    color: COLORS.gray400,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    textAlign: "right",
+  },
+  headerTotalValue: {
+    marginTop: 2,
+    fontSize: 16,
+    fontFamily: "Courier-Bold",
+    textAlign: "right",
+  },
+  headerDueBadge: {
+    marginTop: 2,
+    fontSize: 9,
+    color: COLORS.gray500,
+    textAlign: "right",
+  },
 
   // Bill-to / dates
   metaRow: {
@@ -193,6 +213,7 @@ export function InvoicePdfDocument({
   const remitName = `${settings.remittanceFirstName ?? ""} ${
     settings.remittanceLastName ?? ""
   }`.trim()
+  const dueOnReceipt = invoice.dueDate === invoice.issueDate
 
   return (
     <Document
@@ -217,7 +238,20 @@ export function InvoicePdfDocument({
               </Text>
             ) : null}
           </View>
-          <Text style={styles.invoiceNumberBig}>{invoice.invoiceNumber}</Text>
+          <View>
+            <Text style={styles.invoiceNumberBig}>
+              {invoice.invoiceNumber}
+            </Text>
+            <Text style={styles.headerTotalLabel}>Total Due</Text>
+            <Text style={styles.headerTotalValue}>
+              {formatCurrency(invoice.total)}
+            </Text>
+            <Text style={styles.headerDueBadge}>
+              {dueOnReceipt
+                ? "Due on receipt"
+                : `Due ${fmtDate(invoice.dueDate)}`}
+            </Text>
+          </View>
         </View>
 
         {/* Bill To + dates */}
@@ -237,12 +271,16 @@ export function InvoicePdfDocument({
               <Text style={styles.dateLabel}>Issued: </Text>
               {fmtDate(invoice.issueDate)}
             </Text>
-            <Text style={styles.dateLine}>
-              <Text style={styles.dateLabel}>Due: </Text>
-              {invoice.dueDate === invoice.issueDate
-                ? "Due on receipt"
-                : fmtDate(invoice.dueDate)}
-            </Text>
+            {dueOnReceipt ? (
+              <Text style={styles.dateLine}>
+                <Text style={styles.dateLabel}>Due on receipt</Text>
+              </Text>
+            ) : (
+              <Text style={styles.dateLine}>
+                <Text style={styles.dateLabel}>Due: </Text>
+                {fmtDate(invoice.dueDate)}
+              </Text>
+            )}
           </View>
         </View>
 

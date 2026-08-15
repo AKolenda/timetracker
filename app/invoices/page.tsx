@@ -10,6 +10,9 @@ import {
   Pencil,
   Download,
   Loader2,
+  Check,
+  ChevronDown,
+  MoreHorizontal,
 } from "lucide-react"
 import { toast } from "sonner"
 import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns"
@@ -53,6 +56,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import { PageHeader } from "@/components/page-header"
@@ -68,10 +78,72 @@ const statusStyles: Record<Invoice["status"], string> = {
   overdue: "bg-red-500/10 text-red-600 dark:text-red-400",
 }
 
+const statusDots: Record<Invoice["status"], string> = {
+  draft: "bg-gray-400",
+  sent: "bg-blue-500",
+  paid: "bg-emerald-500",
+  overdue: "bg-red-500",
+}
+
+const statusLabels: Record<Invoice["status"], string> = {
+  draft: "Draft",
+  sent: "Sent",
+  paid: "Paid",
+  overdue: "Overdue",
+}
+
+const STATUS_OPTIONS = Object.keys(statusLabels) as Invoice["status"][]
+
 function invoiceDueLabel(invoice: Invoice): string {
   return invoice.dueDate === invoice.issueDate
     ? "Due on receipt"
     : format(parseISO(invoice.dueDate), "MMM d, yyyy")
+}
+
+function isPastDue(invoice: Invoice): boolean {
+  if (invoice.status === "paid") return false
+  if (invoice.dueDate === invoice.issueDate) return false
+  return parseISO(invoice.dueDate).getTime() < Date.now()
+}
+
+function StatusMenu({
+  invoice,
+  onChange,
+}: {
+  invoice: Invoice
+  onChange: (status: Invoice["status"]) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Change status for ${invoice.invoiceNumber}`}
+          className={`inline-flex items-center gap-1.5 rounded-full py-1 pl-2.5 pr-2 text-xs font-medium transition-colors hover:ring-1 hover:ring-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${statusStyles[invoice.status]}`}
+        >
+          <span
+            className={`size-1.5 rounded-full ${statusDots[invoice.status]}`}
+          />
+          {statusLabels[invoice.status]}
+          <ChevronDown className="size-3 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-36">
+        {STATUS_OPTIONS.map((status) => (
+          <DropdownMenuItem
+            key={status}
+            onClick={() => status !== invoice.status && onChange(status)}
+          >
+            <span className={`size-2 rounded-full ${statusDots[status]}`} />
+            {statusLabels[status]}
+            {status === invoice.status && (
+              <Check className="ml-auto size-3.5 opacity-60" />
+            )}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 export default function InvoicesPage() {
@@ -478,133 +550,231 @@ export default function InvoicesPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Invoice</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Due</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-32" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedInvoices.map((inv) => {
-                const client = getClient(inv.clientId)
-                return (
-                  <TableRow key={inv.id}>
-                    <TableCell className="font-mono text-sm font-medium">
-                      {inv.invoiceNumber}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {client && (
-                          <div
-                            className="size-2 rounded-full"
-                            style={{ backgroundColor: client.color }}
-                          />
-                        )}
-                        <span className="text-sm">{client?.name ?? "—"}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(new Date(inv.issueDate), "MMM d, yyyy")}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {invoiceDueLabel(inv)}
-                    </TableCell>
-                    <TableCell className="font-mono text-sm font-medium">
-                      {formatCurrency(inv.total)}
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={inv.status}
-                        onValueChange={(v) =>
-                          handleStatusChange(inv.id, v as Invoice["status"])
-                        }
-                      >
-                        <SelectTrigger
-                          aria-label={`Change status for ${inv.invoiceNumber}`}
-                          className="h-7 w-[100px] border-0 bg-transparent p-0 shadow-none"
-                        >
-                          <SelectValue>
-                            <Badge
-                              variant="secondary"
-                              className={statusStyles[inv.status]}
-                            >
-                              {inv.status}
-                            </Badge>
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent position="popper" align="start">
-                          <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="sent">Sent</SelectItem>
-                          <SelectItem value="paid">Paid</SelectItem>
-                          <SelectItem value="overdue">Overdue</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => setPreviewInvoice(inv)}
-                        >
-                          <Eye className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => handleDownload(inv)}
-                          disabled={downloadingId === inv.id}
-                          title="Download PDF"
-                        >
-                          {downloadingId === inv.id ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            <Download className="size-3.5" />
+        <>
+          {/* Desktop table */}
+          <Card className="hidden md:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Due</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-32" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedInvoices.map((inv) => {
+                  const client = getClient(inv.clientId)
+                  return (
+                    <TableRow key={inv.id}>
+                      <TableCell className="font-mono text-sm font-medium">
+                        {inv.invoiceNumber}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {client && (
+                            <div
+                              className="size-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: client.color }}
+                            />
                           )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => openEdit(inv)}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => openSend(inv)}
-                          disabled={sendingId === inv.id}
-                          aria-label={`${inv.status === "sent" ? "Reissue" : "Send"} ${inv.invoiceNumber}`}
-                          title={
-                            inv.status === "sent"
-                              ? "Reissue invoice"
-                              : "Send invoice"
+                          <span className="text-sm">{client?.name ?? "—"}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {format(new Date(inv.issueDate), "MMM d, yyyy")}
+                      </TableCell>
+                      <TableCell
+                        className={`font-mono text-xs ${
+                          isPastDue(inv)
+                            ? "font-medium text-red-600 dark:text-red-400"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {invoiceDueLabel(inv)}
+                      </TableCell>
+                      <TableCell className="font-mono text-sm font-medium">
+                        {formatCurrency(inv.total)}
+                      </TableCell>
+                      <TableCell>
+                        <StatusMenu
+                          invoice={inv}
+                          onChange={(status) =>
+                            handleStatusChange(inv.id, status)
                           }
-                        >
-                          <Send className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => setDeleteTarget(inv)}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => setPreviewInvoice(inv)}
+                            aria-label={`Preview ${inv.invoiceNumber}`}
+                            title="Preview"
+                          >
+                            <Eye className="size-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => handleDownload(inv)}
+                            disabled={downloadingId === inv.id}
+                            aria-label={`Download ${inv.invoiceNumber} PDF`}
+                            title="Download PDF"
+                          >
+                            {downloadingId === inv.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Download className="size-3.5" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => openEdit(inv)}
+                            aria-label={`Edit ${inv.invoiceNumber}`}
+                            title="Edit"
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => openSend(inv)}
+                            disabled={sendingId === inv.id}
+                            aria-label={`${inv.status === "sent" ? "Reissue" : "Send"} ${inv.invoiceNumber}`}
+                            title={
+                              inv.status === "sent"
+                                ? "Reissue invoice"
+                                : "Send invoice"
+                            }
+                          >
+                            <Send className="size-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => setDeleteTarget(inv)}
+                            aria-label={`Delete ${inv.invoiceNumber}`}
+                            title="Delete"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </Card>
+
+          {/* Mobile cards */}
+          <div className="space-y-3 md:hidden">
+            {sortedInvoices.map((inv) => {
+              const client = getClient(inv.clientId)
+              return (
+                <Card key={inv.id} className="py-0">
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm font-semibold">
+                          {inv.invoiceNumber}
+                        </p>
+                        <div className="mt-1 flex items-center gap-2">
+                          {client && (
+                            <div
+                              className="size-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: client.color }}
+                            />
+                          )}
+                          <span className="truncate text-sm text-muted-foreground">
+                            {client?.name ?? "—"}
+                          </span>
+                        </div>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </Card>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="-mr-1 -mt-1 shrink-0"
+                            aria-label={`Actions for ${inv.invoiceNumber}`}
+                          >
+                            <MoreHorizontal className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem
+                            onClick={() => setPreviewInvoice(inv)}
+                          >
+                            <Eye className="size-4" /> Preview
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleDownload(inv)}
+                            disabled={downloadingId === inv.id}
+                          >
+                            <Download className="size-4" /> Download PDF
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openEdit(inv)}>
+                            <Pencil className="size-4" /> Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => openSend(inv)}
+                            disabled={sendingId === inv.id}
+                          >
+                            <Send className="size-4" />
+                            {inv.status === "sent" ? "Reissue" : "Send"}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => setDeleteTarget(inv)}
+                          >
+                            <Trash2 className="size-4" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+
+                    <div className="mt-3 flex items-end justify-between gap-3">
+                      <div className="space-y-0.5 text-xs text-muted-foreground">
+                        <p className="font-mono">
+                          Issued {format(new Date(inv.issueDate), "MMM d, yyyy")}
+                        </p>
+                        <p
+                          className={`font-mono ${
+                            isPastDue(inv)
+                              ? "font-medium text-red-600 dark:text-red-400"
+                              : ""
+                          }`}
+                        >
+                          {inv.dueDate === inv.issueDate
+                            ? "Due on receipt"
+                            : `Due ${format(parseISO(inv.dueDate), "MMM d, yyyy")}`}
+                        </p>
+                      </div>
+                      <p className="font-mono text-base font-semibold">
+                        {formatCurrency(inv.total)}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 border-t pt-3">
+                      <StatusMenu
+                        invoice={inv}
+                        onChange={(status) => handleStatusChange(inv.id, status)}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        </>
       )}
 
       {/* Create Invoice Dialog — full-width responsive */}
@@ -614,7 +784,7 @@ export default function InvoicesPage() {
             <DialogTitle>Create Invoice</DialogTitle>
           </DialogHeader>
           <div className="grid gap-6 py-4">
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <div className="grid gap-2">
                 <Label>Client</Label>
                 <Select
@@ -841,7 +1011,7 @@ export default function InvoicesPage() {
           </DialogHeader>
           {editInvoice && (
             <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
                   <Label>Status</Label>
                   <Select
@@ -1125,6 +1295,17 @@ function InvoicePreview({
             <p className="font-mono text-3xl font-bold">
               {invoice.invoiceNumber}
             </p>
+            <p className="mt-2 text-xs font-medium tracking-wider text-gray-400 uppercase">
+              Total Due
+            </p>
+            <p className="font-mono text-xl font-bold">
+              {formatCurrency(invoice.total)}
+            </p>
+            <p className="text-sm text-gray-500">
+              {invoice.dueDate === invoice.issueDate
+                ? "Due on receipt"
+                : `Due ${format(parseISO(invoice.dueDate), "MMM d, yyyy")}`}
+            </p>
           </div>
         </div>
 
@@ -1148,10 +1329,16 @@ function InvoicePreview({
               <span className="font-medium text-gray-700">Issued:</span>{" "}
               {format(new Date(invoice.issueDate), "MMM d, yyyy")}
             </p>
-            <p className="mt-1 text-sm text-gray-500">
-              <span className="font-medium text-gray-700">Due:</span>{" "}
-              {invoiceDueLabel(invoice)}
-            </p>
+            {invoice.dueDate === invoice.issueDate ? (
+              <p className="mt-1 text-sm font-medium text-gray-700">
+                Due on receipt
+              </p>
+            ) : (
+              <p className="mt-1 text-sm text-gray-500">
+                <span className="font-medium text-gray-700">Due:</span>{" "}
+                {invoiceDueLabel(invoice)}
+              </p>
+            )}
           </div>
         </div>
 

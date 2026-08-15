@@ -70,7 +70,14 @@ export async function POST(request: Request) {
       day: "numeric",
       year: "numeric",
     }),
-    dueDate: new Date(Date.now() + (Number(settings?.default_invoice_due_days) || 30) * 86400_000).toLocaleDateString("en-US", {
+    dueDate: new Date(
+      Date.now() +
+        (Number.isFinite(Number(settings?.default_invoice_due_days)) &&
+        Number(settings?.default_invoice_due_days) >= 0
+          ? Number(settings?.default_invoice_due_days)
+          : 30) *
+          86400_000
+    ).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
