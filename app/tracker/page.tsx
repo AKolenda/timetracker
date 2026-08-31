@@ -5,12 +5,10 @@ import {
   Play,
   Pause,
   Square,
-  Plus,
   Trash2,
   Pencil,
   Clock,
   CalendarIcon,
-  ChevronRight,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -55,16 +53,11 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
-import { cn } from "@/lib/utils"
 import type { TimeEntry } from "@/lib/types"
 
 function LiveTimer({
@@ -102,16 +95,6 @@ function LiveTimer({
   )
 }
 
-const emptyManual = {
-  projectId: "",
-  description: "",
-  hours: "",
-  minutes: "",
-  billable: true,
-  date: new Date(),
-}
-
-
 export default function TrackerPage() {
   const {
     data,
@@ -120,9 +103,9 @@ export default function TrackerPage() {
     pauseTimer,
     resumeTimer,
     clearTimer,
-    addTimeEntry,
     updateTimeEntry,
     deleteTimeEntry,
+    updateProject,
     getClient,
     getProject,
   } = useStore()
@@ -130,9 +113,6 @@ export default function TrackerPage() {
   const [timerProject, setTimerProject] = useState("")
   const [timerDesc, setTimerDesc] = useState("")
   const [timerBillable, setTimerBillable] = useState(true)
-  const [manualOpen, setManualOpen] = useState(false)
-  const [manualForm, setManualForm] = useState(emptyManual)
-
   const [editOpen, setEditOpen] = useState(false)
   const [editEntry, setEditEntry] = useState<TimeEntry | null>(null)
   const [editForm, setEditForm] = useState({
@@ -145,7 +125,7 @@ export default function TrackerPage() {
   })
 
   const [deleteTarget, setDeleteTarget] = useState<TimeEntry | null>(null)
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [projectEdit, setProjectEdit] = useState<{ id: string; name: string; rate: string } | null>(null)
 
   const activeTimer = data.activeTimer
 
@@ -204,35 +184,6 @@ export default function TrackerPage() {
     toast.success(`Resumed: ${entry.description || project.name}`)
   }
 
-  async function handleManualSave() {
-    if (!manualForm.projectId) {
-      toast.error("Select a project")
-      return
-    }
-    const hours = parseInt(manualForm.hours) || 0
-    const minutes = parseInt(manualForm.minutes) || 0
-    const duration = hours * 3600 + minutes * 60
-    if (duration <= 0) {
-      toast.error("Duration must be greater than 0")
-      return
-    }
-    const dateStr = format(manualForm.date, "yyyy-MM-dd")
-    await addTimeEntry({
-      projectId: manualForm.projectId,
-      description: manualForm.description,
-      startTime: new Date(`${dateStr}T09:00:00`).toISOString(),
-      endTime: new Date(
-        new Date(`${dateStr}T09:00:00`).getTime() + duration * 1000
-      ).toISOString(),
-      duration,
-      billable: manualForm.billable,
-      date: dateStr,
-    })
-    toast.success("Time entry added")
-    setManualOpen(false)
-    setManualForm(emptyManual)
-  }
-
   function openEdit(entry: TimeEntry) {
     setEditEntry(entry)
     setEditForm({
@@ -289,70 +240,28 @@ export default function TrackerPage() {
     setDeleteTarget(null)
   }
 
-  const sortedEntries = useMemo(() => {
-    const entries = [...data.timeEntries]
+  const sortedEntries = useMemo(
+    () => [...data.timeEntries].sort((a, b) =>
+      `${b.date}${b.startTime ?? ""}`.localeCompare(`${a.date}${a.startTime ?? ""}`)
+    ),
+    [data.timeEntries]
+  )
 
-    // For each (date+description+project) group, find the newest startTime.
-    // We sort groups by that "latest session" so the thing you just worked on
-    // is always at the top of each day.
-    const groupLatest: Record<string, string> = {}
-    for (const e of entries) {
-      const key = `${e.date}\0${e.description}\0${e.projectId}`
-      const st = e.startTime ?? ""
-      if (!groupLatest[key] || st > groupLatest[key]) groupLatest[key] = st
-    }
-
-    return entries.sort((a, b) => {
-      // Primary: date descending
-      const dateCmp = b.date.localeCompare(a.date)
-      if (dateCmp !== 0) return dateCmp
-      // Secondary: group with the most recent session first
-      const keyA = `${a.date}\0${a.description}\0${a.projectId}`
-      const keyB = `${b.date}\0${b.description}\0${b.projectId}`
-      const latestCmp = (groupLatest[keyB] ?? "").localeCompare(groupLatest[keyA] ?? "")
-      if (latestCmp !== 0) return latestCmp
-      // Tertiary: within the same group, newest first
-      return (b.startTime ?? "").localeCompare(a.startTime ?? "")
+  async function saveProjectEdit() {
+    if (!projectEdit?.name.trim()) return
+    await updateProject(projectEdit.id, {
+      name: projectEdit.name.trim(),
+      rate: Number(projectEdit.rate) || 0,
     })
-  }, [data.timeEntries])
-
-  // Collapse consecutive entries with the same date+description+project into groups
-  const entryGroups = useMemo(() => {
-    const groups: { key: string; date: string; entries: TimeEntry[] }[] = []
-    for (const entry of sortedEntries) {
-      const key = `${entry.date}\0${entry.description}\0${entry.projectId}`
-      const last = groups[groups.length - 1]
-      if (last && last.key === key) {
-        last.entries.push(entry)
-      } else {
-        groups.push({ key, date: entry.date, entries: [entry] })
-      }
-    }
-    return groups
-  }, [sortedEntries])
+    toast.success("Project updated")
+    setProjectEdit(null)
+  }
 
   return (
     <>
       <PageHeader
         title="Time Tracker"
-        description="Track and log your working hours"
-        actions={
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setManualForm({
-                ...emptyManual,
-                projectId: data.projects[0]?.id ?? "",
-              })
-              setManualOpen(true)
-            }}
-            disabled={data.projects.length === 0}
-          >
-            <Plus className="size-4" data-icon="inline-start" />
-            Manual Entry
-          </Button>
-        }
+        description="Track each work session as its own entry"
       />
 
       <Card className="mb-6">
@@ -387,16 +296,9 @@ export default function TrackerPage() {
                     {data.projects
                       .filter((p) => p.status === "active")
                       .map((p) => {
-                        const client = getClient(p.clientId)
                         return (
                           <SelectItem key={p.id} value={p.id}>
                             <div className="flex items-center gap-2">
-                              {client && (
-                                <div
-                                  className="size-2 rounded-full"
-                                  style={{ backgroundColor: client.color }}
-                                />
-                              )}
                               {p.name}
                             </div>
                           </SelectItem>
@@ -501,7 +403,7 @@ export default function TrackerPage() {
           </CardContent>
         ) : (
           <CardContent className="pb-4">
-            <div className="overflow-hidden rounded-lg border">
+            <div className="overflow-x-auto rounded-xl border">
               <Table>
             <TableHeader>
               <TableRow>
@@ -514,224 +416,25 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {entryGroups.map((group, gi) => {
-                const first = group.entries[0]
-                const project = getProject(first.projectId)
-                const client = project
-                  ? getClient(project.clientId)
-                  : undefined
-                const prevGroup = entryGroups[gi - 1]
-                const showDivider = !prevGroup || prevGroup.date !== group.date
-                const isMulti = group.entries.length > 1
-                const isExpanded = expandedGroups.has(group.key)
-                const totalDuration = group.entries.reduce((s, e) => s + e.duration, 0)
-                const totalAmount = group.entries.reduce((s, e) => {
-                  const p = getProject(e.projectId)
-                  return e.billable && p ? s + (e.duration / 3600) * p.rate : s
-                }, 0)
-
-                const rows: React.ReactNode[] = []
-
-                {/* Day divider */}
-                if (showDivider) {
-                  const dayEntries = sortedEntries.filter((e) => e.date === group.date)
-                  const dayTotal = dayEntries.reduce((s, e) => s + e.duration, 0)
-                  const dayAmount = dayEntries.reduce((s, e) => {
-                    const p = getProject(e.projectId)
-                    return e.billable && p ? s + (e.duration / 3600) * p.rate : s
-                  }, 0)
-                  rows.push(
-                    <TableRow
-                      key={`divider-${group.date}`}
-                      className="bg-muted/40 hover:bg-muted/40"
-                    >
-                      <TableCell
-                        colSpan={6}
-                        className="py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span>
-                            {format(parseLocalDate(group.date), "EEEE, MMM d, yyyy")}
-                          </span>
-                          <span className="font-mono normal-case tracking-normal">
-                            {formatDuration(dayTotal)}
-                            {dayAmount > 0 && (
-                              <>
-                                {" · "}
-                                {formatCurrency(dayAmount, project?.currency)}
-                              </>
-                            )}
-                          </span>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                }
-
-                {/* Summary row (or single-entry row) */}
-                rows.push(
-                  <TableRow
-                    key={`group-${group.key}`}
-                    className={cn(
-                      isMulti && "cursor-pointer select-none",
-                      isMulti && isExpanded && "border-b-0"
-                    )}
-                    onClick={isMulti ? () => setExpandedGroups((prev) => {
-                      const next = new Set(prev)
-                      next.has(group.key) ? next.delete(group.key) : next.add(group.key)
-                      return next
-                    }) : undefined}
-                  >
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {isMulti && (
-                          <ChevronRight
-                            className={cn(
-                              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                              isExpanded && "rotate-90"
-                            )}
-                          />
-                        )}
-                        <span className="font-medium">
-                          {first.description || "Untitled"}
-                        </span>
-                        {isMulti && (
-                          <Badge
-                            variant="secondary"
-                            className="font-mono text-[10px]"
-                          >
-                            {group.entries.length}
-                          </Badge>
-                        )}
-                        {first.billable && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-500/10 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
-                          >
-                            $
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        {client && (
-                          <div
-                            className="size-2 rounded-full"
-                            style={{ backgroundColor: client.color }}
-                          />
-                        )}
-                        <span className="text-xs">
-                          {project?.name ?? "—"}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(parseLocalDate(first.date), "MMM d, yyyy")}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {formatDuration(isMulti ? totalDuration : first.duration)}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {(isMulti ? totalAmount : (first.billable && project ? (first.duration / 3600) * project.rate : 0)) > 0
-                        ? formatCurrency(
-                            isMulti ? totalAmount : (first.duration / 3600) * (project?.rate ?? 0),
-                            project?.currency
-                          )
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {!isMulti && (
-                        <div className="flex items-center gap-0.5">
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => handleResume(first)}
-                            disabled={!!activeTimer}
-                            title={activeTimer ? "Stop the running timer first" : "Resume this work"}
-                          >
-                            <Play className="size-3.5 fill-current" />
-                          </Button>
-                          <Button variant="ghost" size="icon-xs" onClick={() => openEdit(first)}>
-                            <Pencil className="size-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(first)}>
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        </div>
-                      )}
-                      {isMulti && !isExpanded && (
-                        <div className="flex items-center gap-0.5">
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={(e) => { e.stopPropagation(); handleResume(first) }}
-                            disabled={!!activeTimer}
-                            title={activeTimer ? "Stop the running timer first" : "Resume this work"}
-                          >
-                            <Play className="size-3.5 fill-current" />
-                          </Button>
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                )
-
-                {/* Expanded sub-rows */}
-                if (isMulti && isExpanded) {
-                  group.entries.forEach((entry) => {
-                    const amt =
-                      entry.billable && project
-                        ? (entry.duration / 3600) * project.rate
-                        : 0
-                    rows.push(
-                      <TableRow key={entry.id} className="bg-muted/20">
-                        <TableCell>
-                          <div className="flex items-center gap-2 pl-5">
-                            <span className="text-sm text-muted-foreground">
-                              {entry.startTime
-                                ? format(new Date(entry.startTime), "h:mm a")
-                                : "—"}
-                              {" → "}
-                              {entry.endTime
-                                ? format(new Date(entry.endTime), "h:mm a")
-                                : "—"}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell />
-                        <TableCell />
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {formatDuration(entry.duration)}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {amt > 0 ? formatCurrency(amt, project?.currency) : "—"}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-0.5">
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              onClick={() => handleResume(entry)}
-                              disabled={!!activeTimer}
-                              title={activeTimer ? "Stop the running timer first" : "Resume this work"}
-                            >
-                              <Play className="size-3.5 fill-current" />
-                            </Button>
-                            <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}>
-                              <Pencil className="size-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(entry)}>
-                              <Trash2 className="size-3.5" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })
-                }
-
-                return rows
+              {sortedEntries.map((entry) => {
+                const project = getProject(entry.projectId)
+                const amount = entry.billable && project ? (entry.duration / 3600) * project.rate : 0
+                return <TableRow key={entry.id}>
+                  <TableCell className="font-medium">{entry.description || "Untitled"}</TableCell>
+                  <TableCell>
+                    <button className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
+                      {project?.name ?? "—"}<Pencil className="size-3" />
+                    </button>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{format(parseLocalDate(entry.date), "MMM d, yyyy")}</TableCell>
+                  <TableCell className="font-mono text-xs">{formatDuration(entry.duration)}</TableCell>
+                  <TableCell className="font-mono text-xs">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
+                  <TableCell><div className="flex items-center gap-0.5">
+                    <Button variant="ghost" size="icon-xs" onClick={() => handleResume(entry)} disabled={!!activeTimer}><Play className="size-3.5 fill-current" /></Button>
+                    <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
+                    <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
+                  </div></TableCell>
+                </TableRow>
               })}
             </TableBody>
               </Table>
@@ -740,128 +443,14 @@ export default function TrackerPage() {
         )}
       </Card>
 
-      {/* Manual Entry Dialog */}
-      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+      <Dialog open={!!projectEdit} onOpenChange={(open) => !open && setProjectEdit(null)}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Manual Time Entry</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Edit Project</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label>Project</Label>
-              <Select
-                value={manualForm.projectId}
-                onValueChange={(v) =>
-                  setManualForm({ ...manualForm, projectId: v })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select project" />
-                </SelectTrigger>
-                <SelectContent>
-                  {data.projects.map((p) => {
-                    const client = getClient(p.clientId)
-                    return (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                        {client ? ` (${client.name})` : ""}
-                      </SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="manual-desc">Description</Label>
-              <Input
-                id="manual-desc"
-                value={manualForm.description}
-                onChange={(e) =>
-                  setManualForm({
-                    ...manualForm,
-                    description: e.target.value,
-                  })
-                }
-                placeholder="What did you work on?"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="manual-hours">Hours</Label>
-                <Input
-                  id="manual-hours"
-                  type="number"
-                  min="0"
-                  value={manualForm.hours}
-                  onChange={(e) =>
-                    setManualForm({ ...manualForm, hours: e.target.value })
-                  }
-                  placeholder="0"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="manual-minutes">Minutes</Label>
-                <Input
-                  id="manual-minutes"
-                  type="number"
-                  min="0"
-                  max="59"
-                  value={manualForm.minutes}
-                  onChange={(e) =>
-                    setManualForm({ ...manualForm, minutes: e.target.value })
-                  }
-                  placeholder="0"
-                />
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>Date</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "justify-start text-left font-normal",
-                      !manualForm.date && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="size-4" data-icon="inline-start" />
-                    {manualForm.date
-                      ? format(manualForm.date, "PPP")
-                      : "Pick a date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={manualForm.date}
-                    onSelect={(d) =>
-                      d && setManualForm({ ...manualForm, date: d })
-                    }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="manual-billable"
-                checked={manualForm.billable}
-                onCheckedChange={(v) =>
-                  setManualForm({ ...manualForm, billable: v === true })
-                }
-              />
-              <Label htmlFor="manual-billable" className="text-sm">
-                Billable
-              </Label>
-            </div>
+            <div className="grid gap-2"><Label>Project name</Label><Input value={projectEdit?.name ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, name: e.target.value } : p)} /></div>
+            <div className="grid gap-2"><Label>Hourly rate</Label><Input type="number" min="0" step="0.01" value={projectEdit?.rate ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, rate: e.target.value } : p)} /></div>
           </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
-            </DialogClose>
-            <Button onClick={handleManualSave}>Add Entry</Button>
-          </DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setProjectEdit(null)}>Cancel</Button><Button onClick={saveProjectEdit}>Save changes</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -13,6 +13,7 @@ import {
   Check,
   ChevronDown,
   MoreHorizontal,
+  Search,
 } from "lucide-react"
 import { toast } from "sonner"
 import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns"
@@ -167,6 +168,7 @@ export default function InvoicesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Invoice | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [search, setSearch] = useState("")
 
   const [selectedClientId, setSelectedClientId] = useState("")
   const [taxRate, setTaxRate] = useState("0")
@@ -510,6 +512,15 @@ export default function InvoicesPage() {
       ),
     [data.invoices]
   )
+  const filteredInvoices = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return sortedInvoices
+    return sortedInvoices.filter((invoice) => {
+      const client = getClient(invoice.clientId)
+      return [invoice.invoiceNumber, client?.name, invoice.status, invoice.notes]
+        .some((value) => value?.toLowerCase().includes(query))
+    })
+  }, [sortedInvoices, search, getClient])
 
   return (
     <>
@@ -528,7 +539,11 @@ export default function InvoicesPage() {
         }
       />
 
-      {sortedInvoices.length === 0 ? (
+      <div className="mb-5 max-w-md">
+        <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" placeholder="Search invoice number, client, or status" /></div>
+      </div>
+
+      {filteredInvoices.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
@@ -566,7 +581,7 @@ export default function InvoicesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedInvoices.map((inv) => {
+              {filteredInvoices.map((inv) => {
                   const client = getClient(inv.clientId)
                   return (
                     <TableRow key={inv.id}>
@@ -675,7 +690,7 @@ export default function InvoicesPage() {
 
           {/* Mobile cards */}
           <div className="space-y-3 md:hidden">
-            {sortedInvoices.map((inv) => {
+            {filteredInvoices.map((inv) => {
               const client = getClient(inv.clientId)
               return (
                 <Card key={inv.id} className="py-0">

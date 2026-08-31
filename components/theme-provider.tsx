@@ -1,71 +1,36 @@
 "use client"
 
 import * as React from "react"
-import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
 
-function ThemeProvider({
-  children,
-  ...props
-}: React.ComponentProps<typeof NextThemesProvider>) {
-  return (
-    <NextThemesProvider
-      attribute="class"
-      defaultTheme="system"
-      enableSystem
-      disableTransitionOnChange
-      {...props}
-    >
-      <ThemeHotkey />
-      {children}
-    </NextThemesProvider>
-  )
-}
+type Theme = "light" | "dark"
 
-function isTypingTarget(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) {
-    return false
-  }
+const ThemeContext = React.createContext<{
+  resolvedTheme: Theme
+  setTheme: (theme: Theme) => void
+} | null>(null)
 
-  return (
-    target.isContentEditable ||
-    target.tagName === "INPUT" ||
-    target.tagName === "TEXTAREA" ||
-    target.tagName === "SELECT"
-  )
-}
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [resolvedTheme, setResolvedTheme] = React.useState<Theme>(() => {
+    if (typeof window === "undefined") return "light"
+    const saved = localStorage.getItem("timetracker-theme") as Theme | null
+    if (saved === "dark" || saved === "light") return saved
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+  })
 
-function ThemeHotkey() {
-  const { resolvedTheme, setTheme } = useTheme()
+  const setTheme = React.useCallback((theme: Theme) => {
+    setResolvedTheme(theme)
+    localStorage.setItem("timetracker-theme", theme)
+  }, [])
 
   React.useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.repeat) {
-        return
-      }
+    document.documentElement.classList.toggle("dark", resolvedTheme === "dark")
+  }, [resolvedTheme])
 
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return
-      }
-
-      if (typeof event.key !== "string" || event.key.toLowerCase() !== "d") {
-        return
-      }
-
-      if (isTypingTarget(event.target)) {
-        return
-      }
-
-      setTheme(resolvedTheme === "dark" ? "light" : "dark")
-    }
-
-    window.addEventListener("keydown", onKeyDown)
-
-    return () => {
-      window.removeEventListener("keydown", onKeyDown)
-    }
-  }, [resolvedTheme, setTheme])
-
-  return null
+  return <ThemeContext.Provider value={{ resolvedTheme, setTheme }}>{children}</ThemeContext.Provider>
 }
 
-export { ThemeProvider }
+export function useTheme() {
+  const theme = React.useContext(ThemeContext)
+  if (!theme) throw new Error("useTheme must be used within ThemeProvider")
+  return theme
+}

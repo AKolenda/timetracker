@@ -45,6 +45,7 @@ interface StoreContext {
 
   addProject: (project: Omit<Project, "id" | "createdAt">) => Promise<Project>
   updateProject: (id: string, updates: Partial<Project>) => Promise<void>
+  mergeProject: (sourceId: string, targetId: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
 
   addTimeEntry: (entry: Omit<TimeEntry, "id">) => Promise<TimeEntry>
@@ -86,47 +87,53 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   const loadAll = useCallback(async () => {
-    const db = getDataProvider()
-    const [clients, projects, timeEntries, expenses, invoices, settings] =
-      await Promise.all([
-        db.getClients(),
-        db.getProjects(),
-        db.getTimeEntries(),
-        db.getExpenses(),
-        db.getInvoices(),
-        db.getSettings(),
-      ])
-
-    // Load active timer from Supabase (cross-browser), fall back to localStorage
-    let activeTimer: ActiveTimer | null = null
     try {
-      activeTimer = await db.getActiveTimer()
-    } catch {}
-    if (!activeTimer && typeof window !== "undefined") {
-      try {
-        const raw = localStorage.getItem(TIMER_KEY)
-        if (raw) activeTimer = JSON.parse(raw)
-      } catch {}
-    }
-    // Keep localStorage in sync as a fast cache for same-browser tab sync
-    if (typeof window !== "undefined") {
-      if (activeTimer) {
-        localStorage.setItem(TIMER_KEY, JSON.stringify(activeTimer))
-      } else {
-        localStorage.removeItem(TIMER_KEY)
-      }
-    }
+      const db = getDataProvider()
+      const [clients, projects, timeEntries, expenses, invoices, settings] =
+        await Promise.all([
+          db.getClients(),
+          db.getProjects(),
+          db.getTimeEntries(),
+          db.getExpenses(),
+          db.getInvoices(),
+          db.getSettings(),
+        ])
 
-    setData({
-      clients,
-      projects,
-      timeEntries,
-      expenses,
-      invoices,
-      settings,
-      activeTimer,
-    })
-    setLoading(false)
+      // Load active timer from Supabase (cross-browser), fall back to localStorage
+      let activeTimer: ActiveTimer | null = null
+      try {
+        activeTimer = await db.getActiveTimer()
+      } catch {}
+      if (!activeTimer && typeof window !== "undefined") {
+        try {
+          const raw = localStorage.getItem(TIMER_KEY)
+          if (raw) activeTimer = JSON.parse(raw)
+        } catch {}
+      }
+      // Keep localStorage in sync as a fast cache for same-browser tab sync
+      if (typeof window !== "undefined") {
+        if (activeTimer) {
+          localStorage.setItem(TIMER_KEY, JSON.stringify(activeTimer))
+        } else {
+          localStorage.removeItem(TIMER_KEY)
+        }
+      }
+
+      setData({
+        clients,
+        projects,
+        timeEntries,
+        expenses,
+        invoices,
+        settings,
+        activeTimer,
+      })
+    } catch {
+      // The app can still show its empty state while a database is unavailable.
+      setData(defaultData)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -217,6 +224,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     []
   )
+
+  const mergeProject = useCallback(async (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return
+    const db = getDataProvider()
+    const sourceEntries = data.timeEntries.filter((entry) => entry.projectId === sourceId)
+    const sourceExpenses = data.expenses.filter((expense) => expense.projectId === sourceId)
+    const migratedTimer = data.activeTimer?.projectId === sourceId
+      ? { ...data.activeTimer, projectId: targetId }
+      : null
+    await Promise.all([
+      ...sourceEntries.map((entry) => db.updateTimeEntry(entry.id, { projectId: targetId })),
+      ...sourceExpenses.map((expense) => db.updateExpense(expense.id, { projectId: targetId })),
+      ...(migratedTimer ? [db.setActiveTimer(migratedTimer)] : []),
+    ])
+    await db.deleteProject(sourceId)
+    setData((d) => ({
+      ...d,
+      projects: d.projects.filter((project) => project.id !== sourceId),
+      timeEntries: d.timeEntries.map((entry) => entry.projectId === sourceId ? { ...entry, projectId: targetId } : entry),
+      expenses: d.expenses.map((expense) => expense.projectId === sourceId ? { ...expense, projectId: targetId } : expense),
+      activeTimer: migratedTimer ?? d.activeTimer,
+    }))
+  }, [data.timeEntries, data.expenses])
 
   const deleteProject = useCallback(async (id: string) => {
     const db = getDataProvider()
@@ -485,7 +515,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         updateClient,
         deleteClient,
         addProject,
-        updateProject,
+    updateProject,
+    mergeProject,
         deleteProject,
         addTimeEntry,
         updateTimeEntry,

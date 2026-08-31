@@ -202,8 +202,8 @@ export default function CalendarPage() {
   return (
     <>
       <PageHeader
-        title="Calendar"
-        description="Earnings, expenses, and payment schedule"
+        title="Calendar & Reports"
+        description="Your monthly earnings, expenses, hours, and payment schedule"
       />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -310,7 +310,7 @@ export default function CalendarPage() {
                     type="button"
                     onClick={() => setSelectedDate(day)}
                     className={cn(
-                      "relative min-h-[72px] rounded-md border p-1.5 text-left transition-colors hover:bg-muted/50",
+                    "relative min-h-[56px] rounded-lg border p-1 text-left transition-colors hover:bg-muted/50 sm:min-h-[72px] sm:p-1.5",
                       !inMonth && "opacity-30",
                       selected && "ring-2 ring-foreground",
                       today_ && "border-foreground/30"

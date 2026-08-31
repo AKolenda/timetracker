@@ -237,6 +237,8 @@ export default function ExpensesPage() {
                 <TableHead>Description</TableHead>
                 <TableHead>Project</TableHead>
                 <TableHead>Category</TableHead>
+                <TableHead>Invoice</TableHead>
+                <TableHead>Invoiced</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead className="w-10" />
@@ -245,26 +247,11 @@ export default function ExpensesPage() {
             <TableBody>
               {sortedExpenses.map((expense) => {
                 const project = getProject(expense.projectId)
-                const client = project
-                  ? getClient(project.clientId)
-                  : undefined
                 return (
                   <TableRow key={expense.id}>
                     <TableCell>
                       <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">
-                            {expense.description}
-                          </span>
-                          {expense.invoiced && (
-                            <Badge
-                              variant="secondary"
-                              className="bg-blue-500/10 text-[10px] text-blue-600 dark:text-blue-400"
-                            >
-                              Invoiced
-                            </Badge>
-                          )}
-                        </div>
+                        <span className="font-medium">{expense.description}</span>
                         {expense.notes && (
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {expense.notes}
@@ -273,17 +260,15 @@ export default function ExpensesPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        {client && (
-                          <div
-                            className="size-2 rounded-full"
-                            style={{ backgroundColor: client.color }}
-                          />
-                        )}
-                        <span className="text-xs">
-                          {project?.name ?? "—"}
-                        </span>
-                      </div>
+                      <span className="text-xs text-muted-foreground">{project?.name ?? "—"}</span>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {data.invoices.find((invoice) => invoice.lineItems.some((item) => item.type === "expense" && item.sourceId === expense.id))?.invoiceNumber ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className={expense.invoiced ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" : ""}>
+                        {expense.invoiced ? "Yes" : "No"}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Badge

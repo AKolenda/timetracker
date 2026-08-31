@@ -6,6 +6,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  Merge,
   FolderKanban,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -55,22 +56,7 @@ const emptyForm = {
   rate: "",
   currency: "USD",
   status: "active" as Project["status"],
-  color: "",
 }
-
-const PROJECT_COLORS = [
-  "",
-  "#6366f1",
-  "#8b5cf6",
-  "#ec4899",
-  "#f43f5e",
-  "#f97316",
-  "#eab308",
-  "#22c55e",
-  "#14b8a6",
-  "#06b6d4",
-  "#3b82f6",
-]
 
 const statusStyles: Record<Project["status"], string> = {
   active: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -83,6 +69,7 @@ export default function ProjectsPage() {
     data,
     addProject,
     updateProject,
+    mergeProject,
     deleteProject,
     getClient,
     getTimeEntriesByProject,
@@ -90,6 +77,8 @@ export default function ProjectsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Project | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [mergeSource, setMergeSource] = useState<Project | null>(null)
+  const [mergeTargetId, setMergeTargetId] = useState("")
 
   function openCreate() {
     setEditing(null)
@@ -108,7 +97,6 @@ export default function ProjectsPage() {
       rate: project.rate.toString(),
       currency: project.currency,
       status: project.status,
-      color: project.color ?? "",
     })
     setDialogOpen(true)
   }
@@ -128,7 +116,7 @@ export default function ProjectsPage() {
       rate: parseFloat(form.rate) || 0,
       currency: form.currency,
       status: form.status,
-      color: form.color,
+      color: "",
     }
     if (editing) {
       await updateProject(editing.id, payload)
@@ -143,6 +131,14 @@ export default function ProjectsPage() {
   async function handleDelete(project: Project) {
     await deleteProject(project.id)
     toast.success("Project deleted")
+  }
+
+  async function handleMerge() {
+    if (!mergeSource || !mergeTargetId) return
+    await mergeProject(mergeSource.id, mergeTargetId)
+    toast.success("Project merged; entries and expenses were moved")
+    setMergeSource(null)
+    setMergeTargetId("")
   }
 
   return (
@@ -217,13 +213,6 @@ export default function ProjectsPage() {
                   <TableRow key={project.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <div
-                          className="size-2 rounded-full"
-                          style={{
-                            backgroundColor:
-                              project.color || client?.color || "transparent",
-                          }}
-                        />
                         <span className="font-medium">{project.name}</span>
                       </div>
                     </TableCell>
@@ -260,6 +249,15 @@ export default function ProjectsPage() {
                           >
                             <Pencil className="size-4" />
                             Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setMergeSource(project)
+                              setMergeTargetId("")
+                            }}
+                          >
+                            <Merge className="size-4" />
+                            Merge into…
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => handleDelete(project)}
@@ -364,46 +362,6 @@ export default function ProjectsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2">
-              <Label>Color</Label>
-              <div className="flex flex-wrap items-center gap-2">
-                {PROJECT_COLORS.map((color) => {
-                  const isClientFallback = color === ""
-                  const fallbackClientColor = getClient(form.clientId)?.color
-                  const display = isClientFallback
-                    ? fallbackClientColor
-                    : color
-                  const selected = form.color === color
-                  return (
-                    <button
-                      key={color || "client-default"}
-                      type="button"
-                      onClick={() => setForm({ ...form, color })}
-                      title={isClientFallback ? "Use client color" : color}
-                      className="relative size-7 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all"
-                      style={{
-                        backgroundColor: display ?? "transparent",
-                        backgroundImage: isClientFallback && !display
-                          ? "repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.2) 3px, rgba(255,255,255,0.2) 6px)"
-                          : undefined,
-                        ["--tw-ring-color" as string]: selected
-                          ? display ?? "var(--foreground)"
-                          : "transparent",
-                      }}
-                    >
-                      {isClientFallback && (
-                        <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-white/80">
-                          C
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                <span className="font-mono">C</span> = inherit from client.
-              </p>
-            </div>
           </div>
           <DialogFooter>
             <DialogClose asChild>
@@ -413,6 +371,15 @@ export default function ProjectsPage() {
               {editing ? "Save Changes" : "Create Project"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!mergeSource} onOpenChange={(open) => !open && setMergeSource(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Merge project</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Move all time entries and expenses from <span className="font-medium text-foreground">{mergeSource?.name}</span> into another project. The original project will be removed.</p>
+          <div className="grid gap-2 py-2"><Label>Merge into</Label><Select value={mergeTargetId} onValueChange={setMergeTargetId}><SelectTrigger><SelectValue placeholder="Choose a project" /></SelectTrigger><SelectContent>{data.projects.filter((project) => project.id !== mergeSource?.id && project.clientId === mergeSource?.clientId).map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
+          <DialogFooter><Button variant="outline" onClick={() => setMergeSource(null)}>Cancel</Button><Button disabled={!mergeTargetId} onClick={handleMerge}>Merge projects</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </>
