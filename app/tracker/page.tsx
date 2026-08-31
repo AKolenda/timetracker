@@ -12,6 +12,7 @@ import {
   Download,
   Plus,
   LoaderCircle,
+  TriangleAlert,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -186,6 +187,12 @@ export default function TrackerPage() {
     }
   }, [])
 
+  // Load a quiet status snapshot on arrival so forgotten Agent Time is visible
+  // without making the user open the import flow first.
+  useEffect(() => {
+    void loadAgentTime(true)
+  }, [])
+
   function saveProjectMapping(agentProject: string, projectId: string) {
     setProjectMappings((current) => {
       const next = { ...current, [agentProject]: projectId }
@@ -194,7 +201,7 @@ export default function TrackerPage() {
     })
   }
 
-  async function loadAgentTime() {
+  async function loadAgentTime(silent = false) {
     setAgentTimeLoading(true)
     try {
       const gap = Math.max(0, Number(gapMinutes) || 15)
@@ -204,7 +211,7 @@ export default function TrackerPage() {
       setAgentTime(payload)
       setAgentProjectFilter("all")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
+      if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
     } finally {
       setAgentTimeLoading(false)
     }
@@ -411,6 +418,45 @@ export default function TrackerPage() {
     [data.timeEntries]
   )
 
+  const unimportedAgentTime = useMemo(() => {
+    if (!agentTime) return { seconds: 0, blocks: 0, unmappedProjects: [] as string[] }
+
+    const occupiedByProject = new Map<string, TimeRange[]>()
+    for (const entry of data.timeEntries) {
+      if (!entry.startTime || !entry.endTime) continue
+      const start = new Date(entry.startTime).getTime()
+      const end = new Date(entry.endTime).getTime()
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
+      const occupied = occupiedByProject.get(entry.projectId) ?? []
+      occupied.push({ start, end })
+      occupiedByProject.set(entry.projectId, occupied)
+    }
+
+    let seconds = 0
+    let blocks = 0
+    const unmappedProjects = new Set<string>()
+    for (const interval of agentTime.intervals) {
+      const start = new Date(interval.start).getTime()
+      const end = new Date(interval.end).getTime()
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
+      const projectId = projectMappings[interval.project]
+      if (!projectId) {
+        seconds += Math.floor((end - start) / 1000)
+        blocks++
+        unmappedProjects.add(interval.project)
+        continue
+      }
+      const gaps = subtractRanges({ start, end }, occupiedByProject.get(projectId) ?? [])
+      const uncovered = gaps.reduce((total, gap) => total + Math.floor((gap.end - gap.start) / 1000), 0)
+      if (uncovered > 0) {
+        seconds += uncovered
+        blocks++
+      }
+    }
+
+    return { seconds, blocks, unmappedProjects: [...unmappedProjects].sort() }
+  }, [agentTime, data.timeEntries, projectMappings])
+
   async function saveProjectEdit() {
     if (!projectEdit?.name.trim()) return
     await updateProject(projectEdit.id, {
@@ -554,6 +600,27 @@ export default function TrackerPage() {
           )}
         </CardContent>
       </Card>
+
+      {unimportedAgentTime.seconds > 0 && (
+        <Card className="mb-6 border-amber-500/40 bg-amber-500/5">
+          <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-3">
+              <TriangleAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div>
+                <p className="font-medium">{formatDuration(unimportedAgentTime.seconds)} of Agent Time has not been imported</p>
+                <p className="text-sm text-muted-foreground">
+                  {unimportedAgentTime.blocks} {unimportedAgentTime.blocks === 1 ? "block is" : "blocks are"} not covered by an existing timed entry.
+                  {unimportedAgentTime.unmappedProjects.length > 0 && ` Map ${unimportedAgentTime.unmappedProjects.join(", ")} to a client project before importing.`}
+                </p>
+              </div>
+            </div>
+            <Button variant="outline" className="shrink-0" onClick={openAgentTimeImport}>
+              <Download className="size-3.5" data-icon="inline-start" />
+              Review and import
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
