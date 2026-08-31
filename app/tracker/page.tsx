@@ -13,6 +13,7 @@ import {
   Plus,
   LoaderCircle,
   TriangleAlert,
+  ChevronsUpDown,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -58,6 +59,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
@@ -81,6 +83,7 @@ type AgentTimeResponse = {
 }
 
 type TimeRange = { start: number; end: number }
+const PERSONAL_AGENT_PROJECT = "__personal__"
 
 function subtractRanges(source: TimeRange, occupied: TimeRange[]) {
   let cursor = source.start
@@ -177,6 +180,7 @@ export default function TrackerPage() {
   const [agentProjectFilter, setAgentProjectFilter] = useState("all")
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>({})
   const [agentTimeStartDate, setAgentTimeStartDate] = useState<string | null>(null)
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false)
 
   const activeTimers = data.activeTimers
 
@@ -228,6 +232,11 @@ export default function TrackerPage() {
     [agentTime, agentTimeCutoff]
   )
 
+  const importableAgentIntervals = useMemo(
+    () => availableAgentIntervals.filter((interval) => projectMappings[interval.project] !== PERSONAL_AGENT_PROJECT),
+    [availableAgentIntervals, projectMappings]
+  )
+
   const agentTimeReviewIntervals = useMemo(
     () => availableAgentIntervals
       .filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter)
@@ -263,7 +272,7 @@ export default function TrackerPage() {
 
   async function importAgentTime() {
     if (!agentTime) return
-    const selected = availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter)
+    const selected = importableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter)
     const missing = [...new Set(selected.map((interval) => interval.project))]
       .filter((project) => !projectMappings[project])
     if (missing.length) {
@@ -476,6 +485,7 @@ export default function TrackerPage() {
       const end = new Date(interval.end).getTime()
       if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
       const projectId = projectMappings[interval.project]
+      if (projectId === PERSONAL_AGENT_PROJECT) continue
       if (!projectId) {
         seconds += Math.floor((end - start) / 1000)
         blocks++
@@ -518,34 +528,35 @@ export default function TrackerPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className="flex min-w-0 items-center gap-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
                 <Input
                   placeholder="What are you working on?"
                   value={timerDesc}
                   onChange={(e) => setTimerDesc(e.target.value)}
                   className="h-10 min-w-0 flex-1"
                 />
-                <Select
-                  value={timerProject}
-                  onValueChange={setTimerProject}
-                >
-                  <SelectTrigger className="data-[size=default]:h-10 w-[200px] shrink-0">
-                    <SelectValue placeholder="Select project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {data.projects
-                      .filter((p) => p.status === "active")
-                      .map((p) => {
-                        return (
-                          <SelectItem key={p.id} value={p.id}>
-                            <div className="flex items-center gap-2">
-                              {p.name}
-                            </div>
-                          </SelectItem>
-                        )
-                      })}
-                  </SelectContent>
-                </Select>
+                <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 w-[260px] max-w-[58vw] justify-between sm:max-w-none" >
+                      <span className="truncate">{timerProject ? (() => { const project = getProject(timerProject); const client = project ? getClient(project.clientId) : undefined; return project ? `${client?.name ? `${client.name} — ` : ""}${project.name}` : "Select project" })() : "Select project"}</span>
+                      <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-1">
+                    <Command>
+                      <CommandInput placeholder="Search projects or clients…" />
+                      <CommandList>
+                        <CommandEmpty>No active project found.</CommandEmpty>
+                        <CommandGroup>
+                          {data.projects.filter((project) => project.status === "active").map((project) => {
+                            const client = getClient(project.clientId)
+                            return <CommandItem key={project.id} value={`${project.name} ${client?.name ?? ""}`} onSelect={() => { setTimerProject(project.id); setProjectPickerOpen(false) }}><span className="min-w-0"><span className="block truncate">{project.name}</span>{client && <span className="block truncate text-xs text-muted-foreground">{client.name}</span>}</span></CommandItem>
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Checkbox
                     id="timer-billable"
@@ -722,7 +733,7 @@ export default function TrackerPage() {
             {agentTime && <>
               <div className="grid gap-2"><Label>Agent Time project to show</Label><Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All projects ({availableAgentIntervals.length} intervals)</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-3 rounded-xl border p-3">
-                {[...new Set(availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).map((interval) => interval.project))].map((agentProject) => <div key={agentProject} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
+                {[...new Set(availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).map((interval) => interval.project))].map((agentProject) => <div key={agentProject} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
               </div>
               <div className="overflow-hidden rounded-lg border">
                 <div className="border-b bg-muted/35 px-3 py-2"><p className="text-sm font-medium">Review import</p><p className="text-xs text-muted-foreground">These are the exact Agent Time blocks that will be checked for overlap before importing.</p></div>
@@ -730,13 +741,14 @@ export default function TrackerPage() {
                   <Table>
                     <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Agent Time project</TableHead><TableHead>Maps to</TableHead><TableHead>Duration</TableHead></TableRow></TableHeader>
                     <TableBody>{agentTimeReviewIntervals.map((interval) => {
-                      const mappedProject = projectMappings[interval.project] ? getProject(projectMappings[interval.project]) : undefined
-                      return <TableRow key={interval.id}><TableCell className="whitespace-nowrap font-mono text-xs">{format(interval.reviewStart, "MMM d, h:mm a")} – {format(interval.reviewEnd, "h:mm a")}</TableCell><TableCell className="text-xs">{interval.project}<span className="block text-muted-foreground">{interval.agents.join(" + ") || "coding"}</span></TableCell><TableCell className="text-xs">{mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : <span className="text-amber-600 dark:text-amber-400">Needs mapping</span>}</TableCell><TableCell className="whitespace-nowrap font-mono text-xs">{formatDuration(interval.reviewDuration)}</TableCell></TableRow>
+                      const mapping = projectMappings[interval.project]
+                      const mappedProject = mapping && mapping !== PERSONAL_AGENT_PROJECT ? getProject(mapping) : undefined
+                      return <TableRow key={interval.id} className={mapping === PERSONAL_AGENT_PROJECT ? "opacity-55" : undefined}><TableCell className="whitespace-nowrap font-mono text-xs">{format(interval.reviewStart, "MMM d, h:mm a")} – {format(interval.reviewEnd, "h:mm a")}</TableCell><TableCell className="text-xs">{interval.project}<span className="block text-muted-foreground">{interval.agents.join(" + ") || "coding"}</span></TableCell><TableCell className="text-xs">{mapping === PERSONAL_AGENT_PROJECT ? <span className="text-muted-foreground">Personal — won&apos;t import</span> : mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : <span className="text-amber-600 dark:text-amber-400">Needs mapping</span>}</TableCell><TableCell className="whitespace-nowrap font-mono text-xs">{formatDuration(interval.reviewDuration)}</TableCell></TableRow>
                     })}</TableBody>
                   </Table>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">{availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).length} intervals ready. Existing time entries with exact times are automatically excluded.</p>
+              <p className="text-xs text-muted-foreground">{importableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).length} intervals ready to import. {availableAgentIntervals.length - importableAgentIntervals.length > 0 && `${availableAgentIntervals.length - importableAgentIntervals.length} personal interval${availableAgentIntervals.length - importableAgentIntervals.length === 1 ? " is" : "s are"} excluded. `}Existing time entries with exact times are automatically excluded.</p>
             </>}
             {!agentTime && !agentTimeLoading && <p className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Load Agent Time to choose projects and review available intervals.</p>}
           </div>
