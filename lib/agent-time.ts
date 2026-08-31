@@ -4,7 +4,7 @@ export const DEFAULT_AGENT_TIME_GAP_MINUTES = 15
 
 // The Agent Time desktop service is intentionally private to the local network.
 // Deployments may override this, but the VM can work without any cloud configuration.
-const AGENT_TIME_URL = process.env.AGENT_TIME_REMOTE_URL || "http://10.40.40.10:8765/api/data"
+const AGENT_TIME_URL = process.env.AGENT_TIME_REMOTE_URL || "http://10.40.40.10:8080/api/data"
 const REQUEST_TIMEOUT_MS = 5_000
 const MAX_GAP_MINUTES = 24 * 60
 
