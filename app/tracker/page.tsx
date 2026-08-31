@@ -65,6 +65,7 @@ import { localDateString, parseLocalDate } from "@/lib/datetime"
 import type { TimeEntry } from "@/lib/types"
 
 type AgentTimeInterval = {
+  id: string
   start: string
   end: string
   project: string
@@ -225,6 +226,18 @@ export default function TrackerPage() {
   const availableAgentIntervals = useMemo(
     () => agentTime?.intervals.filter((interval) => !agentTimeCutoff || new Date(interval.end).getTime() > agentTimeCutoff) ?? [],
     [agentTime, agentTimeCutoff]
+  )
+
+  const agentTimeReviewIntervals = useMemo(
+    () => availableAgentIntervals
+      .filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter)
+      .map((interval) => {
+        const start = Math.max(new Date(interval.start).getTime(), agentTimeCutoff ?? -Infinity)
+        const end = new Date(interval.end).getTime()
+        return { ...interval, reviewStart: new Date(start), reviewEnd: new Date(end), reviewDuration: Math.max(0, Math.floor((end - start) / 1000)) }
+      })
+      .filter((interval) => interval.reviewDuration > 0),
+    [agentProjectFilter, agentTimeCutoff, availableAgentIntervals]
   )
 
   async function loadAgentTime(silent = false) {
@@ -710,6 +723,18 @@ export default function TrackerPage() {
               <div className="grid gap-2"><Label>Agent Time project to show</Label><Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All projects ({availableAgentIntervals.length} intervals)</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-3 rounded-xl border p-3">
                 {[...new Set(availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).map((interval) => interval.project))].map((agentProject) => <div key={agentProject} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
+              </div>
+              <div className="overflow-hidden rounded-lg border">
+                <div className="border-b bg-muted/35 px-3 py-2"><p className="text-sm font-medium">Review import</p><p className="text-xs text-muted-foreground">These are the exact Agent Time blocks that will be checked for overlap before importing.</p></div>
+                <div className="max-h-56 overflow-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Agent Time project</TableHead><TableHead>Maps to</TableHead><TableHead>Duration</TableHead></TableRow></TableHeader>
+                    <TableBody>{agentTimeReviewIntervals.map((interval) => {
+                      const mappedProject = projectMappings[interval.project] ? getProject(projectMappings[interval.project]) : undefined
+                      return <TableRow key={interval.id}><TableCell className="whitespace-nowrap font-mono text-xs">{format(interval.reviewStart, "MMM d, h:mm a")} – {format(interval.reviewEnd, "h:mm a")}</TableCell><TableCell className="text-xs">{interval.project}<span className="block text-muted-foreground">{interval.agents.join(" + ") || "coding"}</span></TableCell><TableCell className="text-xs">{mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : <span className="text-amber-600 dark:text-amber-400">Needs mapping</span>}</TableCell><TableCell className="whitespace-nowrap font-mono text-xs">{formatDuration(interval.reviewDuration)}</TableCell></TableRow>
+                    })}</TableBody>
+                  </Table>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">{availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).length} intervals ready. Existing time entries with exact times are automatically excluded.</p>
             </>}
