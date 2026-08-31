@@ -530,6 +530,7 @@ export default function TrackerPage() {
             <div className="flex flex-col gap-3">
               <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_260px_auto_auto] sm:items-center">
                 <Input
+                  data-testid="timer-description"
                   placeholder="What are you working on?"
                   value={timerDesc}
                   onChange={(e) => setTimerDesc(e.target.value)}
@@ -537,7 +538,7 @@ export default function TrackerPage() {
                 />
                 <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 w-full justify-between" >
+                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 w-full justify-between" >
                       <span className="truncate">{timerProject ? (() => { const project = getProject(timerProject); const client = project ? getClient(project.clientId) : undefined; return project ? `${client?.name ? `${client.name} — ` : ""}${project.name}` : "Select project" })() : "Select project"}</span>
                       <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                     </Button>
@@ -559,6 +560,7 @@ export default function TrackerPage() {
                 </Popover>
                 <div className="flex h-10 items-center gap-1.5">
                   <Checkbox
+                    data-testid="timer-billable"
                     id="timer-billable"
                     checked={timerBillable}
                     onCheckedChange={(v) => setTimerBillable(v === true)}
@@ -571,6 +573,7 @@ export default function TrackerPage() {
                   </Label>
                 </div>
                 <Button
+                  data-testid="timer-start"
                   onClick={handleStart}
                   className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 sm:w-auto"
                 >
@@ -581,7 +584,7 @@ export default function TrackerPage() {
 
               {activeTimers.length === 0 ? <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"><Clock className="size-5" />No active timers</div> : <div className="grid gap-2">{activeTimers.map((timer) => {
                 const project = getProject(timer.projectId)
-                return <div key={timer.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                return <div key={timer.id} data-testid="active-timer" className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
                   <Clock className="size-5 shrink-0 text-muted-foreground" />
                   <div className="min-w-[9rem] flex-1"><p className="font-medium">{timer.description || project?.name || "Untitled"}</p><p className="text-xs text-muted-foreground">{project?.name ?? "Unknown project"}</p></div>
                   <LiveTimer startTime={timer.startTime} pausedAt={timer.pausedAt} accumulatedPause={timer.accumulatedPause} />

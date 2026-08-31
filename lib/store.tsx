@@ -35,6 +35,20 @@ const defaultData: AppData = {
   activeTimers: [],
 }
 
+function mobileTestFixture(): AppData {
+  const now = new Date()
+  return {
+    clients: [{ id: "fixture-client", name: "Fixture Client", email: "", phone: "", address: "", color: "", invoiceEmail: "", invoiceScheduleWeeks: null, invoiceScheduleAnchor: null, invoiceScheduleEnabled: false, invoiceScheduleAutoSend: false, lastInvoiceSent: null, createdAt: now.toISOString() }],
+    projects: [{ id: "fixture-project", clientId: "fixture-client", name: "Fixture Project", rate: 100, currency: "USD", status: "active", color: "", createdAt: now.toISOString() }],
+    timeEntries: [], expenses: [], invoices: [], settings: { ...defaultSettings, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    activeTimers: [{ id: "fixture-timer", projectId: "fixture-project", description: "Mobile timer fixture", startTime: new Date(now.getTime() - 65 * 60 * 1000).toISOString(), billable: true, accumulatedPause: 0, pausedAt: null }],
+  }
+}
+
+function mobileTestFixtureRequested() {
+  return typeof window !== "undefined" && process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && new URLSearchParams(window.location.search).get("fixture") === "mobile"
+}
+
 interface StoreContext {
   data: AppData
   loading: boolean
@@ -87,6 +101,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   const loadAll = useCallback(async () => {
+    if (mobileTestFixtureRequested()) {
+      setData(mobileTestFixture())
+      setLoading(false)
+      return
+    }
     try {
       const db = getDataProvider()
       const [clients, projects, timeEntries, expenses, invoices, settings] =
