@@ -9,6 +9,9 @@ import {
   Pencil,
   Clock,
   CalendarIcon,
+  Download,
+  Plus,
+  LoaderCircle,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -60,6 +63,36 @@ import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import type { TimeEntry } from "@/lib/types"
 
+type AgentTimeInterval = {
+  start: string
+  end: string
+  project: string
+  agents: string[]
+  durationSeconds: number
+  activitySeconds: number
+  live?: boolean
+}
+
+type AgentTimeResponse = {
+  projects: string[]
+  intervals: AgentTimeInterval[]
+}
+
+type TimeRange = { start: number; end: number }
+
+function subtractRanges(source: TimeRange, occupied: TimeRange[]) {
+  let cursor = source.start
+  const uncovered: TimeRange[] = []
+  for (const range of [...occupied].sort((a, b) => a.start - b.start)) {
+    if (range.end <= cursor || range.start >= source.end) continue
+    if (range.start > cursor) uncovered.push({ start: cursor, end: Math.min(range.start, source.end) })
+    cursor = Math.max(cursor, range.end)
+    if (cursor >= source.end) break
+  }
+  if (cursor < source.end) uncovered.push({ start: cursor, end: source.end })
+  return uncovered.filter((range) => range.end > range.start)
+}
+
 function LiveTimer({
   startTime,
   pausedAt,
@@ -105,6 +138,7 @@ export default function TrackerPage() {
     clearTimer,
     updateTimeEntry,
     deleteTimeEntry,
+    addTimeEntry,
     updateProject,
     getClient,
     getProject,
@@ -126,8 +160,138 @@ export default function TrackerPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<TimeEntry | null>(null)
   const [projectEdit, setProjectEdit] = useState<{ id: string; name: string; rate: string } | null>(null)
+  const [addHoursOpen, setAddHoursOpen] = useState(false)
+  const [hoursForm, setHoursForm] = useState({
+    projectId: "",
+    description: "",
+    date: localDateString(new Date(), data.settings.timezone),
+    hours: "",
+    billable: true,
+  })
+  const [importOpen, setImportOpen] = useState(false)
+  const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
+  const [agentTimeLoading, setAgentTimeLoading] = useState(false)
+  const [gapMinutes, setGapMinutes] = useState("15")
+  const [agentProjectFilter, setAgentProjectFilter] = useState("all")
+  const [projectMappings, setProjectMappings] = useState<Record<string, string>>({})
 
   const activeTimer = data.activeTimer
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("timetracker-agent-time-project-mappings")
+      if (saved) setProjectMappings(JSON.parse(saved))
+    } catch {
+      // Mapping is a convenience only; a malformed saved value should not block importing.
+    }
+  }, [])
+
+  function saveProjectMapping(agentProject: string, projectId: string) {
+    setProjectMappings((current) => {
+      const next = { ...current, [agentProject]: projectId }
+      localStorage.setItem("timetracker-agent-time-project-mappings", JSON.stringify(next))
+      return next
+    })
+  }
+
+  async function loadAgentTime() {
+    setAgentTimeLoading(true)
+    try {
+      const gap = Math.max(0, Number(gapMinutes) || 15)
+      const response = await fetch(`/api/agent-time?gapMinutes=${gap}`)
+      if (!response.ok) throw new Error("Agent Time is not available")
+      const payload = (await response.json()) as AgentTimeResponse
+      setAgentTime(payload)
+      setAgentProjectFilter("all")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
+    } finally {
+      setAgentTimeLoading(false)
+    }
+  }
+
+  function openAgentTimeImport() {
+    setImportOpen(true)
+    if (!agentTime) void loadAgentTime()
+  }
+
+  async function importAgentTime() {
+    if (!agentTime) return
+    const selected = agentTime.intervals.filter((interval) =>
+      agentProjectFilter === "all" || interval.project === agentProjectFilter
+    )
+    const missing = [...new Set(selected.map((interval) => interval.project))]
+      .filter((project) => !projectMappings[project])
+    if (missing.length) {
+      toast.error(`Choose a TimeTracker project for ${missing.join(", ")}`)
+      return
+    }
+
+    const occupiedByProject = new Map<string, TimeRange[]>()
+    for (const entry of data.timeEntries) {
+      if (!entry.startTime || !entry.endTime) continue
+      const start = new Date(entry.startTime).getTime()
+      const end = new Date(entry.endTime).getTime()
+      if (!Number.isNaN(start) && !Number.isNaN(end) && end > start) {
+        const ranges = occupiedByProject.get(entry.projectId) ?? []
+        ranges.push({ start, end })
+        occupiedByProject.set(entry.projectId, ranges)
+      }
+    }
+
+    let imported = 0
+    let skippedSeconds = 0
+    for (const interval of [...selected].sort((a, b) => +new Date(a.start) - +new Date(b.start))) {
+      const projectId = projectMappings[interval.project]
+      const start = new Date(interval.start).getTime()
+      const end = new Date(interval.end).getTime()
+      if (!projectId || Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
+      const occupied = occupiedByProject.get(projectId) ?? []
+      const gaps = subtractRanges({ start, end }, occupied)
+      skippedSeconds += Math.floor((end - start) / 1000) - gaps.reduce((total, gap) => total + Math.floor((gap.end - gap.start) / 1000), 0)
+      for (const gap of gaps) {
+        const gapStart = new Date(gap.start)
+        const gapEnd = new Date(gap.end)
+        await addTimeEntry({
+          projectId,
+          description: `Agent Time — ${interval.agents.join(" + ") || "coding"}`,
+          startTime: gapStart.toISOString(),
+          endTime: gapEnd.toISOString(),
+          duration: Math.floor((gap.end - gap.start) / 1000),
+          billable: true,
+          date: localDateString(gapStart, data.settings.timezone),
+        })
+        occupied.push(gap)
+        imported++
+      }
+      occupiedByProject.set(projectId, occupied)
+    }
+    toast.success(imported ? `Imported ${imported} uncovered ${imported === 1 ? "entry" : "entries"}` : "Everything was already tracked")
+    if (skippedSeconds > 0) toast(`Skipped ${formatDuration(skippedSeconds)} already tracked`)
+    setImportOpen(false)
+  }
+
+  async function saveHoursOnly() {
+    const duration = Math.round(Number(hoursForm.hours) * 3600)
+    if (!hoursForm.projectId || !hoursForm.date || !Number.isFinite(duration) || duration <= 0) {
+      toast.error("Choose a project, date, and positive number of hours")
+      return
+    }
+    // A stable noon timestamp preserves ordering while keeping this a duration-only entry.
+    const syntheticStart = new Date(`${hoursForm.date}T12:00:00`)
+    await addTimeEntry({
+      projectId: hoursForm.projectId,
+      description: hoursForm.description,
+      startTime: syntheticStart.toISOString(),
+      endTime: null,
+      duration,
+      billable: hoursForm.billable,
+      date: hoursForm.date,
+    })
+    toast.success(`Added ${formatHours(duration)}h`)
+    setAddHoursOpen(false)
+    setHoursForm((current) => ({ ...current, description: "", hours: "" }))
+  }
 
   function handleStart() {
     if (!timerProject) {
@@ -392,8 +556,18 @@ export default function TrackerPage() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-sm font-medium">Time Log</CardTitle>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => setAddHoursOpen(true)}>
+              <Plus className="size-3.5" data-icon="inline-start" />
+              Add hours
+            </Button>
+            <Button variant="outline" size="sm" onClick={openAgentTimeImport}>
+              <Download className="size-3.5" data-icon="inline-start" />
+              Import Agent Time
+            </Button>
+          </div>
         </CardHeader>
         {sortedEntries.length === 0 ? (
           <CardContent>
@@ -442,6 +616,55 @@ export default function TrackerPage() {
           </CardContent>
         )}
       </Card>
+
+      <Dialog open={addHoursOpen} onOpenChange={setAddHoursOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add hours</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-3">
+            <p className="text-sm text-muted-foreground">Add billable time without needing exact start and end times.</p>
+            <div className="grid gap-2">
+              <Label>Project</Label>
+              <Select value={hoursForm.projectId} onValueChange={(projectId) => setHoursForm({ ...hoursForm, projectId })}>
+                <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                <SelectContent>{data.projects.filter((project) => project.status === "active").map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2"><Label htmlFor="hours-date">Date</Label><Input id="hours-date" type="date" value={hoursForm.date} onChange={(event) => setHoursForm({ ...hoursForm, date: event.target.value })} /></div>
+              <div className="grid gap-2"><Label htmlFor="hours-count">Hours</Label><Input id="hours-count" type="number" min="0.01" step="0.25" placeholder="e.g. 2.5" value={hoursForm.hours} onChange={(event) => setHoursForm({ ...hoursForm, hours: event.target.value })} /></div>
+            </div>
+            <div className="grid gap-2"><Label htmlFor="hours-description">Description</Label><Input id="hours-description" placeholder="What did you work on?" value={hoursForm.description} onChange={(event) => setHoursForm({ ...hoursForm, description: event.target.value })} /></div>
+            <div className="flex items-center gap-2"><Checkbox id="hours-billable" checked={hoursForm.billable} onCheckedChange={(value) => setHoursForm({ ...hoursForm, billable: value === true })} /><Label htmlFor="hours-billable">Billable</Label></div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setAddHoursOpen(false)}>Cancel</Button><Button onClick={saveHoursOnly}>Add hours</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Import Agent Time</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-3">
+            <p className="text-sm text-muted-foreground">Agent Time stays running in the background. Map its project names once, then import only time that does not overlap existing timed entries.</p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="grid flex-1 gap-2"><Label htmlFor="agent-gap">Join gaps up to (minutes)</Label><Input id="agent-gap" type="number" min="0" max="240" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} /></div>
+              <Button variant="outline" onClick={() => void loadAgentTime()} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
+            </div>
+            {agentTime && <>
+              <div className="grid gap-2"><Label>Agent Time project to show</Label><Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All projects ({agentTime.intervals.length} intervals)</SelectItem>{agentTime.projects.map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select></div>
+              <div className="grid gap-3 rounded-xl border p-3">
+                {[...new Set(agentTime.intervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).map((interval) => interval.project))].map((agentProject) => <div key={agentProject} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
+              </div>
+              <p className="text-xs text-muted-foreground">{agentTime.intervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).length} intervals ready. Existing time entries with exact times are automatically excluded.</p>
+            </>}
+            {!agentTime && !agentTimeLoading && <p className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Load Agent Time to choose projects and review available intervals.</p>}
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button><Button onClick={() => void importAgentTime()} disabled={!agentTime || agentTimeLoading}>Import uncovered hours</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!projectEdit} onOpenChange={(open) => !open && setProjectEdit(null)}>
         <DialogContent>
