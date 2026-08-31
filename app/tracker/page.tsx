@@ -528,16 +528,16 @@ export default function TrackerPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_260px_auto_auto] sm:items-center">
                 <Input
                   placeholder="What are you working on?"
                   value={timerDesc}
                   onChange={(e) => setTimerDesc(e.target.value)}
-                  className="h-10 min-w-0 flex-1"
+                  className="h-10 min-w-0 w-full"
                 />
                 <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 w-[260px] max-w-[58vw] justify-between sm:max-w-none" >
+                    <Button variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 w-full justify-between" >
                       <span className="truncate">{timerProject ? (() => { const project = getProject(timerProject); const client = project ? getClient(project.clientId) : undefined; return project ? `${client?.name ? `${client.name} — ` : ""}${project.name}` : "Select project" })() : "Select project"}</span>
                       <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                     </Button>
@@ -557,7 +557,7 @@ export default function TrackerPage() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex h-10 items-center gap-1.5">
                   <Checkbox
                     id="timer-billable"
                     checked={timerBillable}
@@ -572,7 +572,7 @@ export default function TrackerPage() {
                 </div>
                 <Button
                   onClick={handleStart}
-                  className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                  className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 sm:w-auto"
                 >
                   <Play className="size-3.5" data-icon="inline-start" />
                   Start timer
