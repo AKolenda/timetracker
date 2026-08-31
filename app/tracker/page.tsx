@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import {
   Play,
   Pause,
@@ -441,6 +441,7 @@ export default function TrackerPage() {
     ),
     [data.timeEntries]
   )
+  const todayEntryDate = localDateString(new Date(), data.settings.timezone)
 
   const unimportedAgentTime = useMemo(() => {
     if (!agentTime) return { seconds: 0, blocks: 0, unmappedProjects: [] as string[] }
@@ -688,10 +689,14 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedEntries.map((entry) => {
+              {sortedEntries.map((entry, index) => {
                 const project = getProject(entry.projectId)
                 const amount = entry.billable && project ? (entry.duration / 3600) * project.rate : 0
-                return <TableRow key={entry.id}>
+                const isNewDay = index === 0 || entry.date !== sortedEntries[index - 1]?.date
+                const dayLabel = entry.date === todayEntryDate ? "Today" : format(parseLocalDate(entry.date), "EEEE, MMMM d, yyyy")
+                return <Fragment key={entry.id}>
+                  {isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 text-xs font-semibold text-muted-foreground">{dayLabel}</TableCell></TableRow>}
+                  <TableRow>
                   <TableCell className="font-medium">{entry.description || "Untitled"}</TableCell>
                   <TableCell>
                     <button className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
@@ -706,7 +711,8 @@ export default function TrackerPage() {
                     <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
                     <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
                   </div></TableCell>
-                </TableRow>
+                  </TableRow>
+                </Fragment>
               })}
             </TableBody>
               </Table>
