@@ -177,7 +177,7 @@ export default function TrackerPage() {
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>({})
   const [agentTimeStartDate, setAgentTimeStartDate] = useState<string | null>(null)
 
-  const activeTimer = data.activeTimer
+  const activeTimers = data.activeTimers
 
   useEffect(() => {
     try {
@@ -330,6 +330,7 @@ export default function TrackerPage() {
       return
     }
     startTimer({
+      id: crypto.randomUUID(),
       projectId: timerProject,
       description: timerDesc,
       startTime: new Date().toISOString(),
@@ -338,30 +339,27 @@ export default function TrackerPage() {
     toast.success("Timer started")
   }
 
-  async function handleStop() {
-    const entry = await stopTimer()
+  async function handleStop(id: string) {
+    const entry = await stopTimer(id)
     if (entry) {
       toast.success(`Tracked ${formatHours(entry.duration)}h`)
     }
     setTimerDesc("")
   }
 
-  function handleDiscard() {
-    clearTimer()
+  function handleDiscard(id: string) {
+    clearTimer(id)
     toast("Timer discarded")
   }
 
   function handleResume(entry: TimeEntry) {
-    if (activeTimer) {
-      toast.error("Stop the running timer first")
-      return
-    }
     const project = getProject(entry.projectId)
     if (!project || project.status !== "active") {
       toast.error("Project is not active")
       return
     }
     startTimer({
+      id: crypto.randomUUID(),
       projectId: entry.projectId,
       description: entry.description,
       startTime: new Date().toISOString(),
@@ -376,7 +374,7 @@ export default function TrackerPage() {
     setTimerProject(entry.projectId)
     setTimerDesc(entry.description)
     setTimerBillable(entry.billable)
-    toast.success(`Resumed: ${entry.description || project.name}`)
+    toast.success(`Started: ${entry.description || project.name}`)
   }
 
   function openEdit(entry: TimeEntry) {
@@ -510,19 +508,13 @@ export default function TrackerPage() {
               <div className="flex min-w-0 items-center gap-3">
                 <Input
                   placeholder="What are you working on?"
-                  value={activeTimer ? activeTimer.description : timerDesc}
-                  onChange={(e) => {
-                    if (!activeTimer) setTimerDesc(e.target.value)
-                  }}
-                  disabled={!!activeTimer}
+                  value={timerDesc}
+                  onChange={(e) => setTimerDesc(e.target.value)}
                   className="h-10 min-w-0 flex-1"
                 />
                 <Select
-                  value={activeTimer ? activeTimer.projectId : timerProject}
-                  onValueChange={(v) => {
-                    if (!activeTimer) setTimerProject(v)
-                  }}
-                  disabled={!!activeTimer}
+                  value={timerProject}
+                  onValueChange={setTimerProject}
                 >
                   <SelectTrigger className="data-[size=default]:h-10 w-[200px] shrink-0">
                     <SelectValue placeholder="Select project" />
@@ -544,13 +536,8 @@ export default function TrackerPage() {
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Checkbox
                     id="timer-billable"
-                    checked={
-                      activeTimer ? activeTimer.billable : timerBillable
-                    }
-                    onCheckedChange={(v) => {
-                      if (!activeTimer) setTimerBillable(v === true)
-                    }}
-                    disabled={!!activeTimer}
+                    checked={timerBillable}
+                    onCheckedChange={(v) => setTimerBillable(v === true)}
                   />
                   <Label
                     htmlFor="timer-billable"
@@ -559,68 +546,29 @@ export default function TrackerPage() {
                     Billable
                   </Label>
                 </div>
+                <Button
+                  onClick={handleStart}
+                  className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                >
+                  <Play className="size-3.5" data-icon="inline-start" />
+                  Start timer
+                </Button>
               </div>
 
-              <div className="flex items-center gap-4 rounded-lg border bg-muted/30 px-4 py-3">
-                <Clock className="size-5 shrink-0 text-muted-foreground" />
-                {activeTimer ? (
-                  <LiveTimer
-                    startTime={activeTimer.startTime}
-                    pausedAt={activeTimer.pausedAt}
-                    accumulatedPause={activeTimer.accumulatedPause}
-                  />
-                ) : (
-                  <span className="font-mono text-3xl font-bold tabular-nums tracking-tight text-muted-foreground">
-                    00:00:00
-                  </span>
-                )}
-                {activeTimer?.pausedAt && (
-                  <Badge variant="secondary" className="animate-pulse text-xs">
-                    Paused
-                  </Badge>
-                )}
-                <div className="ml-auto flex gap-2">
-                  {activeTimer ? (
-                    <>
-                      <Button variant="outline" onClick={handleDiscard}>
-                        Discard
-                      </Button>
-                      {activeTimer.pausedAt ? (
-                        <Button
-                          onClick={resumeTimer}
-                          className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                        >
-                          <Play className="size-3.5" data-icon="inline-start" />
-                          Resume
-                        </Button>
-                      ) : (
-                        <Button
-                          onClick={pauseTimer}
-                          variant="outline"
-                        >
-                          <Pause className="size-3.5" data-icon="inline-start" />
-                          Pause
-                        </Button>
-                      )}
-                      <Button
-                        onClick={handleStop}
-                        className="bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
-                      >
-                        <Square className="size-3.5" data-icon="inline-start" />
-                        Stop
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      onClick={handleStart}
-                      className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                    >
-                      <Play className="size-3.5" data-icon="inline-start" />
-                      Start
-                    </Button>
-                  )}
+              {activeTimers.length === 0 ? <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"><Clock className="size-5" />No active timers</div> : <div className="grid gap-2">{activeTimers.map((timer) => {
+                const project = getProject(timer.projectId)
+                return <div key={timer.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                  <Clock className="size-5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-[9rem] flex-1"><p className="font-medium">{timer.description || project?.name || "Untitled"}</p><p className="text-xs text-muted-foreground">{project?.name ?? "Unknown project"}</p></div>
+                  <LiveTimer startTime={timer.startTime} pausedAt={timer.pausedAt} accumulatedPause={timer.accumulatedPause} />
+                  {timer.pausedAt && <Badge variant="secondary" className="animate-pulse text-xs">Paused</Badge>}
+                  <div className="ml-auto flex gap-2">
+                    <Button variant="outline" onClick={() => handleDiscard(timer.id)}>Discard</Button>
+                    {timer.pausedAt ? <Button onClick={() => resumeTimer(timer.id)} className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
+                    <Button onClick={() => handleStop(timer.id)} className="bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"><Square className="size-3.5" data-icon="inline-start" />Stop</Button>
+                  </div>
                 </div>
-              </div>
+              })}</div>}
             </div>
           )}
         </CardContent>
@@ -707,7 +655,7 @@ export default function TrackerPage() {
                   <TableCell className="font-mono text-xs">{formatDuration(entry.duration)}</TableCell>
                   <TableCell className="font-mono text-xs">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                   <TableCell><div className="flex items-center gap-0.5">
-                    <Button variant="ghost" size="icon-xs" onClick={() => handleResume(entry)} disabled={!!activeTimer}><Play className="size-3.5 fill-current" /></Button>
+                    <Button variant="ghost" size="icon-xs" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>
                     <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
                     <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
                   </div></TableCell>

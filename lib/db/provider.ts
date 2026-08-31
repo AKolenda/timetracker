@@ -40,9 +40,9 @@ export interface DataProvider {
   getSettings(): Promise<Settings>
   updateSettings(updates: Partial<Settings>): Promise<void>
 
-  // Active Timer (persisted so it syncs across browsers)
-  getActiveTimer(): Promise<ActiveTimer | null>
-  setActiveTimer(timer: ActiveTimer | null): Promise<void>
+  // Active timers (persisted so they sync across browsers)
+  getActiveTimers(): Promise<ActiveTimer[]>
+  setActiveTimers(timers: ActiveTimer[]): Promise<void>
 
   // Invoices
   getInvoices(): Promise<Invoice[]>

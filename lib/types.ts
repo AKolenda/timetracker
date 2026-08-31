@@ -48,6 +48,7 @@ export interface Expense {
 }
 
 export interface ActiveTimer {
+  id: string
   projectId: string
   description: string
   startTime: string
@@ -116,7 +117,7 @@ export interface AppData {
   expenses: Expense[]
   invoices: Invoice[]
   settings: Settings
-  activeTimer: ActiveTimer | null
+  activeTimers: ActiveTimer[]
 }
 
 export const defaultSettings: Settings = {

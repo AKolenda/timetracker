@@ -32,7 +32,7 @@ const defaultData: AppData = {
   expenses: [],
   invoices: [],
   settings: defaultSettings,
-  activeTimer: null,
+  activeTimers: [],
 }
 
 interface StoreContext {
@@ -66,10 +66,10 @@ interface StoreContext {
   deleteInvoice: (id: string) => Promise<void>
 
   startTimer: (timer: ActiveTimer) => void
-  stopTimer: () => Promise<TimeEntry | null>
-  pauseTimer: () => void
-  resumeTimer: () => void
-  clearTimer: () => void
+  stopTimer: (id: string) => Promise<TimeEntry | null>
+  pauseTimer: (id: string) => void
+  resumeTimer: (id: string) => void
+  clearTimer: (id: string) => void
 
   getClient: (id: string) => Client | undefined
   getProject: (id: string) => Project | undefined
@@ -99,24 +99,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           db.getSettings(),
         ])
 
-      // Load active timer from Supabase (cross-browser), fall back to localStorage
-      let activeTimer: ActiveTimer | null = null
+      // Load active timers from Supabase (cross-browser), fall back to localStorage.
+      let activeTimers: ActiveTimer[] = []
       try {
-        activeTimer = await db.getActiveTimer()
+        activeTimers = await db.getActiveTimers()
       } catch {}
-      if (!activeTimer && typeof window !== "undefined") {
+      if (!activeTimers.length && typeof window !== "undefined") {
         try {
           const raw = localStorage.getItem(TIMER_KEY)
-          if (raw) activeTimer = JSON.parse(raw)
+          const stored = raw ? JSON.parse(raw) : []
+          const timers = Array.isArray(stored) ? stored : stored ? [stored] : []
+          activeTimers = timers.map((timer, index) => ({
+            ...timer,
+            id: timer.id ?? `legacy-${timer.startTime}-${index}`,
+          }))
         } catch {}
       }
       // Keep localStorage in sync as a fast cache for same-browser tab sync
       if (typeof window !== "undefined") {
-        if (activeTimer) {
-          localStorage.setItem(TIMER_KEY, JSON.stringify(activeTimer))
-        } else {
-          localStorage.removeItem(TIMER_KEY)
-        }
+        localStorage.setItem(TIMER_KEY, JSON.stringify(activeTimers))
       }
 
       setData({
@@ -126,7 +127,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         expenses,
         invoices,
         settings,
-        activeTimer,
+        activeTimers,
       })
     } catch {
       // The app can still show its empty state while a database is unavailable.
@@ -146,8 +147,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     function onStorage(e: StorageEvent) {
       if (e.key !== TIMER_KEY) return
-      const next: ActiveTimer | null = e.newValue ? JSON.parse(e.newValue) : null
-      setData((d) => ({ ...d, activeTimer: next }))
+      const stored = e.newValue ? JSON.parse(e.newValue) : []
+      const timers = Array.isArray(stored) ? stored : stored ? [stored] : []
+      setData((d) => ({ ...d, activeTimers: timers }))
     }
     window.addEventListener("storage", onStorage)
     return () => window.removeEventListener("storage", onStorage)
@@ -230,13 +232,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const db = getDataProvider()
     const sourceEntries = data.timeEntries.filter((entry) => entry.projectId === sourceId)
     const sourceExpenses = data.expenses.filter((expense) => expense.projectId === sourceId)
-    const migratedTimer = data.activeTimer?.projectId === sourceId
-      ? { ...data.activeTimer, projectId: targetId }
-      : null
+    const migratedTimers = data.activeTimers.map((timer) =>
+      timer.projectId === sourceId ? { ...timer, projectId: targetId } : timer
+    )
     await Promise.all([
       ...sourceEntries.map((entry) => db.updateTimeEntry(entry.id, { projectId: targetId })),
       ...sourceExpenses.map((expense) => db.updateExpense(expense.id, { projectId: targetId })),
-      ...(migratedTimer ? [db.setActiveTimer(migratedTimer)] : []),
+      ...(migratedTimers.some((timer, index) => timer !== data.activeTimers[index]) ? [db.setActiveTimers(migratedTimers)] : []),
     ])
     await db.deleteProject(sourceId)
     setData((d) => ({
@@ -244,7 +246,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       projects: d.projects.filter((project) => project.id !== sourceId),
       timeEntries: d.timeEntries.map((entry) => entry.projectId === sourceId ? { ...entry, projectId: targetId } : entry),
       expenses: d.expenses.map((expense) => expense.projectId === sourceId ? { ...expense, projectId: targetId } : expense),
-      activeTimer: migratedTimer ?? d.activeTimer,
+      activeTimers: migratedTimers,
     }))
   }, [data.timeEntries, data.expenses])
 
@@ -380,21 +382,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
-  // --- Timer (Supabase for cross-browser, localStorage for fast same-browser tab sync) ---
+  // --- Timers (Supabase for cross-browser, localStorage for fast same-browser tab sync) ---
   const startTimer = useCallback(async (timer: ActiveTimer) => {
     if (typeof window !== "undefined") {
-      localStorage.setItem(TIMER_KEY, JSON.stringify(timer))
+      const current = data.activeTimers
+      localStorage.setItem(TIMER_KEY, JSON.stringify([...current, timer]))
     }
-    setData((d) => ({ ...d, activeTimer: timer }))
+    const next = [...data.activeTimers, timer]
+    setData((d) => ({ ...d, activeTimers: next }))
     try {
       const db = getDataProvider()
-      await db.setActiveTimer(timer)
+      await db.setActiveTimers(next)
     } catch {}
-  }, [])
+  }, [data.activeTimers])
 
-  const stopTimer = useCallback(async () => {
+  const stopTimer = useCallback(async (id: string) => {
     let entry: TimeEntry | null = null
-    const current = data.activeTimer
+    const current = data.activeTimers.find((timer) => timer.id === id)
     if (!current) return null
 
     const now = new Date()
@@ -417,35 +421,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
 
     if (typeof window !== "undefined") {
-      localStorage.removeItem(TIMER_KEY)
+      localStorage.setItem(TIMER_KEY, JSON.stringify(data.activeTimers.filter((timer) => timer.id !== id)))
     }
-    setData((d) => ({ ...d, activeTimer: null }))
+    const next = data.activeTimers.filter((timer) => timer.id !== id)
+    setData((d) => ({ ...d, activeTimers: next }))
     try {
       const db = getDataProvider()
-      await db.setActiveTimer(null)
+      await db.setActiveTimers(next)
     } catch {}
     return entry
-  }, [data.activeTimer, data.settings.timezone, addTimeEntry])
+  }, [data.activeTimers, data.settings.timezone, addTimeEntry])
 
-  const pauseTimer = useCallback(async () => {
-    const current = data.activeTimer
+  const pauseTimer = useCallback(async (id: string) => {
+    const current = data.activeTimers.find((timer) => timer.id === id)
     if (!current || current.pausedAt) return
     const paused: ActiveTimer = {
       ...current,
       pausedAt: new Date().toISOString(),
     }
     if (typeof window !== "undefined") {
-      localStorage.setItem(TIMER_KEY, JSON.stringify(paused))
+      localStorage.setItem(TIMER_KEY, JSON.stringify(data.activeTimers.map((timer) => timer.id === id ? paused : timer)))
     }
-    setData((d) => ({ ...d, activeTimer: paused }))
+    const next = data.activeTimers.map((timer) => timer.id === id ? paused : timer)
+    setData((d) => ({ ...d, activeTimers: next }))
     try {
       const db = getDataProvider()
-      await db.setActiveTimer(paused)
+      await db.setActiveTimers(next)
     } catch {}
-  }, [data.activeTimer])
+  }, [data.activeTimers])
 
-  const resumeTimer = useCallback(async () => {
-    const current = data.activeTimer
+  const resumeTimer = useCallback(async (id: string) => {
+    const current = data.activeTimers.find((timer) => timer.id === id)
     if (!current || !current.pausedAt) return
     const pausedMs = Date.now() - new Date(current.pausedAt).getTime()
     const resumed: ActiveTimer = {
@@ -454,25 +460,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       accumulatedPause: (current.accumulatedPause ?? 0) + Math.floor(pausedMs / 1000),
     }
     if (typeof window !== "undefined") {
-      localStorage.setItem(TIMER_KEY, JSON.stringify(resumed))
+      localStorage.setItem(TIMER_KEY, JSON.stringify(data.activeTimers.map((timer) => timer.id === id ? resumed : timer)))
     }
-    setData((d) => ({ ...d, activeTimer: resumed }))
+    const next = data.activeTimers.map((timer) => timer.id === id ? resumed : timer)
+    setData((d) => ({ ...d, activeTimers: next }))
     try {
       const db = getDataProvider()
-      await db.setActiveTimer(resumed)
+      await db.setActiveTimers(next)
     } catch {}
-  }, [data.activeTimer])
+  }, [data.activeTimers])
 
-  const clearTimer = useCallback(async () => {
+  const clearTimer = useCallback(async (id: string) => {
     if (typeof window !== "undefined") {
-      localStorage.removeItem(TIMER_KEY)
+      localStorage.setItem(TIMER_KEY, JSON.stringify(data.activeTimers.filter((timer) => timer.id !== id)))
     }
-    setData((d) => ({ ...d, activeTimer: null }))
+    const next = data.activeTimers.filter((timer) => timer.id !== id)
+    setData((d) => ({ ...d, activeTimers: next }))
     try {
       const db = getDataProvider()
-      await db.setActiveTimer(null)
+      await db.setActiveTimers(next)
     } catch {}
-  }, [])
+  }, [data.activeTimers])
 
   // --- Lookups ---
   const getClient = useCallback(

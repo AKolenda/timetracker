@@ -74,7 +74,8 @@ function setFavicon(href: string) {
 
 export function TimerTabIndicator() {
   const { data, getProject, getClient } = useStore()
-  const timer = data.activeTimer
+  const timer = data.activeTimers.find((item) => !item.pausedAt) ?? data.activeTimers[0]
+  const additionalTimers = Math.max(0, data.activeTimers.length - 1)
 
   const defaultFaviconRef = useRef<string | null>(null)
   const runningFaviconRef = useRef<string | null>(null)
@@ -124,7 +125,7 @@ export function TimerTabIndicator() {
       }
       const elapsed = now - new Date(timer.startTime).getTime() - totalPaused
       const prefix = isPaused ? "⏸ " : ""
-      document.title = `${prefix}${formatElapsed(Math.max(0, elapsed))} — ${label} | ${DEFAULT_TITLE}`
+      document.title = `${prefix}${formatElapsed(Math.max(0, elapsed))} — ${label}${additionalTimers ? ` +${additionalTimers}` : ""} | ${DEFAULT_TITLE}`
       if (activeFavicon) {
         setFavicon(activeFavicon)
       }
@@ -166,7 +167,7 @@ export function TimerTabIndicator() {
       window.removeEventListener("pageshow", onFocus)
       observer.disconnect()
     }
-  }, [timer, getProject, getClient])
+  }, [timer, additionalTimers, getProject, getClient])
 
   return null
 }

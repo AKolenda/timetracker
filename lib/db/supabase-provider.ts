@@ -420,20 +420,27 @@ export class SupabaseProvider implements DataProvider {
     if (error) throw error
   }
 
-  async getActiveTimer(): Promise<ActiveTimer | null> {
+  async getActiveTimers(): Promise<ActiveTimer[]> {
     const { data, error } = await this.db
       .from("settings")
       .select("active_timer")
       .eq("id", "default")
       .maybeSingle()
     if (error) throw error
-    return (data?.active_timer as ActiveTimer | null) ?? null
+    const stored = data?.active_timer as ActiveTimer | ActiveTimer[] | null
+    const timers = Array.isArray(stored) ? stored : stored ? [stored] : []
+    // Existing single timers receive a stable id as they are read, so no
+    // running work is lost when upgrading to concurrent timers.
+    return timers.map((timer, index) => ({
+      ...timer,
+      id: timer.id ?? `legacy-${timer.startTime}-${index}`,
+    }))
   }
 
-  async setActiveTimer(timer: ActiveTimer | null): Promise<void> {
+  async setActiveTimers(timers: ActiveTimer[]): Promise<void> {
     const { error } = await this.db
       .from("settings")
-      .update({ active_timer: timer })
+      .update({ active_timer: timers })
       .eq("id", "default")
     if (error) throw error
   }
