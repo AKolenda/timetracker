@@ -21,6 +21,21 @@ type AgentTimeInterval = {
   agent: string
   project: string
   live: boolean
+  source: string
+  model: string
+  conversation_id: string
+  conversation_title: string
+}
+
+export type AgentTimeSourceInterval = {
+  start: string
+  end: string
+  durationSeconds: number
+  agent: string
+  source: string
+  model: string
+  conversationId: string
+  conversationTitle: string
 }
 
 export type AgentTimeBlock = {
@@ -31,6 +46,8 @@ export type AgentTimeBlock = {
   durationSeconds: number
   activitySeconds: number
   agents: string[]
+  sources: string[]
+  sourceIntervals: AgentTimeSourceInterval[]
   live: boolean
 }
 
@@ -56,7 +73,11 @@ function isValidInterval(value: unknown): value is AgentTimeInterval {
     value.end > value.start &&
     typeof value.agent === "string" &&
     typeof value.project === "string" &&
-    typeof value.live === "boolean"
+    typeof value.live === "boolean" &&
+    (value.source === undefined || typeof value.source === "string") &&
+    (value.model === undefined || typeof value.model === "string") &&
+    (value.conversation_id === undefined || typeof value.conversation_id === "string") &&
+    (value.conversation_title === undefined || typeof value.conversation_title === "string")
   )
 }
 
@@ -69,7 +90,13 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
     now: typeof value.now === "number" && Number.isFinite(value.now) ? value.now : Date.now() / 1000,
     timezone: typeof value.timezone === "string" ? value.timezone : "",
     projects: value.projects.filter((project): project is string => typeof project === "string"),
-    intervals: value.intervals.filter(isValidInterval),
+    intervals: value.intervals.filter(isValidInterval).map((interval) => ({
+      ...interval,
+      source: interval.source || interval.agent,
+      model: interval.model || "",
+      conversation_id: interval.conversation_id || "",
+      conversation_title: interval.conversation_title || "",
+    })),
   }
 }
 
@@ -188,6 +215,17 @@ export function toImportData(
         durationSeconds: Math.round(block.end - block.start),
         activitySeconds: Math.round(unionSeconds(block.intervals)),
         agents: [...new Set(block.intervals.map((interval) => interval.agent))].sort(),
+        sources: [...new Set(block.intervals.map((interval) => interval.source))].sort(),
+        sourceIntervals: block.intervals.map((interval) => ({
+          start: new Date(interval.start * 1000).toISOString(),
+          end: new Date(interval.end * 1000).toISOString(),
+          durationSeconds: Math.round(interval.end - interval.start),
+          agent: interval.agent,
+          source: interval.source,
+          model: interval.model,
+          conversationId: interval.conversation_id,
+          conversationTitle: interval.conversation_title,
+        })),
         live: block.intervals.some((interval) => interval.live),
       }))
       .filter((block) => block.durationSeconds > 0),

@@ -22,9 +22,25 @@ export async function GET(request: NextRequest) {
       start.setHours(13, 40, 0, 0)
       const end = new Date()
       end.setHours(15, 35, 0, 0)
+      const t3End = new Date()
+      t3End.setHours(14, 12, 0, 0)
       return NextResponse.json({
         projects: ["Fixture Project"],
-        intervals: [{ id: "fixture-agent-time", start: start.toISOString(), end: end.toISOString(), project: "Fixture Project", agents: ["Codex"], durationSeconds: 6900, activitySeconds: 6900, live: false }],
+        intervals: [{
+          id: "fixture-agent-time",
+          start: start.toISOString(),
+          end: end.toISOString(),
+          project: "Fixture Project",
+          agents: ["Codex"],
+          sources: ["Codex", "T3 Code"],
+          durationSeconds: 6900,
+          activitySeconds: 6900,
+          live: false,
+          sourceIntervals: [
+            { start: start.toISOString(), end: end.toISOString(), durationSeconds: 6900, agent: "Codex", source: "Codex", model: "gpt-5.6-sol", conversationId: "fixture-codex-chat", conversationTitle: "Fix the mobile Agent Time import review" },
+            { start: start.toISOString(), end: t3End.toISOString(), durationSeconds: 1920, agent: "Codex", source: "T3 Code", model: "Codex", conversationId: "fixture-t3-chat", conversationTitle: "Funding tracker mobile polish" },
+          ],
+        }],
       })
     }
     const project = searchParams.get("project") || null

@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   TriangleAlert,
   ChevronsUpDown,
+  ChevronDown,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -75,7 +76,20 @@ type AgentTimeInterval = {
   agents: string[]
   durationSeconds: number
   activitySeconds: number
+  sources?: string[]
+  sourceIntervals?: AgentTimeSourceInterval[]
   live?: boolean
+}
+
+type AgentTimeSourceInterval = {
+  start: string
+  end: string
+  durationSeconds: number
+  agent: string
+  source: string
+  model: string
+  conversationId: string
+  conversationTitle: string
 }
 
 type AgentTimeResponse = {
@@ -102,6 +116,54 @@ type AgentImportPlan = {
 }
 const PERSONAL_AGENT_PROJECT = "__personal__"
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
+
+function sourceDescription(interval: AgentTimeSourceInterval) {
+  if (interval.source === "T3 Code") return `T3 Code using ${interval.agent}`
+  return `${interval.source || interval.agent} directly`
+}
+
+function groupConversationSources(
+  intervals: AgentTimeSourceInterval[],
+  sliceStart: number,
+  sliceEnd: number
+) {
+  const conversations = new Map<string, AgentTimeSourceInterval & { spans: TimeRange[] }>()
+  for (const interval of intervals) {
+    const start = Math.max(new Date(interval.start).getTime(), sliceStart)
+    const end = Math.min(new Date(interval.end).getTime(), sliceEnd)
+    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
+    const key = `${interval.source}:${interval.conversationId || interval.conversationTitle || interval.model || interval.agent}`
+    const current = conversations.get(key)
+    if (current) current.spans.push({ start, end })
+    else conversations.set(key, { ...interval, spans: [{ start, end }] })
+  }
+
+  return [...conversations.values()].map((conversation) => {
+    const spans = [...conversation.spans].sort((a, b) => a.start - b.start)
+    const merged: TimeRange[] = []
+    for (const span of spans) {
+      const previous = merged.at(-1)
+      if (previous && span.start <= previous.end) previous.end = Math.max(previous.end, span.end)
+      else merged.push({ ...span })
+    }
+    return {
+      ...conversation,
+      spans: merged,
+      durationSeconds: merged.reduce((total, span) => total + Math.floor((span.end - span.start) / 1000), 0),
+    }
+  }).sort((a, b) => a.spans[0].start - b.spans[0].start)
+}
+
+function unionRangeSeconds(ranges: TimeRange[]) {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start)
+  const merged: TimeRange[] = []
+  for (const range of sorted) {
+    const previous = merged.at(-1)
+    if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end)
+    else merged.push({ ...range })
+  }
+  return merged.reduce((total, range) => total + Math.floor((range.end - range.start) / 1000), 0)
+}
 
 function mobileFixtureRequested() {
   return typeof window !== "undefined" &&
@@ -256,6 +318,7 @@ export default function TrackerPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
   const [agentTimeLoading, setAgentTimeLoading] = useState(false)
+  const [expandedAgentSlice, setExpandedAgentSlice] = useState<string | null>(null)
   const [gapMinutes, setGapMinutes] = useState("15")
   const [agentProjectFilter, setAgentProjectFilter] = useState("all")
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
@@ -354,6 +417,7 @@ export default function TrackerPage() {
       const payload = (await response.json()) as AgentTimeResponse
       setAgentTime(payload)
       setAgentProjectFilter("all")
+      setExpandedAgentSlice(null)
     } catch (error) {
       if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
     } finally {
@@ -801,11 +865,49 @@ export default function TrackerPage() {
                     const mappedProject = getProject(slice.projectId)
                     const mappedProjectLabel = mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : "Unknown project"
                     const wasTrimmed = slice.start !== slice.sourceStart || slice.end !== slice.sourceEnd
-                    return <div key={slice.id} className="grid min-w-0 gap-3 border-b px-3 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-start">
-                      <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Uncovered time</span><p className="break-words font-mono text-xs">{format(new Date(slice.start), "MMM d, h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>{wasTrimmed && <p className="break-words text-xs text-muted-foreground">From {format(new Date(slice.sourceStart), "h:mm a")} – {format(new Date(slice.sourceEnd), "h:mm a")} block</p>}</div>
-                      <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Agent Time project</span><p className="break-words text-xs">{slice.interval.project}</p><p className="break-words text-xs text-muted-foreground">{slice.interval.agents.join(" + ") || "coding"}</p></div>
-                      <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Imports to</span><p className="break-words text-xs sm:line-clamp-2" title={mappedProjectLabel}>{mappedProjectLabel}</p></div>
-                      <div className="min-w-0 sm:text-right"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Duration</span><p className="font-mono text-xs">{formatDuration(slice.durationSeconds)}</p></div>
+                    const sourceConversations = groupConversationSources(
+                      slice.interval.sourceIntervals ?? [],
+                      slice.start,
+                      slice.end
+                    )
+                    const sourceLabels = [...new Set(sourceConversations.map(sourceDescription))]
+                    const sourceActiveSeconds = unionRangeSeconds(sourceConversations.flatMap((source) => source.spans))
+                    const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
+                    const expanded = expandedAgentSlice === slice.id
+                    return <div key={slice.id} className="min-w-0 border-b last:border-b-0">
+                      <button
+                        type="button"
+                        className="grid w-full min-w-0 cursor-pointer gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/25 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-start"
+                        aria-expanded={expanded}
+                        onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}
+                      >
+                        <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Uncovered time</span><p className="break-words font-mono text-xs">{format(new Date(slice.start), "MMM d, h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>{wasTrimmed && <p className="break-words text-xs text-muted-foreground">From {format(new Date(slice.sourceStart), "h:mm a")} – {format(new Date(slice.sourceEnd), "h:mm a")} block</p>}</div>
+                        <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Agent Time project</span><p className="break-words text-xs">{slice.interval.project}</p><p className="break-words text-xs text-muted-foreground">{sourceLabels.join(" + ") || slice.interval.agents.join(" + ") || "coding"}</p></div>
+                        <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Imports to</span><p className="break-words text-xs sm:line-clamp-2" title={mappedProjectLabel}>{mappedProjectLabel}</p></div>
+                        <div className="flex min-w-0 items-start justify-between gap-2 sm:justify-end sm:text-right"><div><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Duration</span><p className="font-mono text-xs">{formatDuration(slice.durationSeconds)}</p></div><ChevronDown className={`mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} /></div>
+                      </button>
+                      {expanded && <div className="min-w-0 border-t bg-muted/15 px-3 py-3" data-testid="agent-source-details">
+                        <div className="mb-3">
+                          <p className="text-xs font-medium">Where this time came from</p>
+                          <p className="mt-1 text-xs text-muted-foreground">This is elapsed wall-clock time. Overlapping chats count once; their durations are not added together.</p>
+                          {sourceConversations.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Agent active: <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span>{joinedGapSeconds > 0 && <> · Joined gaps: <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></>}</p>}
+                        </div>
+                        {sourceConversations.length > 0 ? <div className="grid min-w-0 gap-2">
+                          {sourceConversations.map((source, sourceIndex) => {
+                            const firstSpan = source.spans[0]
+                            const lastSpan = source.spans.at(-1) ?? firstSpan
+                            return <div key={`${source.source}-${source.conversationId}-${sourceIndex}`} className="min-w-0 rounded-lg border bg-background/40 p-3">
+                              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                                <div className="min-w-0"><p className="break-words text-xs font-medium">{source.conversationTitle || `${source.agent} conversation`}</p><p className="text-xs text-muted-foreground">{sourceDescription(source)}{source.model ? ` · ${source.model}` : ""}</p></div>
+                                <p className="shrink-0 font-mono text-xs">{formatDuration(source.durationSeconds)}</p>
+                              </div>
+                              <p className="mt-2 break-words font-mono text-[0.7rem] text-muted-foreground">{format(new Date(firstSpan.start), "MMM d, h:mm:ss a")} – {format(new Date(lastSpan.end), "h:mm:ss a")}</p>
+                              {source.conversationId && <p className="mt-1 break-all font-mono text-[0.65rem] text-muted-foreground">Chat ID: {source.conversationId}</p>}
+                              {source.spans.length > 1 && <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer select-none">See {source.spans.length} contributing spans</summary><div className="mt-2 grid gap-1 border-l pl-2 font-mono text-[0.65rem]">{source.spans.map((span, spanIndex) => <p key={`${span.start}-${span.end}-${spanIndex}`}>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</p>)}</div></details>}
+                            </div>
+                          })}
+                        </div> : <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">This Agent Time record predates chat attribution. Refresh after updating the desktop Agent Time service to see its chat and source.</p>}
+                      </div>}
                     </div>
                   })}
                   {agentImportPreview.slices.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{agentImportPreview.unmappedProjects.length > 0 ? "Map the projects above to calculate the exact uncovered time." : "No uncovered time in this selection."}</p>}
