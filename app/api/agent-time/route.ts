@@ -17,6 +17,16 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl
+    if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && searchParams.get("fixture") === "mobile") {
+      const start = new Date()
+      start.setHours(13, 40, 0, 0)
+      const end = new Date()
+      end.setHours(15, 35, 0, 0)
+      return NextResponse.json({
+        projects: ["Fixture Project"],
+        intervals: [{ id: "fixture-agent-time", start: start.toISOString(), end: end.toISOString(), project: "Fixture Project", agents: ["Codex"], durationSeconds: 6900, activitySeconds: 6900, live: false }],
+      })
+    }
     const project = searchParams.get("project") || null
     const from = parseDateBoundary(searchParams.get("from"), "start")
     const to = parseDateBoundary(searchParams.get("to"), "end")

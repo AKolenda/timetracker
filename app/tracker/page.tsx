@@ -64,6 +64,7 @@ import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
+import { subtractRanges, type TimeRange } from "@/lib/agent-time-overlap"
 import type { TimeEntry } from "@/lib/types"
 
 type AgentTimeInterval = {
@@ -82,20 +83,98 @@ type AgentTimeResponse = {
   intervals: AgentTimeInterval[]
 }
 
-type TimeRange = { start: number; end: number }
+type AgentImportSlice = {
+  id: string
+  interval: AgentTimeInterval
+  projectId: string
+  start: number
+  end: number
+  sourceStart: number
+  sourceEnd: number
+  durationSeconds: number
+}
+type AgentImportPlan = {
+  slices: AgentImportSlice[]
+  skippedSeconds: number
+  unmappedProjects: string[]
+  unmappedSeconds: number
+  unmappedBlocks: number
+}
 const PERSONAL_AGENT_PROJECT = "__personal__"
 
-function subtractRanges(source: TimeRange, occupied: TimeRange[]) {
-  let cursor = source.start
-  const uncovered: TimeRange[] = []
-  for (const range of [...occupied].sort((a, b) => a.start - b.start)) {
-    if (range.end <= cursor || range.start >= source.end) continue
-    if (range.start > cursor) uncovered.push({ start: cursor, end: Math.min(range.start, source.end) })
-    cursor = Math.max(cursor, range.end)
-    if (cursor >= source.end) break
+function mobileFixtureRequested() {
+  return typeof window !== "undefined" &&
+    process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
+    new URLSearchParams(window.location.search).get("fixture") === "mobile"
+}
+
+function buildAgentImportPlan(
+  intervals: AgentTimeInterval[],
+  projectMappings: Record<string, string>,
+  timeEntries: TimeEntry[],
+  cutoff: number | null
+): AgentImportPlan {
+  const occupiedByProject = new Map<string, TimeRange[]>()
+  for (const entry of timeEntries) {
+    if (!entry.startTime || !entry.endTime) continue
+    const start = new Date(entry.startTime).getTime()
+    const end = new Date(entry.endTime).getTime()
+    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
+    const occupied = occupiedByProject.get(entry.projectId) ?? []
+    occupied.push({ start, end })
+    occupiedByProject.set(entry.projectId, occupied)
   }
-  if (cursor < source.end) uncovered.push({ start: cursor, end: source.end })
-  return uncovered.filter((range) => range.end > range.start)
+
+  const slices: AgentImportSlice[] = []
+  const unmappedProjects = new Set<string>()
+  let skippedSeconds = 0
+  let unmappedSeconds = 0
+  let unmappedBlocks = 0
+  for (const interval of [...intervals].sort((a, b) => +new Date(a.start) - +new Date(b.start))) {
+    const sourceStart = Math.max(new Date(interval.start).getTime(), cutoff ?? -Infinity)
+    const sourceEnd = new Date(interval.end).getTime()
+    if (Number.isNaN(sourceStart) || Number.isNaN(sourceEnd) || sourceEnd <= sourceStart) continue
+
+    const projectId = projectMappings[interval.project]
+    if (projectId === PERSONAL_AGENT_PROJECT) continue
+    if (!projectId) {
+      unmappedProjects.add(interval.project)
+      unmappedSeconds += Math.floor((sourceEnd - sourceStart) / 1000)
+      unmappedBlocks++
+      continue
+    }
+
+    const occupied = occupiedByProject.get(projectId) ?? []
+    const gaps = subtractRanges({ start: sourceStart, end: sourceEnd }, occupied)
+    const uncoveredSeconds = gaps.reduce(
+      (total, gap) => total + Math.floor((gap.end - gap.start) / 1000),
+      0
+    )
+    skippedSeconds += Math.floor((sourceEnd - sourceStart) / 1000) - uncoveredSeconds
+
+    for (const gap of gaps) {
+      slices.push({
+        id: `${interval.id}-${gap.start}-${gap.end}`,
+        interval,
+        projectId,
+        start: gap.start,
+        end: gap.end,
+        sourceStart,
+        sourceEnd,
+        durationSeconds: Math.floor((gap.end - gap.start) / 1000),
+      })
+      occupied.push(gap)
+    }
+    occupiedByProject.set(projectId, occupied)
+  }
+
+  return {
+    slices,
+    skippedSeconds,
+    unmappedProjects: [...unmappedProjects].sort(),
+    unmappedSeconds,
+    unmappedBlocks,
+  }
 }
 
 function LiveTimer({
@@ -178,21 +257,25 @@ export default function TrackerPage() {
   const [agentTimeLoading, setAgentTimeLoading] = useState(false)
   const [gapMinutes, setGapMinutes] = useState("15")
   const [agentProjectFilter, setAgentProjectFilter] = useState("all")
-  const [projectMappings, setProjectMappings] = useState<Record<string, string>>({})
-  const [agentTimeStartDate, setAgentTimeStartDate] = useState<string | null>(null)
+  const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
+    if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
+    try {
+      const saved = typeof window !== "undefined" ? localStorage.getItem("timetracker-agent-time-project-mappings") : null
+      return saved ? JSON.parse(saved) : {}
+    } catch {
+      return {}
+    }
+  })
+  const [agentTimeStartDate, setAgentTimeStartDate] = useState<string | null>(() => {
+    try {
+      return typeof window !== "undefined" ? localStorage.getItem("timetracker-agent-time-start-date") : null
+    } catch {
+      return null
+    }
+  })
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
 
   const activeTimers = data.activeTimers
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("timetracker-agent-time-project-mappings")
-      if (saved) setProjectMappings(JSON.parse(saved))
-      setAgentTimeStartDate(localStorage.getItem("timetracker-agent-time-start-date"))
-    } catch {
-      // Mapping is a convenience only; a malformed saved value should not block importing.
-    }
-  }, [])
 
   // Load a quiet status snapshot on arrival so forgotten Agent Time is visible
   // without making the user open the import flow first.
@@ -232,28 +315,37 @@ export default function TrackerPage() {
     [agentTime, agentTimeCutoff]
   )
 
-  const importableAgentIntervals = useMemo(
-    () => availableAgentIntervals.filter((interval) => projectMappings[interval.project] !== PERSONAL_AGENT_PROJECT),
-    [availableAgentIntervals, projectMappings]
+  const selectedAgentIntervals = useMemo(
+    () => availableAgentIntervals.filter(
+      (interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter
+    ),
+    [agentProjectFilter, availableAgentIntervals]
   )
 
-  const agentTimeReviewIntervals = useMemo(
-    () => availableAgentIntervals
-      .filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter)
-      .map((interval) => {
-        const start = Math.max(new Date(interval.start).getTime(), agentTimeCutoff ?? -Infinity)
-        const end = new Date(interval.end).getTime()
-        return { ...interval, reviewStart: new Date(start), reviewEnd: new Date(end), reviewDuration: Math.max(0, Math.floor((end - start) / 1000)) }
-      })
-      .filter((interval) => interval.reviewDuration > 0),
-    [agentProjectFilter, agentTimeCutoff, availableAgentIntervals]
+  const agentImportPreview = useMemo(
+    () => buildAgentImportPlan(
+      selectedAgentIntervals,
+      projectMappings,
+      data.timeEntries,
+      agentTimeCutoff
+    ),
+    [agentTimeCutoff, data.timeEntries, projectMappings, selectedAgentIntervals]
   )
+
+  const agentImportPreviewSeconds = agentImportPreview.slices.reduce(
+    (total, slice) => total + slice.durationSeconds,
+    0
+  )
+  const selectedPersonalIntervals = selectedAgentIntervals.filter(
+    (interval) => projectMappings[interval.project] === PERSONAL_AGENT_PROJECT
+  ).length
 
   async function loadAgentTime(silent = false) {
     setAgentTimeLoading(true)
     try {
       const gap = Math.max(0, Number(gapMinutes) || 15)
-      const response = await fetch(`/api/agent-time?gapMinutes=${gap}`)
+      const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
+      const response = await fetch(`/api/agent-time?gapMinutes=${gap}${fixture}`)
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse
       setAgentTime(payload)
@@ -272,55 +364,34 @@ export default function TrackerPage() {
 
   async function importAgentTime() {
     if (!agentTime) return
-    const selected = importableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter)
-    const missing = [...new Set(selected.map((interval) => interval.project))]
-      .filter((project) => !projectMappings[project])
-    if (missing.length) {
-      toast.error(`Choose a TimeTracker project for ${missing.join(", ")}`)
+    const plan = buildAgentImportPlan(
+      selectedAgentIntervals,
+      projectMappings,
+      data.timeEntries,
+      agentTimeCutoff
+    )
+    if (plan.unmappedProjects.length) {
+      toast.error(`Choose a TimeTracker project for ${plan.unmappedProjects.join(", ")}`)
       return
     }
 
-    const occupiedByProject = new Map<string, TimeRange[]>()
-    for (const entry of data.timeEntries) {
-      if (!entry.startTime || !entry.endTime) continue
-      const start = new Date(entry.startTime).getTime()
-      const end = new Date(entry.endTime).getTime()
-      if (!Number.isNaN(start) && !Number.isNaN(end) && end > start) {
-        const ranges = occupiedByProject.get(entry.projectId) ?? []
-        ranges.push({ start, end })
-        occupiedByProject.set(entry.projectId, ranges)
-      }
-    }
-
     let imported = 0
-    let skippedSeconds = 0
-    for (const interval of [...selected].sort((a, b) => +new Date(a.start) - +new Date(b.start))) {
-      const projectId = projectMappings[interval.project]
-      const start = Math.max(new Date(interval.start).getTime(), agentTimeCutoff ?? -Infinity)
-      const end = new Date(interval.end).getTime()
-      if (!projectId || Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
-      const occupied = occupiedByProject.get(projectId) ?? []
-      const gaps = subtractRanges({ start, end }, occupied)
-      skippedSeconds += Math.floor((end - start) / 1000) - gaps.reduce((total, gap) => total + Math.floor((gap.end - gap.start) / 1000), 0)
-      for (const gap of gaps) {
-        const gapStart = new Date(gap.start)
-        const gapEnd = new Date(gap.end)
-        await addTimeEntry({
-          projectId,
-          description: `Agent Time — ${interval.agents.join(" + ") || "coding"}`,
-          startTime: gapStart.toISOString(),
-          endTime: gapEnd.toISOString(),
-          duration: Math.floor((gap.end - gap.start) / 1000),
-          billable: true,
-          date: localDateString(gapStart, data.settings.timezone),
-        })
-        occupied.push(gap)
-        imported++
-      }
-      occupiedByProject.set(projectId, occupied)
+    for (const slice of plan.slices) {
+      const gapStart = new Date(slice.start)
+      const gapEnd = new Date(slice.end)
+      await addTimeEntry({
+        projectId: slice.projectId,
+        description: `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`,
+        startTime: gapStart.toISOString(),
+        endTime: gapEnd.toISOString(),
+        duration: slice.durationSeconds,
+        billable: true,
+        date: localDateString(gapStart, data.settings.timezone),
+      })
+      imported++
     }
     toast.success(imported ? `Imported ${imported} uncovered ${imported === 1 ? "entry" : "entries"}` : "Everything was already tracked")
-    if (skippedSeconds > 0) toast(`Skipped ${formatDuration(skippedSeconds)} already tracked`)
+    if (plan.skippedSeconds > 0) toast(`Skipped ${formatDuration(plan.skippedSeconds)} already tracked`)
     setImportOpen(false)
   }
 
@@ -465,42 +536,17 @@ export default function TrackerPage() {
 
   const unimportedAgentTime = useMemo(() => {
     if (!agentTime) return { seconds: 0, blocks: 0, unmappedProjects: [] as string[] }
-
-    const occupiedByProject = new Map<string, TimeRange[]>()
-    for (const entry of data.timeEntries) {
-      if (!entry.startTime || !entry.endTime) continue
-      const start = new Date(entry.startTime).getTime()
-      const end = new Date(entry.endTime).getTime()
-      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
-      const occupied = occupiedByProject.get(entry.projectId) ?? []
-      occupied.push({ start, end })
-      occupiedByProject.set(entry.projectId, occupied)
+    const plan = buildAgentImportPlan(
+      agentTime.intervals,
+      projectMappings,
+      data.timeEntries,
+      agentTimeCutoff
+    )
+    return {
+      seconds: plan.slices.reduce((total, slice) => total + slice.durationSeconds, 0) + plan.unmappedSeconds,
+      blocks: plan.slices.length + plan.unmappedBlocks,
+      unmappedProjects: plan.unmappedProjects,
     }
-
-    let seconds = 0
-    let blocks = 0
-    const unmappedProjects = new Set<string>()
-    for (const interval of agentTime.intervals) {
-      const start = Math.max(new Date(interval.start).getTime(), agentTimeCutoff ?? -Infinity)
-      const end = new Date(interval.end).getTime()
-      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
-      const projectId = projectMappings[interval.project]
-      if (projectId === PERSONAL_AGENT_PROJECT) continue
-      if (!projectId) {
-        seconds += Math.floor((end - start) / 1000)
-        blocks++
-        unmappedProjects.add(interval.project)
-        continue
-      }
-      const gaps = subtractRanges({ start, end }, occupiedByProject.get(projectId) ?? [])
-      const uncovered = gaps.reduce((total, gap) => total + Math.floor((gap.end - gap.start) / 1000), 0)
-      if (uncovered > 0) {
-        seconds += uncovered
-        blocks++
-      }
-    }
-
-    return { seconds, blocks, unmappedProjects: [...unmappedProjects].sort() }
   }, [agentTime, agentTimeCutoff, data.timeEntries, projectMappings])
 
   async function saveProjectEdit() {
@@ -739,19 +785,22 @@ export default function TrackerPage() {
                 {[...new Set(availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).map((interval) => interval.project))].map((agentProject) => <div key={agentProject} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
               </div>
               <div className="overflow-hidden rounded-lg border">
-                <div className="border-b bg-muted/35 px-3 py-2"><p className="text-sm font-medium">Review import</p><p className="text-xs text-muted-foreground">These are the exact Agent Time blocks that will be checked for overlap before importing.</p></div>
+                <div className="border-b bg-muted/35 px-3 py-2"><p className="text-sm font-medium">Review exact time to import</p><p className="text-xs text-muted-foreground">Existing tracked time has already been removed. Only the uncovered slices below will be created.</p></div>
                 <div className="max-h-56 overflow-auto">
                   <Table>
-                    <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Agent Time project</TableHead><TableHead>Maps to</TableHead><TableHead>Duration</TableHead></TableRow></TableHeader>
-                    <TableBody>{agentTimeReviewIntervals.map((interval) => {
-                      const mapping = projectMappings[interval.project]
-                      const mappedProject = mapping && mapping !== PERSONAL_AGENT_PROJECT ? getProject(mapping) : undefined
-                      return <TableRow key={interval.id} className={mapping === PERSONAL_AGENT_PROJECT ? "opacity-55" : undefined}><TableCell className="whitespace-nowrap font-mono text-xs">{format(interval.reviewStart, "MMM d, h:mm a")} – {format(interval.reviewEnd, "h:mm a")}</TableCell><TableCell className="text-xs">{interval.project}<span className="block text-muted-foreground">{interval.agents.join(" + ") || "coding"}</span></TableCell><TableCell className="text-xs">{mapping === PERSONAL_AGENT_PROJECT ? <span className="text-muted-foreground">Personal — won&apos;t import</span> : mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : <span className="text-amber-600 dark:text-amber-400">Needs mapping</span>}</TableCell><TableCell className="whitespace-nowrap font-mono text-xs">{formatDuration(interval.reviewDuration)}</TableCell></TableRow>
-                    })}</TableBody>
+                    <TableHeader><TableRow><TableHead>Uncovered time</TableHead><TableHead>Agent Time project</TableHead><TableHead>Imports to</TableHead><TableHead>Duration</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {agentImportPreview.slices.map((slice) => {
+                        const mappedProject = getProject(slice.projectId)
+                        const wasTrimmed = slice.start !== slice.sourceStart || slice.end !== slice.sourceEnd
+                        return <TableRow key={slice.id}><TableCell className="whitespace-nowrap font-mono text-xs">{format(new Date(slice.start), "MMM d, h:mm a")} – {format(new Date(slice.end), "h:mm a")}{wasTrimmed && <span className="block font-sans text-muted-foreground">From {format(new Date(slice.sourceStart), "h:mm a")} – {format(new Date(slice.sourceEnd), "h:mm a")} block</span>}</TableCell><TableCell className="text-xs">{slice.interval.project}<span className="block text-muted-foreground">{slice.interval.agents.join(" + ") || "coding"}</span></TableCell><TableCell className="text-xs">{mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : "Unknown project"}</TableCell><TableCell className="whitespace-nowrap font-mono text-xs">{formatDuration(slice.durationSeconds)}</TableCell></TableRow>
+                      })}
+                      {agentImportPreview.slices.length === 0 && <TableRow><TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">{agentImportPreview.unmappedProjects.length > 0 ? "Map the projects above to calculate the exact uncovered time." : "No uncovered time in this selection."}</TableCell></TableRow>}
+                    </TableBody>
                   </Table>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">{importableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).length} intervals ready to import. {availableAgentIntervals.length - importableAgentIntervals.length > 0 && `${availableAgentIntervals.length - importableAgentIntervals.length} personal interval${availableAgentIntervals.length - importableAgentIntervals.length === 1 ? " is" : "s are"} excluded. `}Existing time entries with exact times are automatically excluded.</p>
+              <p className="text-xs text-muted-foreground">{agentImportPreview.slices.length} exact {agentImportPreview.slices.length === 1 ? "entry" : "entries"} totaling {formatDuration(agentImportPreviewSeconds)} will import. {agentImportPreview.skippedSeconds > 0 && `${formatDuration(agentImportPreview.skippedSeconds)} already tracked is excluded. `}{agentImportPreview.unmappedProjects.length > 0 && `${agentImportPreview.unmappedProjects.length} project${agentImportPreview.unmappedProjects.length === 1 ? " needs" : "s need"} mapping. `}{selectedPersonalIntervals > 0 && `${selectedPersonalIntervals} personal interval${selectedPersonalIntervals === 1 ? " is" : "s are"} excluded.`}</p>
             </>}
             {!agentTime && !agentTimeLoading && <p className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Load Agent Time to choose projects and review available intervals.</p>}
           </div>
