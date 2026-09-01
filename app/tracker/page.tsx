@@ -165,6 +165,70 @@ function unionRangeSeconds(ranges: TimeRange[]) {
   return merged.reduce((total, range) => total + Math.floor((range.end - range.start) / 1000), 0)
 }
 
+type ConversationSource = ReturnType<typeof groupConversationSources>[number]
+
+function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
+  if (source === "T3 Code") {
+    return <span className={`grid shrink-0 place-items-center rounded-md bg-gradient-to-br from-indigo-400 via-violet-600 to-indigo-950 text-[0.55rem] font-black tracking-tighter text-white shadow-sm ${className}`} aria-label="T3 Code logo">T3</span>
+  }
+  if (source === "Claude" || agent === "Claude" || agent === "Fable") {
+    return <span className={`grid shrink-0 place-items-center rounded-md bg-[#d97757] text-white shadow-sm ${className}`} aria-label="Claude logo"><svg viewBox="0 0 24 24" className="size-[72%]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7M8.2 3.4l7.6 17.2M20.6 8.2 3.4 15.8M15.8 3.4 8.2 20.6M3.4 8.2l17.2 7.6" /></svg></span>
+  }
+  return <span className={`grid shrink-0 place-items-center rounded-md bg-emerald-600 text-white shadow-sm ${className}`} aria-label="ChatGPT logo"><svg viewBox="0 0 24 24" className="size-[76%]" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M11.217 19.384A3.501 3.501 0 0 0 18 18.167V13l-6-3.35" /><path d="M5.214 15.014A3.501 3.501 0 0 0 9.66 20.28L14 17.746V10.8" /><path d="M6 7.63c-1.391-.236-2.787.395-3.534 1.689a3.474 3.474 0 0 0 1.271 4.745L8 16.578l6-3.348" /><path d="M12.783 4.616A3.501 3.501 0 0 0 6 5.833V10.9l6 3.45" /><path d="M18.786 8.986A3.501 3.501 0 0 0 14.34 3.72L10 6.254V13.2" /><path d="M18 16.302c1.391.236 2.787-.395 3.534-1.689a3.474 3.474 0 0 0-1.271-4.745l-4.308-2.514L10 10.774" /></svg></span>
+}
+
+function timelineSourceKey(source: ConversationSource) {
+  if (source.source === "T3 Code") return "t3"
+  if (source.source === "Claude" || source.agent === "Claude" || source.agent === "Fable") return "claude"
+  return "codex"
+}
+
+function TimelinePreview({ sources, start, end }: { sources: ConversationSource[]; start: number; end: number }) {
+  const duration = Math.max(1, end - start)
+  const sourceMeta = {
+    claude: { label: "Claude", bar: "bg-[#d97757]" },
+    codex: { label: "Codex / ChatGPT", bar: "bg-emerald-500" },
+    t3: { label: "T3 Code", bar: "bg-violet-500" },
+  } as const
+  const lanes = (["claude", "codex", "t3"] as const).map((key) => ({
+    key,
+    ...sourceMeta[key],
+    conversations: sources.filter((source) => timelineSourceKey(source) === key),
+  })).filter((lane) => lane.conversations.length > 0)
+  const activeRanges = sources.flatMap((source) => source.spans)
+  const gaps = subtractRanges({ start, end }, activeRanges)
+
+  return <div className="mb-3 min-w-0 rounded-lg border bg-background/35 p-3" data-testid="agent-timeline-preview">
+    <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
+      <div><p className="text-xs font-medium">Timeline preview</p><p className="text-[0.7rem] text-muted-foreground">Activity lanes and the gaps included in this billable block</p></div>
+      <p className="font-mono text-[0.7rem] text-muted-foreground">{formatDuration(Math.floor(duration / 1000))}</p>
+    </div>
+    <div className="grid min-w-0 gap-2">
+      {lanes.map((lane) => <div key={lane.key} className="grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-2">
+        <SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-7" />
+        <div className="relative h-7 min-w-0 overflow-hidden rounded-md border bg-muted/25" aria-label={`${lane.label} activity lane`}>
+          {lane.conversations.flatMap((conversation) => conversation.spans.map((span, spanIndex) => {
+            const left = ((span.start - start) / duration) * 100
+            const width = ((span.end - span.start) / duration) * 100
+            return <span key={`${conversation.conversationId}-${span.start}-${spanIndex}`} className={`absolute inset-y-1 min-w-px cursor-help rounded-[4px] ${lane.bar}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${conversation.conversationTitle || lane.label} · ${format(new Date(span.start), "h:mm:ss a")}–${format(new Date(span.end), "h:mm:ss a")} · ${formatDuration(Math.floor((span.end - span.start) / 1000))}`} />
+          }))}
+        </div>
+      </div>)}
+      {gaps.length > 0 && <div className="grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-2">
+        <span className="grid size-7 shrink-0 place-items-center rounded-md border bg-muted/30 text-[0.55rem] font-bold text-muted-foreground" aria-label="Joined gap">GAP</span>
+        <div className="relative h-7 min-w-0 overflow-hidden rounded-md border bg-muted/15" aria-label="Joined gap filler lane">
+          {gaps.map((gap, gapIndex) => <span key={`${gap.start}-${gap.end}-${gapIndex}`} className="absolute inset-y-1 min-w-px cursor-help rounded-[4px] border border-muted-foreground/35" style={{ left: `${((gap.start - start) / duration) * 100}%`, width: `${((gap.end - gap.start) / duration) * 100}%`, backgroundImage: "repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in oklab, var(--muted-foreground) 28%, transparent) 4px 6px)" }} title={`Joined gap · ${format(new Date(gap.start), "h:mm:ss a")}–${format(new Date(gap.end), "h:mm:ss a")} · ${formatDuration(Math.floor((gap.end - gap.start) / 1000))}`} />)}
+        </div>
+      </div>}
+    </div>
+    <div className="mt-2 flex min-w-0 justify-between pl-9 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
+    <div className="mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 border-t pt-3 text-[0.7rem] text-muted-foreground">
+      {lanes.map((lane) => <span key={lane.key} className="inline-flex items-center gap-1.5"><SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-4" />{lane.label}</span>)}
+      {gaps.length > 0 && <span className="inline-flex items-center gap-1.5"><span className="size-4 rounded-[4px] border border-muted-foreground/35" style={{ backgroundImage: "repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in oklab, var(--muted-foreground) 30%, transparent) 3px 5px)" }} />Gap filler</span>}
+    </div>
+  </div>
+}
+
 function mobileFixtureRequested() {
   return typeof window !== "undefined" &&
     process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
@@ -887,6 +951,7 @@ export default function TrackerPage() {
                         <div className="flex min-w-0 items-start justify-between gap-2 sm:justify-end sm:text-right"><div><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Duration</span><p className="font-mono text-xs">{formatDuration(slice.durationSeconds)}</p></div><ChevronDown className={`mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} /></div>
                       </button>
                       {expanded && <div className="min-w-0 border-t bg-muted/15 px-3 py-3" data-testid="agent-source-details">
+                        {sourceConversations.length > 0 && <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} />}
                         <div className="mb-3">
                           <p className="text-xs font-medium">Where this time came from</p>
                           <p className="mt-1 text-xs text-muted-foreground">This is elapsed wall-clock time. Overlapping chats count once; their durations are not added together.</p>

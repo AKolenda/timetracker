@@ -22,8 +22,18 @@ export async function GET(request: NextRequest) {
       start.setHours(13, 40, 0, 0)
       const end = new Date()
       end.setHours(15, 35, 0, 0)
+      const codexFirstEnd = new Date()
+      codexFirstEnd.setHours(13, 50, 0, 0)
+      const claudeStart = new Date()
+      claudeStart.setHours(13, 54, 0, 0)
+      const claudeEnd = new Date()
+      claudeEnd.setHours(13, 58, 0, 0)
+      const t3Start = new Date()
+      t3Start.setHours(13, 58, 0, 0)
       const t3End = new Date()
       t3End.setHours(14, 12, 0, 0)
+      const codexSecondStart = new Date()
+      codexSecondStart.setHours(14, 15, 0, 0)
       return NextResponse.json({
         projects: ["Fixture Project"],
         intervals: [{
@@ -31,14 +41,16 @@ export async function GET(request: NextRequest) {
           start: start.toISOString(),
           end: end.toISOString(),
           project: "Fixture Project",
-          agents: ["Codex"],
-          sources: ["Codex", "T3 Code"],
+          agents: ["Claude", "Codex"],
+          sources: ["Claude", "Codex", "T3 Code"],
           durationSeconds: 6900,
-          activitySeconds: 6900,
+          activitySeconds: 6480,
           live: false,
           sourceIntervals: [
-            { start: start.toISOString(), end: end.toISOString(), durationSeconds: 6900, agent: "Codex", source: "Codex", model: "gpt-5.6-sol", conversationId: "fixture-codex-chat", conversationTitle: "Fix the mobile Agent Time import review" },
-            { start: start.toISOString(), end: t3End.toISOString(), durationSeconds: 1920, agent: "Codex", source: "T3 Code", model: "Codex", conversationId: "fixture-t3-chat", conversationTitle: "Funding tracker mobile polish" },
+            { start: start.toISOString(), end: codexFirstEnd.toISOString(), durationSeconds: 600, agent: "Codex", source: "Codex", model: "gpt-5.6-sol", conversationId: "fixture-codex-chat", conversationTitle: "Fix the mobile Agent Time import review" },
+            { start: claudeStart.toISOString(), end: claudeEnd.toISOString(), durationSeconds: 240, agent: "Claude", source: "Claude", model: "claude-opus-5", conversationId: "fixture-claude-chat", conversationTitle: "Review the tracker import experience" },
+            { start: t3Start.toISOString(), end: t3End.toISOString(), durationSeconds: 840, agent: "Codex", source: "T3 Code", model: "Codex", conversationId: "fixture-t3-chat", conversationTitle: "Funding tracker mobile polish" },
+            { start: codexSecondStart.toISOString(), end: end.toISOString(), durationSeconds: 4800, agent: "Codex", source: "Codex", model: "gpt-5.6-sol", conversationId: "fixture-codex-chat", conversationTitle: "Fix the mobile Agent Time import review" },
           ],
         }],
       })
