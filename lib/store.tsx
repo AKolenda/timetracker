@@ -42,8 +42,8 @@ function mobileTestFixture(): AppData {
   const trackedEnd = new Date(now)
   trackedEnd.setHours(15, 0, 0, 0)
   return {
-    clients: [{ id: "fixture-client", name: "Fixture Client", email: "", phone: "", address: "", color: "", invoiceEmail: "", invoiceScheduleWeeks: null, invoiceScheduleAnchor: null, invoiceScheduleEnabled: false, invoiceScheduleAutoSend: false, lastInvoiceSent: null, createdAt: now.toISOString() }],
-    projects: [{ id: "fixture-project", clientId: "fixture-client", name: "Fixture Project", rate: 100, currency: "USD", status: "active", color: "", createdAt: now.toISOString() }],
+    clients: [{ id: "fixture-client", name: "FundingTracker", email: "", phone: "", address: "", color: "", invoiceEmail: "", invoiceScheduleWeeks: null, invoiceScheduleAnchor: null, invoiceScheduleEnabled: false, invoiceScheduleAutoSend: false, lastInvoiceSent: null, createdAt: now.toISOString() }],
+    projects: [{ id: "fixture-project", clientId: "fixture-client", name: "Funding tracker.app - readjust processing", rate: 100, currency: "USD", status: "active", color: "", createdAt: now.toISOString() }],
     timeEntries: [{ id: "fixture-entry", projectId: "fixture-project", description: "Existing tracked hour", startTime: trackedStart.toISOString(), endTime: trackedEnd.toISOString(), duration: 3600, billable: true, date: localDateString(trackedStart, Intl.DateTimeFormat().resolvedOptions().timeZone) }], expenses: [], invoices: [], settings: { ...defaultSettings, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
     activeTimers: [{ id: "fixture-timer", projectId: "fixture-project", description: "Mobile timer fixture", startTime: new Date(now.getTime() - 65 * 60 * 1000).toISOString(), billable: true, accumulatedPause: 0, pausedAt: null }],
   }
