@@ -101,6 +101,7 @@ type AgentImportPlan = {
   unmappedBlocks: number
 }
 const PERSONAL_AGENT_PROJECT = "__personal__"
+const HARD_AGENT_TIME_START_DATE = "2026-08-30"
 
 function mobileFixtureRequested() {
   return typeof window !== "undefined" &&
@@ -301,14 +302,17 @@ export default function TrackerPage() {
   function showAllAgentTime() {
     localStorage.removeItem("timetracker-agent-time-start-date")
     setAgentTimeStartDate(null)
-    toast("Showing all available Agent Time")
+    toast("Showing Agent Time from Aug 30, 2026")
   }
 
+  const effectiveAgentTimeStartDate = agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE
+    ? agentTimeStartDate
+    : HARD_AGENT_TIME_START_DATE
+
   const agentTimeCutoff = useMemo(() => {
-    if (!agentTimeStartDate) return null
-    const cutoff = new Date(`${agentTimeStartDate}T00:00:00`).getTime()
+    const cutoff = new Date(`${effectiveAgentTimeStartDate}T00:00:00`).getTime()
     return Number.isNaN(cutoff) ? null : cutoff
-  }, [agentTimeStartDate])
+  }, [effectiveAgentTimeStartDate])
 
   const availableAgentIntervals = useMemo(
     () => agentTime?.intervals.filter((interval) => !agentTimeCutoff || new Date(interval.end).getTime() > agentTimeCutoff) ?? [],
@@ -345,7 +349,7 @@ export default function TrackerPage() {
     try {
       const gap = Math.max(0, Number(gapMinutes) || 15)
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
-      const response = await fetch(`/api/agent-time?gapMinutes=${gap}${fixture}`)
+      const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}${fixture}`)
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse
       setAgentTime(payload)
@@ -661,10 +665,10 @@ export default function TrackerPage() {
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
-              {!agentTimeStartDate ? (
+              {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE ? (
                 <Button variant="outline" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
               ) : (
-                <Button variant="ghost" onClick={showAllAgentTime}>Show prior time</Button>
+                <Button variant="ghost" onClick={showAllAgentTime}>Show from Aug 30</Button>
               )}
               <Button variant="outline" onClick={openAgentTimeImport}>
                 <Download className="size-3.5" data-icon="inline-start" />
@@ -774,7 +778,7 @@ export default function TrackerPage() {
           </DialogHeader>
           <div className="grid gap-4 py-3">
             <p className="text-sm text-muted-foreground">Agent Time stays running in the background. Map its project names once, then import only time that does not overlap existing timed entries.</p>
-            {agentTimeStartDate && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed px-3 py-2 text-xs text-muted-foreground"><span>Showing Agent Time from {format(parseLocalDate(agentTimeStartDate), "MMM d, yyyy")} onward.</span><Button variant="ghost" size="sm" onClick={showAllAgentTime}>Show prior time</Button></div>}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed px-3 py-2 text-xs text-muted-foreground"><span>Showing Agent Time from {format(parseLocalDate(effectiveAgentTimeStartDate), "MMM d, yyyy")} onward.</span>{agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE && <Button variant="ghost" size="sm" onClick={showAllAgentTime}>Show from Aug 30</Button>}</div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <div className="grid flex-1 gap-2"><Label htmlFor="agent-gap">Join gaps up to (minutes)</Label><Input id="agent-gap" type="number" min="0" max="240" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} /></div>
               <Button variant="outline" onClick={() => void loadAgentTime()} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
