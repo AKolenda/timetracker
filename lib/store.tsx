@@ -161,6 +161,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    // The provider's initial load intentionally hydrates its client-side store.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadAll()
   }, [loadAll])
 
@@ -271,7 +273,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       expenses: d.expenses.map((expense) => expense.projectId === sourceId ? { ...expense, projectId: targetId } : expense),
       activeTimers: migratedTimers,
     }))
-  }, [data.timeEntries, data.expenses])
+  }, [data.timeEntries, data.expenses, data.activeTimers])
 
   const deleteProject = useCallback(async (id: string) => {
     const db = getDataProvider()
@@ -287,6 +289,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // --- Time Entries ---
   const addTimeEntry = useCallback(
     async (entry: Omit<TimeEntry, "id">) => {
+      if (mobileTestFixtureRequested()) {
+        const newEntry: TimeEntry = { ...entry, id: `fixture-entry-${crypto.randomUUID()}` }
+        setData((d) => ({
+          ...d,
+          timeEntries: [newEntry, ...d.timeEntries],
+        }))
+        return newEntry
+      }
       const db = getDataProvider()
       const newEntry = await db.createTimeEntry(entry)
       setData((d) => ({

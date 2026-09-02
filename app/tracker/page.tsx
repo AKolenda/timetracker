@@ -15,6 +15,7 @@ import {
   TriangleAlert,
   ChevronsUpDown,
   ChevronDown,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -66,7 +67,7 @@ import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, type TimeRange } from "@/lib/agent-time-overlap"
-import type { TimeEntry } from "@/lib/types"
+import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
 type AgentTimeInterval = {
   id: string
@@ -116,6 +117,8 @@ type AgentImportPlan = {
 }
 const PERSONAL_AGENT_PROJECT = "__personal__"
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
+const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
+const AGENT_REMINDER_DISMISSED_KEY = "timetracker-agent-time-dismissed-through"
 
 function sourceDescription(interval: AgentTimeSourceInterval) {
   if (interval.source === "T3 Code") return `T3 Code using ${interval.agent}`
@@ -235,6 +238,34 @@ function mobileFixtureRequested() {
     new URLSearchParams(window.location.search).get("fixture") === "mobile"
 }
 
+function savedDailyAgentGap(today: string) {
+  if (mobileFixtureRequested() || typeof window === "undefined") return "15"
+  try {
+    const saved = JSON.parse(localStorage.getItem(DAILY_AGENT_GAP_KEY) ?? "null") as { date?: string; minutes?: number } | null
+    const minutes = saved?.minutes
+    if (
+      saved?.date === today &&
+      typeof minutes === "number" &&
+      Number.isFinite(minutes) &&
+      minutes >= 0 &&
+      minutes <= 240
+    ) return String(Math.round(minutes))
+  } catch {
+    // Invalid preferences use the daily default.
+  }
+  return "15"
+}
+
+function savedAgentReminderDismissal() {
+  if (mobileFixtureRequested() || typeof window === "undefined") return 0
+  try {
+    const dismissedThrough = Number(localStorage.getItem(AGENT_REMINDER_DISMISSED_KEY) ?? 0)
+    return Number.isFinite(dismissedThrough) ? dismissedThrough : 0
+  } catch {
+    return 0
+  }
+}
+
 function buildAgentImportPlan(
   intervals: AgentTimeInterval[],
   projectMappings: Record<string, string>,
@@ -339,6 +370,40 @@ function LiveTimer({
   )
 }
 
+function TodayTotal({
+  completedSeconds,
+  activeTimers,
+}: {
+  completedSeconds: number
+  activeTimers: ActiveTimer[]
+}) {
+  const [now, setNow] = useState<number | null>(null)
+
+  useEffect(() => {
+    function tick() {
+      setNow(Date.now())
+    }
+
+    tick()
+    if (!activeTimers.some((timer) => !timer.pausedAt)) return
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [activeTimers])
+
+  const activeSeconds = now === null ? 0 : activeTimers.reduce((total, timer) => {
+    const startedAt = new Date(timer.startTime).getTime()
+    const endedAt = timer.pausedAt ? new Date(timer.pausedAt).getTime() : now
+    if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return total
+    return total + Math.max(0, Math.floor((endedAt - startedAt) / 1000) - (timer.accumulatedPause ?? 0))
+  }, 0)
+
+  return (
+    <span data-testid="today-total" className="font-mono text-2xl font-semibold tabular-nums tracking-tight sm:text-3xl">
+      {formatDuration(completedSeconds + activeSeconds)}
+    </span>
+  )
+}
+
 export default function TrackerPage() {
   const {
     data,
@@ -354,6 +419,7 @@ export default function TrackerPage() {
     getClient,
     getProject,
   } = useStore()
+  const todayEntryDate = localDateString(new Date(), data.settings.timezone)
 
   const [timerProject, setTimerProject] = useState("")
   const [timerDesc, setTimerDesc] = useState("")
@@ -384,6 +450,8 @@ export default function TrackerPage() {
   const [agentTimeLoading, setAgentTimeLoading] = useState(false)
   const [expandedAgentSlice, setExpandedAgentSlice] = useState<string | null>(null)
   const [gapMinutes, setGapMinutes] = useState("15")
+  const [appliedGapMinutes, setAppliedGapMinutes] = useState("15")
+  const [dismissedAgentTimeThrough, setDismissedAgentTimeThrough] = useState(0)
   const [agentProjectFilter, setAgentProjectFilter] = useState("all")
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
     if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
@@ -408,8 +476,16 @@ export default function TrackerPage() {
   // Load a quiet status snapshot on arrival so forgotten Agent Time is visible
   // without making the user open the import flow first.
   useEffect(() => {
-    void loadAgentTime(true)
-  }, [])
+    const savedGap = savedDailyAgentGap(todayEntryDate)
+    const savedDismissal = savedAgentReminderDismissal()
+    const id = window.setTimeout(() => {
+      setGapMinutes(savedGap)
+      setAppliedGapMinutes(savedGap)
+      setDismissedAgentTimeThrough(savedDismissal)
+      void loadAgentTime(true, savedGap)
+    }, 0)
+    return () => window.clearTimeout(id)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function saveProjectMapping(agentProject: string, projectId: string) {
     setProjectMappings((current) => {
@@ -471,10 +547,13 @@ export default function TrackerPage() {
     (interval) => projectMappings[interval.project] === PERSONAL_AGENT_PROJECT
   ).length
 
-  async function loadAgentTime(silent = false) {
+  async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes) {
     setAgentTimeLoading(true)
     try {
-      const gap = Math.max(0, Number(gapMinutes) || 15)
+      const requestedGap = Number(gapOverride)
+      const gap = Number.isFinite(requestedGap)
+        ? Math.max(0, Math.min(240, Math.round(requestedGap)))
+        : 15
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
       const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}${fixture}`)
       if (!response.ok) throw new Error("Agent Time is not available")
@@ -487,6 +566,28 @@ export default function TrackerPage() {
     } finally {
       setAgentTimeLoading(false)
     }
+  }
+
+  function applyGapMinutes() {
+    const requestedGap = Number(gapMinutes)
+    if (!Number.isFinite(requestedGap) || requestedGap < 0 || requestedGap > 240) {
+      toast.error("Choose a gap from 0 to 240 minutes")
+      return
+    }
+
+    const normalizedGap = String(Math.round(requestedGap))
+    setGapMinutes(normalizedGap)
+    setAppliedGapMinutes(normalizedGap)
+    try {
+      localStorage.setItem(DAILY_AGENT_GAP_KEY, JSON.stringify({
+        date: todayEntryDate,
+        minutes: Number(normalizedGap),
+      }))
+    } catch {
+      // The current page still uses the choice when browser storage is unavailable.
+    }
+    toast.success(`Agent Time gap set to ${normalizedGap} ${normalizedGap === "1" ? "minute" : "minutes"} for today`)
+    void loadAgentTime(false, normalizedGap)
   }
 
   function openAgentTimeImport() {
@@ -524,6 +625,7 @@ export default function TrackerPage() {
     }
     toast.success(imported ? `Imported ${imported} uncovered ${imported === 1 ? "entry" : "entries"}` : "Everything was already tracked")
     if (plan.skippedSeconds > 0) toast(`Skipped ${formatDuration(plan.skippedSeconds)} already tracked`)
+    dismissAgentTimeNotification()
     setImportOpen(false)
   }
 
@@ -664,22 +766,48 @@ export default function TrackerPage() {
     ),
     [data.timeEntries]
   )
-  const todayEntryDate = localDateString(new Date(), data.settings.timezone)
+  const todayCompletedSeconds = useMemo(
+    () => data.timeEntries
+      .filter((entry) => entry.date === todayEntryDate)
+      .reduce((total, entry) => total + entry.duration, 0),
+    [data.timeEntries, todayEntryDate]
+  )
 
   const unimportedAgentTime = useMemo(() => {
-    if (!agentTime) return { seconds: 0, blocks: 0, unmappedProjects: [] as string[] }
+    if (!agentTime) return { seconds: 0, blocks: 0, unmappedProjects: [] as string[], latestEnd: 0 }
     const plan = buildAgentImportPlan(
       agentTime.intervals,
       projectMappings,
       data.timeEntries,
       agentTimeCutoff
     )
+    const unmappedProjects = new Set(plan.unmappedProjects)
+    const latestMappedSliceEnd = plan.slices.reduce(
+      (latest, slice) => Math.max(latest, slice.end),
+      0
+    )
+    const latestUnmappedEnd = agentTime.intervals.reduce((latest, interval) => {
+      if (!unmappedProjects.has(interval.project)) return latest
+      const end = new Date(interval.end).getTime()
+      return Number.isFinite(end) ? Math.max(latest, end) : latest
+    }, 0)
     return {
       seconds: plan.slices.reduce((total, slice) => total + slice.durationSeconds, 0) + plan.unmappedSeconds,
       blocks: plan.slices.length + plan.unmappedBlocks,
       unmappedProjects: plan.unmappedProjects,
+      latestEnd: Math.max(latestMappedSliceEnd, latestUnmappedEnd),
     }
   }, [agentTime, agentTimeCutoff, data.timeEntries, projectMappings])
+
+  function dismissAgentTimeNotification() {
+    if (!unimportedAgentTime.latestEnd) return
+    setDismissedAgentTimeThrough(unimportedAgentTime.latestEnd)
+    try {
+      localStorage.setItem(AGENT_REMINDER_DISMISSED_KEY, String(unimportedAgentTime.latestEnd))
+    } catch {
+      // Dismissal still applies until this page is refreshed.
+    }
+  }
 
   async function saveProjectEdit() {
     if (!projectEdit?.name.trim()) return
@@ -697,6 +825,50 @@ export default function TrackerPage() {
         title="Time Tracker"
         description="Track each work session as its own entry"
       />
+
+      <Card className="mb-6 rounded-lg">
+        <CardContent className="grid min-w-0 gap-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/35">
+              <Clock className="size-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">Today&apos;s total</p>
+              <TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} />
+              <p className="text-xs text-muted-foreground">Completed entries and active timers</p>
+            </div>
+          </div>
+          <div className="grid min-w-0 gap-1.5 sm:justify-items-end">
+            <Label htmlFor="tracker-agent-gap" className="text-xs text-muted-foreground">Agent Time gap</Label>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Input
+                id="tracker-agent-gap"
+                data-testid="tracker-agent-gap"
+                type="number"
+                min="0"
+                max="240"
+                inputMode="numeric"
+                value={gapMinutes}
+                onChange={(event) => setGapMinutes(event.target.value)}
+                className="h-9 w-20"
+              />
+              <span className="text-xs text-muted-foreground">minutes</span>
+              <Button
+                data-testid="apply-agent-gap"
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={applyGapMinutes}
+                disabled={agentTimeLoading}
+              >
+                {agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}
+                Apply
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">For today only · resets to 15 tomorrow</p>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="mb-6">
         <CardContent className="pt-5">
@@ -779,8 +951,8 @@ export default function TrackerPage() {
         </CardContent>
       </Card>
 
-      {unimportedAgentTime.seconds > 0 && (
-        <Card className="mb-6 border-amber-500/40 bg-amber-500/5">
+      {unimportedAgentTime.seconds > 0 && unimportedAgentTime.latestEnd > dismissedAgentTimeThrough && (
+        <Card data-testid="agent-time-reminder" className="mb-6 border-amber-500/40 bg-amber-500/5">
           <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex gap-3">
               <TriangleAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -793,6 +965,17 @@ export default function TrackerPage() {
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                data-testid="dismiss-agent-time-reminder"
+                variant="ghost"
+                onClick={() => {
+                  dismissAgentTimeNotification()
+                  toast("Agent Time reminder dismissed until there is new activity")
+                }}
+              >
+                <X className="size-3.5" data-icon="inline-start" />
+                Dismiss
+              </Button>
               {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE ? (
                 <Button variant="outline" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
               ) : (
@@ -912,7 +1095,7 @@ export default function TrackerPage() {
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"><span className="min-w-0 break-words">Showing Agent Time from {format(parseLocalDate(effectiveAgentTimeStartDate), "MMM d, yyyy")} onward.</span>{agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE && <Button variant="ghost" size="sm" onClick={showAllAgentTime}>Show from Aug 30</Button>}</div>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
               <div className="grid min-w-0 flex-1 gap-2"><Label htmlFor="agent-gap">Join gaps up to (minutes)</Label><Input id="agent-gap" type="number" min="0" max="240" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} /></div>
-              <Button variant="outline" onClick={() => void loadAgentTime()} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
+              <Button variant="outline" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
             </div>
             {agentTime && <>
               <div className="grid min-w-0 gap-2"><Label>Agent Time project to show</Label><Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger className="w-full min-w-0 max-w-full"><SelectValue /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value="all">All projects ({availableAgentIntervals.length} intervals)</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select></div>
