@@ -238,10 +238,16 @@ function mobileFixtureRequested() {
     new URLSearchParams(window.location.search).get("fixture") === "mobile"
 }
 
+function agentPreferenceStorageKey(key: string) {
+  if (!mobileFixtureRequested()) return key
+  const fixtureSession = new URLSearchParams(window.location.search).get("fixtureSession") || "default"
+  return `${key}:fixture:${fixtureSession}`
+}
+
 function savedDailyAgentGap(today: string) {
-  if (mobileFixtureRequested() || typeof window === "undefined") return "15"
+  if (typeof window === "undefined") return "15"
   try {
-    const saved = JSON.parse(localStorage.getItem(DAILY_AGENT_GAP_KEY) ?? "null") as { date?: string; minutes?: number } | null
+    const saved = JSON.parse(localStorage.getItem(agentPreferenceStorageKey(DAILY_AGENT_GAP_KEY)) ?? "null") as { date?: string; minutes?: number } | null
     const minutes = saved?.minutes
     if (
       saved?.date === today &&
@@ -257,9 +263,9 @@ function savedDailyAgentGap(today: string) {
 }
 
 function savedAgentReminderDismissal() {
-  if (mobileFixtureRequested() || typeof window === "undefined") return 0
+  if (typeof window === "undefined") return 0
   try {
-    const dismissedThrough = Number(localStorage.getItem(AGENT_REMINDER_DISMISSED_KEY) ?? 0)
+    const dismissedThrough = Number(localStorage.getItem(agentPreferenceStorageKey(AGENT_REMINDER_DISMISSED_KEY)) ?? 0)
     return Number.isFinite(dismissedThrough) ? dismissedThrough : 0
   } catch {
     return 0
@@ -579,14 +585,16 @@ export default function TrackerPage() {
     setGapMinutes(normalizedGap)
     setAppliedGapMinutes(normalizedGap)
     try {
-      localStorage.setItem(DAILY_AGENT_GAP_KEY, JSON.stringify({
+      localStorage.setItem(agentPreferenceStorageKey(DAILY_AGENT_GAP_KEY), JSON.stringify({
         date: todayEntryDate,
         minutes: Number(normalizedGap),
       }))
     } catch {
       // The current page still uses the choice when browser storage is unavailable.
     }
-    toast.success(`Agent Time gap set to ${normalizedGap} ${normalizedGap === "1" ? "minute" : "minutes"} for today`)
+    const handledCurrentActivity = unimportedAgentTime.latestEnd > dismissedAgentTimeThrough
+    dismissAgentTimeNotification()
+    toast.success(`Agent Time gap set to ${normalizedGap} ${normalizedGap === "1" ? "minute" : "minutes"} for today${handledCurrentActivity ? "; current reminder cleared" : ""}`)
     void loadAgentTime(false, normalizedGap)
   }
 
@@ -803,7 +811,7 @@ export default function TrackerPage() {
     if (!unimportedAgentTime.latestEnd) return
     setDismissedAgentTimeThrough(unimportedAgentTime.latestEnd)
     try {
-      localStorage.setItem(AGENT_REMINDER_DISMISSED_KEY, String(unimportedAgentTime.latestEnd))
+      localStorage.setItem(agentPreferenceStorageKey(AGENT_REMINDER_DISMISSED_KEY), String(unimportedAgentTime.latestEnd))
     } catch {
       // Dismissal still applies until this page is refreshed.
     }
