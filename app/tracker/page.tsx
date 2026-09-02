@@ -453,7 +453,7 @@ function TodayTotal({
   }, 0)
 
   return (
-    <span data-testid="today-total" className="font-mono text-2xl font-semibold tabular-nums tracking-tight sm:text-3xl">
+    <span data-testid="today-total" className="font-mono text-xs font-semibold tabular-nums text-foreground">
       {formatDuration(completedSeconds + activeSeconds)}
     </span>
   )
@@ -922,50 +922,6 @@ export default function TrackerPage() {
         description="Track each work session as its own entry"
       />
 
-      <Card className="mb-6 rounded-lg">
-        <CardContent className="grid min-w-0 gap-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/35">
-              <Clock className="size-5 text-muted-foreground" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">Today&apos;s total</p>
-              <TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} />
-              <p className="text-xs text-muted-foreground">Completed entries and active timers</p>
-            </div>
-          </div>
-          <div className="grid min-w-0 gap-1.5 sm:justify-items-end">
-            <Label htmlFor="tracker-agent-gap" className="text-xs text-muted-foreground">Agent Time gap</Label>
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Input
-                id="tracker-agent-gap"
-                data-testid="tracker-agent-gap"
-                type="number"
-                min="0"
-                max="240"
-                inputMode="numeric"
-                value={gapMinutes}
-                onChange={(event) => setGapMinutes(event.target.value)}
-                className="h-9 w-20"
-              />
-              <span className="text-xs text-muted-foreground">minutes</span>
-              <Button
-                data-testid="apply-agent-gap"
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={applyGapMinutes}
-                disabled={agentTimeLoading}
-              >
-                {agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}
-                Apply
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">For today only · resets to 15 tomorrow</p>
-          </div>
-        </CardContent>
-      </Card>
-
       <Card className="mb-6">
         <CardContent className="pt-5">
           {data.projects.length === 0 ? (
@@ -1052,12 +1008,40 @@ export default function TrackerPage() {
           <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex gap-3">
               <TriangleAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
-              <div>
+              <div className="min-w-0">
                 <p className="font-medium">{formatDuration(unimportedAgentTime.seconds)} of Agent Time has not been imported</p>
                 <p className="text-sm text-muted-foreground">
                   {unimportedAgentTime.blocks} {unimportedAgentTime.blocks === 1 ? "block is" : "blocks are"} not covered by an existing timed entry.
                   {unimportedAgentTime.unmappedProjects.length > 0 && ` Map ${unimportedAgentTime.unmappedProjects.slice(0, 3).join(", ")}${unimportedAgentTime.unmappedProjects.length > 3 ? ` and ${unimportedAgentTime.unmappedProjects.length - 3} more` : ""} to client projects before importing.`}
                 </p>
+                <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                  <Label htmlFor="tracker-agent-gap" className="text-xs text-muted-foreground">Agent Time gap</Label>
+                  <Input
+                    id="tracker-agent-gap"
+                    data-testid="tracker-agent-gap"
+                    type="number"
+                    min="0"
+                    max="240"
+                    inputMode="numeric"
+                    value={gapMinutes}
+                    onChange={(event) => setGapMinutes(event.target.value)}
+                    className="h-8 w-16"
+                  />
+                  <span className="text-xs text-muted-foreground">min today</span>
+                  <Button
+                    data-testid="apply-agent-gap"
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={applyGapMinutes}
+                    disabled={agentTimeLoading}
+                  >
+                    {agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}
+                    Apply
+                  </Button>
+                  <span className="text-[0.65rem] text-muted-foreground">Resets to 15 tomorrow</span>
+                </div>
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
@@ -1121,13 +1105,15 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {sortedEntries[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {sortedEntries.map((entry, index) => {
                 const project = getProject(entry.projectId)
                 const amount = entry.billable && project ? (entry.duration / 3600) * project.rate : 0
                 const isNewDay = index === 0 || entry.date !== sortedEntries[index - 1]?.date
-                const dayLabel = entry.date === todayEntryDate ? "Today" : format(parseLocalDate(entry.date), "EEEE, MMMM d, yyyy")
+                const isToday = entry.date === todayEntryDate
+                const dayLabel = isToday ? "Today" : format(parseLocalDate(entry.date), "EEEE, MMMM d, yyyy")
                 return <Fragment key={entry.id}>
-                  {isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 text-xs font-semibold text-muted-foreground">{dayLabel}</TableCell></TableRow>}
+                  {isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>}
                   <TableRow>
                   <TableCell className="font-medium">{entry.description || "Untitled"}</TableCell>
                   <TableCell>
