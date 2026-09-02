@@ -111,14 +111,22 @@ type AgentImportSlice = {
 type AgentImportPlan = {
   slices: AgentImportSlice[]
   skippedSeconds: number
+  ignoredSeconds: number
   unmappedProjects: string[]
   unmappedSeconds: number
   unmappedBlocks: number
+}
+type IgnoredAgentRange = {
+  id: string
+  agentProject: string
+  start: number
+  end: number
 }
 const PERSONAL_AGENT_PROJECT = "__personal__"
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
 const AGENT_REMINDER_DISMISSED_KEY = "timetracker-agent-time-dismissed-through"
+const IGNORED_AGENT_RANGES_KEY = "timetracker-agent-time-ignored-ranges"
 
 function sourceDescription(interval: AgentTimeSourceInterval) {
   if (interval.source === "T3 Code") return `T3 Code using ${interval.agent}`
@@ -272,11 +280,41 @@ function savedAgentReminderDismissal() {
   }
 }
 
+function savedIgnoredAgentRanges() {
+  if (typeof window === "undefined") return []
+  try {
+    const saved = JSON.parse(localStorage.getItem(agentPreferenceStorageKey(IGNORED_AGENT_RANGES_KEY)) ?? "[]") as unknown
+    if (!Array.isArray(saved)) return []
+    return saved.filter((range): range is IgnoredAgentRange => {
+      if (!range || typeof range !== "object") return false
+      const candidate = range as Partial<IgnoredAgentRange>
+      return typeof candidate.id === "string" &&
+        typeof candidate.agentProject === "string" &&
+        typeof candidate.start === "number" &&
+        Number.isFinite(candidate.start) &&
+        typeof candidate.end === "number" &&
+        Number.isFinite(candidate.end) &&
+        candidate.end > candidate.start
+    })
+  } catch {
+    return []
+  }
+}
+
+function persistIgnoredAgentRanges(ranges: IgnoredAgentRange[]) {
+  try {
+    localStorage.setItem(agentPreferenceStorageKey(IGNORED_AGENT_RANGES_KEY), JSON.stringify(ranges))
+  } catch {
+    // Ignoring still applies until this page is refreshed.
+  }
+}
+
 function buildAgentImportPlan(
   intervals: AgentTimeInterval[],
   projectMappings: Record<string, string>,
   timeEntries: TimeEntry[],
-  cutoff: number | null
+  cutoff: number | null,
+  ignoredRanges: IgnoredAgentRange[] = []
 ): AgentImportPlan {
   const occupiedByProject = new Map<string, TimeRange[]>()
   for (const entry of timeEntries) {
@@ -292,6 +330,7 @@ function buildAgentImportPlan(
   const slices: AgentImportSlice[] = []
   const unmappedProjects = new Set<string>()
   let skippedSeconds = 0
+  let ignoredSeconds = 0
   let unmappedSeconds = 0
   let unmappedBlocks = 0
   for (const interval of [...intervals].sort((a, b) => +new Date(a.start) - +new Date(b.start))) {
@@ -309,12 +348,21 @@ function buildAgentImportPlan(
     }
 
     const occupied = occupiedByProject.get(projectId) ?? []
-    const gaps = subtractRanges({ start: sourceStart, end: sourceEnd }, occupied)
-    const uncoveredSeconds = gaps.reduce(
+    const trackedGaps = subtractRanges({ start: sourceStart, end: sourceEnd }, occupied)
+    const trackedUncoveredSeconds = trackedGaps.reduce(
       (total, gap) => total + Math.floor((gap.end - gap.start) / 1000),
       0
     )
-    skippedSeconds += Math.floor((sourceEnd - sourceStart) / 1000) - uncoveredSeconds
+    skippedSeconds += Math.floor((sourceEnd - sourceStart) / 1000) - trackedUncoveredSeconds
+    const ignoredForProject = ignoredRanges
+      .filter((range) => range.agentProject === interval.project)
+      .map((range) => ({ start: range.start, end: range.end }))
+    const gaps = trackedGaps.flatMap((gap) => subtractRanges(gap, ignoredForProject))
+    const finalUncoveredSeconds = gaps.reduce(
+      (total, gap) => total + Math.floor((gap.end - gap.start) / 1000),
+      0
+    )
+    ignoredSeconds += trackedUncoveredSeconds - finalUncoveredSeconds
 
     for (const gap of gaps) {
       slices.push({
@@ -335,6 +383,7 @@ function buildAgentImportPlan(
   return {
     slices,
     skippedSeconds,
+    ignoredSeconds,
     unmappedProjects: [...unmappedProjects].sort(),
     unmappedSeconds,
     unmappedBlocks,
@@ -458,6 +507,7 @@ export default function TrackerPage() {
   const [gapMinutes, setGapMinutes] = useState("15")
   const [appliedGapMinutes, setAppliedGapMinutes] = useState("15")
   const [dismissedAgentTimeThrough, setDismissedAgentTimeThrough] = useState(0)
+  const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
   const [agentProjectFilter, setAgentProjectFilter] = useState("all")
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
     if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
@@ -484,10 +534,12 @@ export default function TrackerPage() {
   useEffect(() => {
     const savedGap = savedDailyAgentGap(todayEntryDate)
     const savedDismissal = savedAgentReminderDismissal()
+    const savedIgnoredRanges = savedIgnoredAgentRanges()
     const id = window.setTimeout(() => {
       setGapMinutes(savedGap)
       setAppliedGapMinutes(savedGap)
       setDismissedAgentTimeThrough(savedDismissal)
+      setIgnoredAgentRanges(savedIgnoredRanges)
       void loadAgentTime(true, savedGap)
     }, 0)
     return () => window.clearTimeout(id)
@@ -540,9 +592,10 @@ export default function TrackerPage() {
       selectedAgentIntervals,
       projectMappings,
       data.timeEntries,
-      agentTimeCutoff
+      agentTimeCutoff,
+      ignoredAgentRanges
     ),
-    [agentTimeCutoff, data.timeEntries, projectMappings, selectedAgentIntervals]
+    [agentTimeCutoff, data.timeEntries, ignoredAgentRanges, projectMappings, selectedAgentIntervals]
   )
 
   const agentImportPreviewSeconds = agentImportPreview.slices.reduce(
@@ -609,7 +662,8 @@ export default function TrackerPage() {
       selectedAgentIntervals,
       projectMappings,
       data.timeEntries,
-      agentTimeCutoff
+      agentTimeCutoff,
+      ignoredAgentRanges
     )
     if (plan.unmappedProjects.length) {
       toast.error(`Choose a TimeTracker project for ${plan.unmappedProjects.join(", ")}`)
@@ -787,7 +841,8 @@ export default function TrackerPage() {
       agentTime.intervals,
       projectMappings,
       data.timeEntries,
-      agentTimeCutoff
+      agentTimeCutoff,
+      ignoredAgentRanges
     )
     const unmappedProjects = new Set(plan.unmappedProjects)
     const latestMappedSliceEnd = plan.slices.reduce(
@@ -805,7 +860,40 @@ export default function TrackerPage() {
       unmappedProjects: plan.unmappedProjects,
       latestEnd: Math.max(latestMappedSliceEnd, latestUnmappedEnd),
     }
-  }, [agentTime, agentTimeCutoff, data.timeEntries, projectMappings])
+  }, [agentTime, agentTimeCutoff, data.timeEntries, ignoredAgentRanges, projectMappings])
+
+  function restoreVisibleIgnoredAgentRanges() {
+    setIgnoredAgentRanges((current) => {
+      const next = current.filter((range) => !selectedAgentIntervals.some((interval) => {
+        if (interval.project !== range.agentProject) return false
+        const intervalStart = new Date(interval.start).getTime()
+        const intervalEnd = new Date(interval.end).getTime()
+        return Number.isFinite(intervalStart) && Number.isFinite(intervalEnd) && range.end > intervalStart && range.start < intervalEnd
+      }))
+      persistIgnoredAgentRanges(next)
+      return next
+    })
+    toast.success("Removed Agent Time restored")
+  }
+
+  function ignoreAgentSlice(slice: AgentImportSlice) {
+    const ignoredRange: IgnoredAgentRange = {
+      id: `${slice.interval.project}:${slice.start}:${slice.end}`,
+      agentProject: slice.interval.project,
+      start: slice.start,
+      end: slice.end,
+    }
+    setIgnoredAgentRanges((current) => {
+      if (current.some((range) => range.id === ignoredRange.id)) return current
+      const next = [...current, ignoredRange]
+      persistIgnoredAgentRanges(next)
+      return next
+    })
+    if (expandedAgentSlice === slice.id) setExpandedAgentSlice(null)
+    toast("Removed from Agent Time imports", {
+      description: `${format(new Date(slice.start), "MMM d, h:mm a")} – ${format(new Date(slice.end), "h:mm a")}`,
+    })
+  }
 
   function dismissAgentTimeNotification() {
     if (!unimportedAgentTime.latestEnd) return
@@ -1130,17 +1218,31 @@ export default function TrackerPage() {
                     const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
                     const expanded = expandedAgentSlice === slice.id
                     return <div key={slice.id} className="min-w-0 border-b last:border-b-0">
-                      <button
-                        type="button"
-                        className="grid w-full min-w-0 cursor-pointer gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/25 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-start"
-                        aria-expanded={expanded}
-                        onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}
-                      >
-                        <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Uncovered time</span><p className="break-words font-mono text-xs">{format(new Date(slice.start), "MMM d, h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>{wasTrimmed && <p className="break-words text-xs text-muted-foreground">From {format(new Date(slice.sourceStart), "h:mm a")} – {format(new Date(slice.sourceEnd), "h:mm a")} block</p>}</div>
-                        <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Agent Time project</span><p className="break-words text-xs">{slice.interval.project}</p><p className="break-words text-xs text-muted-foreground">{sourceLabels.join(" + ") || slice.interval.agents.join(" + ") || "coding"}</p></div>
-                        <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Imports to</span><p className="break-words text-xs sm:line-clamp-2" title={mappedProjectLabel}>{mappedProjectLabel}</p></div>
-                        <div className="flex min-w-0 items-start justify-between gap-2 sm:justify-end sm:text-right"><div><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Duration</span><p className="font-mono text-xs">{formatDuration(slice.durationSeconds)}</p></div><ChevronDown className={`mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} /></div>
-                      </button>
+                      <div className="flex min-w-0 items-stretch">
+                        <button
+                          type="button"
+                          className="grid min-w-0 flex-1 cursor-pointer gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/25 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-start"
+                          aria-expanded={expanded}
+                          onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}
+                        >
+                          <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Uncovered time</span><p className="break-words font-mono text-xs">{format(new Date(slice.start), "MMM d, h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>{wasTrimmed && <p className="break-words text-xs text-muted-foreground">From {format(new Date(slice.sourceStart), "h:mm a")} – {format(new Date(slice.sourceEnd), "h:mm a")} block</p>}</div>
+                          <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Agent Time project</span><p className="break-words text-xs">{slice.interval.project}</p><p className="break-words text-xs text-muted-foreground">{sourceLabels.join(" + ") || slice.interval.agents.join(" + ") || "coding"}</p></div>
+                          <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Imports to</span><p className="break-words text-xs sm:line-clamp-2" title={mappedProjectLabel}>{mappedProjectLabel}</p></div>
+                          <div className="flex min-w-0 items-start justify-between gap-2 sm:justify-end sm:text-right"><div><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Duration</span><p className="font-mono text-xs">{formatDuration(slice.durationSeconds)}</p></div><ChevronDown className={`mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} /></div>
+                        </button>
+                        <Button
+                          type="button"
+                          data-testid="ignore-agent-slice"
+                          variant="ghost"
+                          size="icon"
+                          className="mb-2 mr-2 mt-auto shrink-0 self-end text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:m-2 sm:self-center"
+                          aria-label={`Do not import ${format(new Date(slice.start), "MMM d, h:mm a")} to ${format(new Date(slice.end), "h:mm a")}`}
+                          title="Do not import this entry"
+                          onClick={() => ignoreAgentSlice(slice)}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
                       {expanded && <div className="min-w-0 border-t bg-muted/15 px-3 py-3" data-testid="agent-source-details">
                         {sourceConversations.length > 0 && <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} />}
                         <div className="mb-3">
@@ -1169,7 +1271,10 @@ export default function TrackerPage() {
                   {agentImportPreview.slices.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{agentImportPreview.unmappedProjects.length > 0 ? "Map the projects above to calculate the exact uncovered time." : "No uncovered time in this selection."}</p>}
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">{agentImportPreview.slices.length} exact {agentImportPreview.slices.length === 1 ? "entry" : "entries"} totaling {formatDuration(agentImportPreviewSeconds)} will import. {agentImportPreview.skippedSeconds > 0 && `${formatDuration(agentImportPreview.skippedSeconds)} already tracked is excluded. `}{agentImportPreview.unmappedProjects.length > 0 && `${agentImportPreview.unmappedProjects.length} project${agentImportPreview.unmappedProjects.length === 1 ? " needs" : "s need"} mapping. `}{selectedPersonalIntervals > 0 && `${selectedPersonalIntervals} personal interval${selectedPersonalIntervals === 1 ? " is" : "s are"} excluded.`}</p>
+              <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                <p className="min-w-0 text-xs text-muted-foreground">{agentImportPreview.slices.length} exact {agentImportPreview.slices.length === 1 ? "entry" : "entries"} totaling {formatDuration(agentImportPreviewSeconds)} will import. {agentImportPreview.skippedSeconds > 0 && `${formatDuration(agentImportPreview.skippedSeconds)} already tracked is excluded. `}{agentImportPreview.ignoredSeconds > 0 && `${formatDuration(agentImportPreview.ignoredSeconds)} removed from import. `}{agentImportPreview.unmappedProjects.length > 0 && `${agentImportPreview.unmappedProjects.length} project${agentImportPreview.unmappedProjects.length === 1 ? " needs" : "s need"} mapping. `}{selectedPersonalIntervals > 0 && `${selectedPersonalIntervals} personal interval${selectedPersonalIntervals === 1 ? " is" : "s are"} excluded.`}</p>
+                {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="justify-self-start sm:justify-self-end" onClick={restoreVisibleIgnoredAgentRanges}>Restore removed time</Button>}
+              </div>
             </>}
             {!agentTime && !agentTimeLoading && <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Load Agent Time to choose projects and review available intervals.</p>}
           </div>
