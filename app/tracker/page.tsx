@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, useEffect, useMemo, useState } from "react"
+import Image from "next/image"
 import {
   Play,
   Pause,
@@ -180,7 +181,7 @@ type ConversationSource = ReturnType<typeof groupConversationSources>[number]
 
 function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
   if (source === "T3 Code") {
-    return <span className={`grid shrink-0 place-items-center rounded-md bg-gradient-to-br from-indigo-400 via-violet-600 to-indigo-950 text-[0.55rem] font-black tracking-tighter text-white shadow-sm ${className}`} aria-label="T3 Code logo">T3</span>
+    return <Image src="/t3-code-logo.svg" alt="T3 Code" width={32} height={32} className={`shrink-0 rounded-md shadow-sm ${className}`} />
   }
   if (source === "Claude" || agent === "Claude" || agent === "Fable") {
     return <span className={`grid shrink-0 place-items-center rounded-md bg-[#d97757] text-white shadow-sm ${className}`} aria-label="Claude logo"><svg viewBox="0 0 24 24" className="size-[72%]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7M8.2 3.4l7.6 17.2M20.6 8.2 3.4 15.8M15.8 3.4 8.2 20.6M3.4 8.2l17.2 7.6" /></svg></span>
@@ -540,6 +541,7 @@ export default function TrackerPage() {
       setAppliedGapMinutes(savedGap)
       setDismissedAgentTimeThrough(savedDismissal)
       setIgnoredAgentRanges(savedIgnoredRanges)
+      if (new URLSearchParams(window.location.search).get("importAgentTime") === "1") setImportOpen(true)
       void loadAgentTime(true, savedGap)
     }, 0)
     return () => window.clearTimeout(id)

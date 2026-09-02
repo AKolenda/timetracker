@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
+import Image from "next/image"
+import Link from "next/link"
 import {
   Check,
   ChevronDown,
@@ -10,6 +12,7 @@ import {
   FolderKanban,
   LoaderCircle,
   MessageSquareText,
+  Download,
   RefreshCw,
   Sparkles,
 } from "lucide-react"
@@ -109,7 +112,7 @@ function sourceColor(label: string) {
 
 function SourceLogo({ label, className = "size-8" }: { label: string; className?: string }) {
   if (label === "T3 Code") {
-    return <span className={`grid shrink-0 place-items-center rounded-md bg-gradient-to-br from-indigo-400 via-violet-600 to-indigo-950 text-[0.6rem] font-black tracking-tighter text-white shadow-sm ${className}`} aria-label="T3 Code logo">T3</span>
+    return <Image src="/t3-code-logo.svg" alt="T3 Code" width={32} height={32} className={`shrink-0 rounded-md shadow-sm ${className}`} />
   }
   if (label === "Claude") {
     return <span className={`grid shrink-0 place-items-center rounded-md bg-[#d97757] text-white shadow-sm ${className}`} aria-label="Claude logo"><svg viewBox="0 0 24 24" className="size-[72%]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7M8.2 3.4l7.6 17.2M20.6 8.2 3.4 15.8M15.8 3.4 8.2 20.6M3.4 8.2l17.2 7.6" /></svg></span>
@@ -359,7 +362,7 @@ export default function AgenticCodingPage() {
       <PageHeader
         title="Agentic Coding"
         description="Master activity across Claude, Codex, T3 Code, and every connected coding agent"
-        actions={<Button variant="outline" size="sm" onClick={() => void loadAgentTime(true)} disabled={loading}>{loading ? <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" /> : <RefreshCw className="size-3.5" data-icon="inline-start" />}Refresh</Button>}
+        actions={<div className="flex flex-wrap gap-2"><Button asChild size="sm"><Link data-testid="agentic-import-time" href="/tracker?importAgentTime=1"><Download className="size-3.5" data-icon="inline-start" />Review &amp; import time</Link></Button><Button variant="outline" size="sm" onClick={() => void loadAgentTime(true)} disabled={loading}>{loading ? <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" /> : <RefreshCw className="size-3.5" data-icon="inline-start" />}Refresh</Button></div>}
       />
 
       <Card className="mb-6 rounded-lg">

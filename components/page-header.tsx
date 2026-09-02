@@ -16,11 +16,11 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
         <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
       </div>
       {(description || actions) && (
-        <div className="flex items-center justify-between">
+        <div className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           {description && (
-            <p className="text-sm text-muted-foreground">{description}</p>
+            <p className="min-w-0 text-sm text-muted-foreground">{description}</p>
           )}
-          {actions && <div className="ml-auto flex items-center gap-2">{actions}</div>}
+          {actions && <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">{actions}</div>}
         </div>
       )}
     </div>
