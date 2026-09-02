@@ -29,7 +29,10 @@ interface NavSection {
 const navSections: NavSection[] = [
   {
     label: "Tracker",
-    items: [{ title: "Tracker", href: "/tracker" }],
+    items: [
+      { title: "Tracker", href: "/tracker" },
+      { title: "Agentic Coding", href: "/agentic-coding" },
+    ],
   },
   {
     label: "Overview",
