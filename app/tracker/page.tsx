@@ -68,6 +68,7 @@ import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, type TimeRange } from "@/lib/agent-time-overlap"
+import { PERSONAL_AGENT_PROJECT, partitionAgentImportProjects } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
 type AgentTimeInterval = {
@@ -123,7 +124,6 @@ type IgnoredAgentRange = {
   start: number
   end: number
 }
-const PERSONAL_AGENT_PROJECT = "__personal__"
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
 const AGENT_REMINDER_DISMISSED_KEY = "timetracker-agent-time-dismissed-through"
@@ -510,6 +510,7 @@ export default function TrackerPage() {
   const [dismissedAgentTimeThrough, setDismissedAgentTimeThrough] = useState(0)
   const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
   const [agentProjectFilter, setAgentProjectFilter] = useState("all")
+  const [showHiddenAgentProjects, setShowHiddenAgentProjects] = useState(false)
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
     if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
     try {
@@ -607,6 +608,27 @@ export default function TrackerPage() {
   const selectedPersonalIntervals = selectedAgentIntervals.filter(
     (interval) => projectMappings[interval.project] === PERSONAL_AGENT_PROJECT
   ).length
+  const selectedAgentProjects = useMemo(
+    () => [...new Set(selectedAgentIntervals.map((interval) => interval.project))],
+    [selectedAgentIntervals]
+  )
+  const importableAgentProjects = useMemo(
+    () => [...new Set(agentImportPreview.slices.map((slice) => slice.interval.project))],
+    [agentImportPreview.slices]
+  )
+  const agentProjectVisibility = useMemo(
+    () => partitionAgentImportProjects({
+      projects: selectedAgentProjects,
+      mappings: projectMappings,
+      importableProjects: importableAgentProjects,
+      unmappedProjects: agentImportPreview.unmappedProjects,
+      selectedProject: agentProjectFilter === "all" ? undefined : agentProjectFilter,
+    }),
+    [agentImportPreview.unmappedProjects, agentProjectFilter, importableAgentProjects, projectMappings, selectedAgentProjects]
+  )
+  const agentProjectsToShow = showHiddenAgentProjects
+    ? [...agentProjectVisibility.visible, ...agentProjectVisibility.hidden]
+    : agentProjectVisibility.visible
 
   async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes) {
     setAgentTimeLoading(true)
@@ -621,6 +643,7 @@ export default function TrackerPage() {
       const payload = (await response.json()) as AgentTimeResponse
       setAgentTime(payload)
       setAgentProjectFilter("all")
+      setShowHiddenAgentProjects(false)
       setExpandedAgentSlice(null)
     } catch (error) {
       if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
@@ -1183,9 +1206,10 @@ export default function TrackerPage() {
             </div>
             {agentTime && <>
               <div className="grid min-w-0 gap-2"><Label>Agent Time project to show</Label><Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger className="w-full min-w-0 max-w-full"><SelectValue /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value="all">All projects ({availableAgentIntervals.length} intervals)</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select></div>
-              <div className="grid min-w-0 gap-3 rounded-lg border p-3">
-                {[...new Set(availableAgentIntervals.filter((interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter).map((interval) => interval.project))].map((agentProject) => <div key={agentProject} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="min-w-0 truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger className="w-full min-w-0 max-w-full"><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
-              </div>
+              {(agentProjectsToShow.length > 0 || agentProjectVisibility.hidden.length > 0) && <div className="grid min-w-0 gap-3 rounded-lg border p-3">
+                {agentProjectsToShow.map((agentProject) => <div key={agentProject} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="min-w-0 truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger className="w-full min-w-0 max-w-full"><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
+                {agentProjectVisibility.hidden.length > 0 && <Button type="button" variant="ghost" size="sm" className="w-fit justify-self-start text-muted-foreground" onClick={() => setShowHiddenAgentProjects((current) => !current)}>{showHiddenAgentProjects ? "Hide handled projects" : `Show ${agentProjectVisibility.hidden.length} hidden`}</Button>}
+              </div>}
               <div className="min-w-0 overflow-hidden rounded-lg border">
                 <div className="border-b bg-muted/35 px-3 py-2"><p className="text-sm font-medium">Review exact time to import</p><p className="text-xs text-muted-foreground">Existing tracked time has already been removed. Only the uncovered slices below will be created.</p></div>
                 <div className="hidden min-w-0 grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-3 border-b bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
