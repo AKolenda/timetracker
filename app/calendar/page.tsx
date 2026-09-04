@@ -257,8 +257,8 @@ export default function CalendarPage() {
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      <div className="grid gap-6 lg:grid-cols-3 lg:items-stretch">
+        <Card className="flex flex-col lg:col-span-2 lg:min-h-[calc(100dvh-20rem)]">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">
               {format(currentMonth, "MMMM yyyy")}
@@ -287,8 +287,11 @@ export default function CalendarPage() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-7 gap-px">
+          <CardContent className="flex flex-1 flex-col">
+            <div
+              className="grid flex-1 grid-cols-7 gap-px"
+              style={{ gridTemplateRows: `auto repeat(${Math.ceil(days.length / 7)}, minmax(0, 1fr))` }}
+            >
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                 <div
                   key={d}
@@ -310,7 +313,7 @@ export default function CalendarPage() {
                     type="button"
                     onClick={() => setSelectedDate(day)}
                     className={cn(
-                    "relative min-h-[56px] rounded-lg border p-1 text-left transition-colors hover:bg-muted/50 sm:min-h-[72px] sm:p-1.5",
+                    "relative min-h-[56px] rounded-lg border p-1 text-left transition-colors hover:bg-muted/50 sm:min-h-[72px] sm:p-1.5 lg:min-h-0",
                       !inMonth && "opacity-30",
                       selected && "ring-2 ring-foreground",
                       today_ && "border-foreground/30"

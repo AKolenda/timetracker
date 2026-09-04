@@ -29,6 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
   DialogClose,
 } from "@/components/ui/dialog"
 import {
@@ -210,34 +211,26 @@ function TimelinePreview({ sources, start, end }: { sources: ConversationSource[
   const activeRanges = sources.flatMap((source) => source.spans)
   const gaps = subtractRanges({ start, end }, activeRanges)
 
-  return <div className="mb-3 min-w-0 rounded-lg border bg-background/35 p-3" data-testid="agent-timeline-preview">
-    <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
-      <div><p className="text-xs font-medium">Timeline preview</p><p className="text-[0.7rem] text-muted-foreground">Activity lanes and the gaps included in this billable block</p></div>
-      <p className="font-mono text-[0.7rem] text-muted-foreground">{formatDuration(Math.floor(duration / 1000))}</p>
-    </div>
-    <div className="grid min-w-0 gap-2">
-      {lanes.map((lane) => <div key={lane.key} className="grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-2">
-        <SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-7" />
-        <div className="relative h-7 min-w-0 overflow-hidden rounded-md border bg-muted/25" aria-label={`${lane.label} activity lane`}>
+  return <div className="min-w-0" data-testid="agent-timeline-preview">
+    <div className="grid min-w-0 gap-1.5">
+      {lanes.map((lane) => <div key={lane.key} className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
+        <SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-6" />
+        <div className="relative h-6 min-w-0 overflow-hidden rounded-full bg-muted/40" aria-label={`${lane.label} activity lane`}>
           {lane.conversations.flatMap((conversation) => conversation.spans.map((span, spanIndex) => {
             const left = ((span.start - start) / duration) * 100
             const width = ((span.end - span.start) / duration) * 100
-            return <span key={`${conversation.conversationId}-${span.start}-${spanIndex}`} className={`absolute inset-y-1 min-w-px cursor-help rounded-[4px] ${lane.bar}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${conversation.conversationTitle || lane.label} · ${format(new Date(span.start), "h:mm:ss a")}–${format(new Date(span.end), "h:mm:ss a")} · ${formatDuration(Math.floor((span.end - span.start) / 1000))}`} />
+            return <span key={`${conversation.conversationId}-${span.start}-${spanIndex}`} className={`absolute inset-y-1 min-w-[3px] cursor-help rounded-full ${lane.bar}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${conversation.conversationTitle || lane.label} · ${format(new Date(span.start), "h:mm:ss a")}–${format(new Date(span.end), "h:mm:ss a")} · ${formatDuration(Math.floor((span.end - span.start) / 1000))}`} />
           }))}
         </div>
       </div>)}
-      {gaps.length > 0 && <div className="grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-2">
-        <span className="grid size-7 shrink-0 place-items-center rounded-md border bg-muted/30 text-[0.55rem] font-bold text-muted-foreground" aria-label="Joined gap">GAP</span>
-        <div className="relative h-7 min-w-0 overflow-hidden rounded-md border bg-muted/15" aria-label="Joined gap filler lane">
-          {gaps.map((gap, gapIndex) => <span key={`${gap.start}-${gap.end}-${gapIndex}`} className="absolute inset-y-1 min-w-px cursor-help rounded-[4px] border border-muted-foreground/35" style={{ left: `${((gap.start - start) / duration) * 100}%`, width: `${((gap.end - gap.start) / duration) * 100}%`, backgroundImage: "repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in oklab, var(--muted-foreground) 28%, transparent) 4px 6px)" }} title={`Joined gap · ${format(new Date(gap.start), "h:mm:ss a")}–${format(new Date(gap.end), "h:mm:ss a")} · ${formatDuration(Math.floor((gap.end - gap.start) / 1000))}`} />)}
+      {gaps.length > 0 && <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
+        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-[0.5rem] font-bold text-muted-foreground" aria-label="Joined gap">GAP</span>
+        <div className="relative h-6 min-w-0 overflow-hidden rounded-full bg-muted/20" aria-label="Joined gap filler lane">
+          {gaps.map((gap, gapIndex) => <span key={`${gap.start}-${gap.end}-${gapIndex}`} className="absolute inset-y-1 min-w-[3px] cursor-help rounded-full" style={{ left: `${((gap.start - start) / duration) * 100}%`, width: `${((gap.end - gap.start) / duration) * 100}%`, backgroundImage: "repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in oklab, var(--muted-foreground) 35%, transparent) 4px 6px)" }} title={`Joined gap · ${format(new Date(gap.start), "h:mm:ss a")}–${format(new Date(gap.end), "h:mm:ss a")} · ${formatDuration(Math.floor((gap.end - gap.start) / 1000))}`} />)}
         </div>
       </div>}
     </div>
-    <div className="mt-2 flex min-w-0 justify-between pl-9 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
-    <div className="mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 border-t pt-3 text-[0.7rem] text-muted-foreground">
-      {lanes.map((lane) => <span key={lane.key} className="inline-flex items-center gap-1.5"><SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-4" />{lane.label}</span>)}
-      {gaps.length > 0 && <span className="inline-flex items-center gap-1.5"><span className="size-4 rounded-[4px] border border-muted-foreground/35" style={{ backgroundImage: "repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in oklab, var(--muted-foreground) 30%, transparent) 3px 5px)" }} />Gap filler</span>}
-    </div>
+    <div className="mt-1.5 flex min-w-0 justify-between pl-8 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
   </div>
 }
 
@@ -1192,105 +1185,114 @@ export default function TrackerPage() {
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent
           data-testid="agent-import-dialog"
-          className="max-h-[calc(100dvh-2rem)] min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain sm:max-w-2xl"
+          className="max-h-[calc(100dvh-2rem)] min-w-0 gap-0 overflow-x-hidden overflow-y-auto overscroll-contain p-0 sm:max-w-2xl"
         >
-          <DialogHeader>
-            <DialogTitle>Import Agent Time</DialogTitle>
+          <DialogHeader className="border-b px-5 py-4">
+            <DialogTitle className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <span>Import Agent Time</span>
+              {agentTime && agentImportPreview.slices.length > 0 && <span className="rounded-full bg-primary/10 px-2.5 py-0.5 font-mono text-xs font-medium text-primary">{formatDuration(agentImportPreviewSeconds)}</span>}
+            </DialogTitle>
+            <DialogDescription className="sr-only">Review Agent Time blocks and import the uncovered time as entries.</DialogDescription>
           </DialogHeader>
-          <div className="grid min-w-0 gap-4 py-3">
-            <p className="text-sm text-muted-foreground">Agent Time stays running in the background. Map its project names once, then import only time that does not overlap existing timed entries.</p>
-            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground"><span className="min-w-0 break-words">Showing Agent Time from {format(parseLocalDate(effectiveAgentTimeStartDate), "MMM d, yyyy")} onward.</span>{agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE && <Button variant="ghost" size="sm" onClick={showAllAgentTime}>Show from Aug 30</Button>}</div>
-            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
-              <div className="grid min-w-0 flex-1 gap-2"><Label htmlFor="agent-gap">Join gaps up to (minutes)</Label><Input id="agent-gap" type="number" min="0" max="240" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} /></div>
-              <Button variant="outline" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
+          <div className="grid min-w-0 gap-4 px-5 py-4">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {agentTime && <Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger aria-label="Agent Time project" className="h-9 min-w-0 flex-1 basis-40 rounded-full"><SelectValue /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value="all">All projects · {availableAgentIntervals.length}</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select>}
+              <div className="flex h-9 shrink-0 items-center rounded-full border bg-background pl-3 text-xs text-muted-foreground" title="Join gaps up to this many minutes">
+                <span>Gap</span>
+                <Input id="agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-8 w-12 border-0 bg-transparent px-1 text-center font-mono text-xs text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent" />
+                <span className="pr-3">min</span>
+              </div>
+              <Button variant="outline" size="sm" className="h-9 rounded-full" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
+              {agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE && <Button variant="ghost" size="sm" className="h-9 rounded-full text-muted-foreground" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
             </div>
             {agentTime && <>
-              <div className="grid min-w-0 gap-2"><Label>Agent Time project to show</Label><Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger className="w-full min-w-0 max-w-full"><SelectValue /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value="all">All projects ({availableAgentIntervals.length} intervals)</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select></div>
-              {(agentProjectsToShow.length > 0 || agentProjectVisibility.hidden.length > 0) && <div className="grid min-w-0 gap-3 rounded-lg border p-3">
-                {agentProjectsToShow.map((agentProject) => <div key={agentProject} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:items-center"><p className="min-w-0 truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger className="w-full min-w-0 max-w-full"><SelectValue placeholder="Map to client / project" /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
-                {agentProjectVisibility.hidden.length > 0 && <Button type="button" variant="ghost" size="sm" className="w-fit justify-self-start text-muted-foreground" onClick={() => setShowHiddenAgentProjects((current) => !current)}>{showHiddenAgentProjects ? "Hide handled projects" : `Show ${agentProjectVisibility.hidden.length} hidden`}</Button>}
+              {(agentProjectsToShow.length > 0 || agentProjectVisibility.hidden.length > 0) && <div className="grid min-w-0 gap-2">
+                {agentProjectsToShow.map((agentProject) => <div key={agentProject} className="grid min-w-0 items-center gap-2 rounded-xl border bg-muted/20 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"><p className="min-w-0 truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger className="h-8 w-full min-w-0 max-w-full"><SelectValue placeholder="Choose client / project" /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
+                {agentProjectVisibility.hidden.length > 0 && <Button type="button" variant="ghost" size="sm" className="w-fit justify-self-start text-muted-foreground" onClick={() => setShowHiddenAgentProjects((current) => !current)}>{showHiddenAgentProjects ? "Hide handled" : `Show ${agentProjectVisibility.hidden.length} hidden`}</Button>}
               </div>}
-              <div className="min-w-0 overflow-hidden rounded-lg border">
-                <div className="border-b bg-muted/35 px-3 py-2"><p className="text-sm font-medium">Review exact time to import</p><p className="text-xs text-muted-foreground">Existing tracked time has already been removed. Only the uncovered slices below will be created.</p></div>
-                <div className="hidden min-w-0 grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-3 border-b bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
-                  <span>Uncovered time</span><span>Agent Time project</span><span>Imports to</span><span className="text-right">Duration</span>
-                </div>
-                <div className="min-w-0" data-testid="agent-import-review">
-                  {agentImportPreview.slices.map((slice) => {
-                    const mappedProject = getProject(slice.projectId)
-                    const mappedProjectLabel = mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : "Unknown project"
-                    const wasTrimmed = slice.start !== slice.sourceStart || slice.end !== slice.sourceEnd
-                    const sourceConversations = groupConversationSources(
-                      slice.interval.sourceIntervals ?? [],
-                      slice.start,
-                      slice.end
-                    )
-                    const sourceLabels = [...new Set(sourceConversations.map(sourceDescription))]
-                    const sourceActiveSeconds = unionRangeSeconds(sourceConversations.flatMap((source) => source.spans))
-                    const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
-                    const expanded = expandedAgentSlice === slice.id
-                    return <div key={slice.id} className="min-w-0 border-b last:border-b-0">
-                      <div className="flex min-w-0 items-stretch">
-                        <button
-                          type="button"
-                          className="grid min-w-0 flex-1 cursor-pointer gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/25 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-start"
-                          aria-expanded={expanded}
-                          onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}
-                        >
-                          <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Uncovered time</span><p className="break-words font-mono text-xs">{format(new Date(slice.start), "MMM d, h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>{wasTrimmed && <p className="break-words text-xs text-muted-foreground">From {format(new Date(slice.sourceStart), "h:mm a")} – {format(new Date(slice.sourceEnd), "h:mm a")} block</p>}</div>
-                          <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Agent Time project</span><p className="break-words text-xs">{slice.interval.project}</p><p className="break-words text-xs text-muted-foreground">{sourceLabels.join(" + ") || slice.interval.agents.join(" + ") || "coding"}</p></div>
-                          <div className="min-w-0"><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Imports to</span><p className="break-words text-xs sm:line-clamp-2" title={mappedProjectLabel}>{mappedProjectLabel}</p></div>
-                          <div className="flex min-w-0 items-start justify-between gap-2 sm:justify-end sm:text-right"><div><span className="mb-1 block text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Duration</span><p className="font-mono text-xs">{formatDuration(slice.durationSeconds)}</p></div><ChevronDown className={`mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} /></div>
-                        </button>
-                        <Button
-                          type="button"
-                          data-testid="ignore-agent-slice"
-                          variant="ghost"
-                          size="icon"
-                          className="mb-2 mr-2 mt-auto shrink-0 self-end text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:m-2 sm:self-center"
-                          aria-label={`Do not import ${format(new Date(slice.start), "MMM d, h:mm a")} to ${format(new Date(slice.end), "h:mm a")}`}
-                          title="Do not import this entry"
-                          onClick={() => ignoreAgentSlice(slice)}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                      {expanded && <div className="min-w-0 border-t bg-muted/15 px-3 py-3" data-testid="agent-source-details">
-                        {sourceConversations.length > 0 && <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} />}
-                        <div className="mb-3">
-                          <p className="text-xs font-medium">Where this time came from</p>
-                          <p className="mt-1 text-xs text-muted-foreground">This is elapsed wall-clock time. Overlapping chats count once; their durations are not added together.</p>
-                          {sourceConversations.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Agent active: <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span>{joinedGapSeconds > 0 && <> · Joined gaps: <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></>}</p>}
+              <div className="grid min-w-0 gap-2" data-testid="agent-import-review">
+                {agentImportPreview.slices.map((slice) => {
+                  const mappedProject = getProject(slice.projectId)
+                  const mappedProjectLabel = mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : "Unknown project"
+                  const sourceConversations = groupConversationSources(
+                    slice.interval.sourceIntervals ?? [],
+                    slice.start,
+                    slice.end
+                  )
+                  const laneKeys = [...new Set(sourceConversations.map(timelineSourceKey))]
+                  const sourceActiveSeconds = unionRangeSeconds(sourceConversations.flatMap((source) => source.spans))
+                  const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
+                  const expanded = expandedAgentSlice === slice.id
+                  return <div key={slice.id} className={`min-w-0 overflow-hidden rounded-xl border transition-colors ${expanded ? "bg-muted/15" : "bg-background"}`}>
+                    <div className="flex min-w-0 items-center gap-2 pr-2">
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-3 text-left transition-colors hover:bg-muted/25 sm:gap-3"
+                        aria-expanded={expanded}
+                        onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}
+                      >
+                        <div className="flex shrink-0 -space-x-2 sm:-space-x-1.5">
+                          {(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-6 ring-2 ring-background sm:size-7" />)}
                         </div>
-                        {sourceConversations.length > 0 ? <div className="grid min-w-0 gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium leading-snug"><span className="text-muted-foreground">{format(new Date(slice.start), "MMM d")}</span> {format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>
+                          <p className="truncate text-xs text-muted-foreground" title={`${slice.interval.project} → ${mappedProjectLabel}`}><span className="font-mono font-medium text-foreground sm:hidden">{formatDuration(slice.durationSeconds)} · </span>{slice.interval.project} <span className="mx-1 opacity-60">→</span> {mappedProjectLabel}</p>
+                        </div>
+                        <p className="hidden shrink-0 font-mono text-sm font-medium tabular-nums sm:block">{formatDuration(slice.durationSeconds)}</p>
+                        <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+                      </button>
+                      <Button
+                        type="button"
+                        data-testid="ignore-agent-slice"
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`Do not import ${format(new Date(slice.start), "MMM d, h:mm a")} to ${format(new Date(slice.end), "h:mm a")}`}
+                        title="Do not import"
+                        onClick={() => ignoreAgentSlice(slice)}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                    {expanded && <div className="grid min-w-0 gap-3 border-t px-3 py-3" data-testid="agent-source-details">
+                      {sourceConversations.length > 0 ? <>
+                        <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} />
+                        <div className="flex min-w-0 flex-wrap gap-1.5 text-[0.7rem]">
+                          <span className="rounded-full bg-muted px-2 py-0.5">Active <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span></span>
+                          {joinedGapSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Gaps <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></span>}
+                          <span className="rounded-full bg-muted px-2 py-0.5">{sourceConversations.length} {sourceConversations.length === 1 ? "chat" : "chats"}</span>
+                        </div>
+                        <div className="grid min-w-0 gap-1">
                           {sourceConversations.map((source, sourceIndex) => {
                             const firstSpan = source.spans[0]
                             const lastSpan = source.spans.at(-1) ?? firstSpan
-                            return <div key={`${source.source}-${source.conversationId}-${sourceIndex}`} className="min-w-0 rounded-lg border bg-background/40 p-3">
-                              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                                <div className="min-w-0"><p className="break-words text-xs font-medium">{source.conversationTitle || `${source.agent} conversation`}</p><p className="text-xs text-muted-foreground">{sourceDescription(source)}{source.model ? ` · ${source.model}` : ""}</p></div>
-                                <p className="shrink-0 font-mono text-xs">{formatDuration(source.durationSeconds)}</p>
+                            return <div key={`${source.source}-${source.conversationId}-${sourceIndex}`} className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-muted/30" title={source.conversationId ? `Chat ${source.conversationId}` : undefined}>
+                              <SourceLogo source={source.source} agent={source.agent} className="size-6" />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-medium">{source.conversationTitle || `${source.agent} conversation`}</p>
+                                <p className="truncate text-[0.7rem] text-muted-foreground">{sourceDescription(source)}{source.model ? ` · ${source.model}` : ""} · {format(new Date(firstSpan.start), "h:mm a")} – {format(new Date(lastSpan.end), "h:mm a")}</p>
                               </div>
-                              <p className="mt-2 break-words font-mono text-[0.7rem] text-muted-foreground">{format(new Date(firstSpan.start), "MMM d, h:mm:ss a")} – {format(new Date(lastSpan.end), "h:mm:ss a")}</p>
-                              {source.conversationId && <p className="mt-1 break-all font-mono text-[0.65rem] text-muted-foreground">Chat ID: {source.conversationId}</p>}
-                              {source.spans.length > 1 && <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer select-none">See {source.spans.length} contributing spans</summary><div className="mt-2 grid gap-1 border-l pl-2 font-mono text-[0.65rem]">{source.spans.map((span, spanIndex) => <p key={`${span.start}-${span.end}-${spanIndex}`}>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</p>)}</div></details>}
+                              <p className="shrink-0 font-mono text-xs tabular-nums">{formatDuration(source.durationSeconds)}</p>
                             </div>
                           })}
-                        </div> : <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">This Agent Time record predates chat attribution. Refresh after updating the desktop Agent Time service to see its chat and source.</p>}
-                      </div>}
-                    </div>
-                  })}
-                  {agentImportPreview.slices.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{agentImportPreview.unmappedProjects.length > 0 ? "Map the projects above to calculate the exact uncovered time." : "No uncovered time in this selection."}</p>}
-                </div>
+                        </div>
+                      </> : <p className="text-xs text-muted-foreground">No chat details for this block. Update Agent Time and refresh.</p>}
+                    </div>}
+                  </div>
+                })}
+                {agentImportPreview.slices.length === 0 && <p className="rounded-xl border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">{agentImportPreview.unmappedProjects.length > 0 ? "Map the projects above to see importable time." : "Nothing new to import."}</p>}
               </div>
-              <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                <p className="min-w-0 text-xs text-muted-foreground">{agentImportPreview.slices.length} exact {agentImportPreview.slices.length === 1 ? "entry" : "entries"} totaling {formatDuration(agentImportPreviewSeconds)} will import. {agentImportPreview.skippedSeconds > 0 && `${formatDuration(agentImportPreview.skippedSeconds)} already tracked is excluded. `}{agentImportPreview.ignoredSeconds > 0 && `${formatDuration(agentImportPreview.ignoredSeconds)} removed from import. `}{agentImportPreview.unmappedProjects.length > 0 && `${agentImportPreview.unmappedProjects.length} project${agentImportPreview.unmappedProjects.length === 1 ? " needs" : "s need"} mapping. `}{selectedPersonalIntervals > 0 && `${selectedPersonalIntervals} personal interval${selectedPersonalIntervals === 1 ? " is" : "s are"} excluded.`}</p>
-                {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="justify-self-start sm:justify-self-end" onClick={restoreVisibleIgnoredAgentRanges}>Restore removed time</Button>}
-              </div>
+              {(agentImportPreview.skippedSeconds > 0 || agentImportPreview.ignoredSeconds > 0 || agentImportPreview.unmappedProjects.length > 0 || selectedPersonalIntervals > 0) && <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[0.7rem] text-muted-foreground">
+                {agentImportPreview.skippedSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Already tracked <span className="font-mono">{formatDuration(agentImportPreview.skippedSeconds)}</span></span>}
+                {agentImportPreview.ignoredSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Removed <span className="font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></span>}
+                {agentImportPreview.unmappedProjects.length > 0 && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-700 dark:text-amber-300">{agentImportPreview.unmappedProjects.length} unmapped</span>}
+                {selectedPersonalIntervals > 0 && <span className="rounded-full bg-muted px-2 py-0.5">{selectedPersonalIntervals} personal</span>}
+                {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-6 rounded-full px-2 text-[0.7rem]" onClick={restoreVisibleIgnoredAgentRanges}>Restore removed</Button>}
+              </div>}
             </>}
-            {!agentTime && !agentTimeLoading && <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Load Agent Time to choose projects and review available intervals.</p>}
+            {!agentTime && !agentTimeLoading && <p className="rounded-xl border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">Press Refresh to load Agent Time.</p>}
           </div>
-          <DialogFooter className="min-w-0 rounded-b-lg"><Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button><Button onClick={() => void importAgentTime()} disabled={!agentTime || agentTimeLoading}>Import uncovered hours</Button></DialogFooter>
+          <DialogFooter className="mx-0 mb-0 min-w-0 border-t px-5 py-3 sm:rounded-b-lg"><Button variant="outline" className="rounded-full" onClick={() => setImportOpen(false)}>Cancel</Button><Button className="rounded-full" onClick={() => void importAgentTime()} disabled={!agentTime || agentTimeLoading || agentImportPreview.slices.length === 0}>Import {agentImportPreview.slices.length > 0 ? `${agentImportPreview.slices.length} ${agentImportPreview.slices.length === 1 ? "entry" : "entries"}` : ""}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

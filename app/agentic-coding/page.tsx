@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
 import Image from "next/image"
 import Link from "next/link"
@@ -507,8 +507,182 @@ function TimelineDay({
   )
 }
 
+type HoverTarget = {
+  key: string
+  leftPx: number
+  containerWidth: number
+}
+
+function conversationMeta(conversation: Conversation) {
+  return [
+    conversation.sourceLabel + (conversation.source === "T3 Code" ? ` using ${conversation.agent}` : ""),
+    conversation.model && conversation.model !== conversation.agent ? conversation.model : "",
+    conversation.project,
+  ].filter(Boolean).join(" · ")
+}
+
+function SessionCard({ conversation, className = "" }: { conversation: Conversation; className?: string }) {
+  return (
+    <div className={`grid min-w-0 gap-2 ${className}`} data-testid="agentic-session-card">
+      <div className="flex min-w-0 items-start gap-2.5">
+        <SourceLogo label={conversation.sourceLabel} className="size-7" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium leading-snug break-words">
+            {conversation.conversationTitle || `${conversation.sourceLabel} coding session`}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground" title={conversationMeta(conversation)}>{conversationMeta(conversation)}</p>
+        </div>
+        {conversation.live && <Badge variant="secondary" className="text-[0.6rem]">Live</Badge>}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 text-[0.7rem]">
+        <span className="rounded-full bg-muted px-2 py-0.5 font-mono">{format(new Date(conversation.start), "h:mm a")} – {format(new Date(conversation.end), "h:mm a")}</span>
+        <span className="rounded-full bg-muted px-2 py-0.5 font-mono">{formatDuration(conversation.durationSeconds)}</span>
+        <span className="rounded-full bg-muted px-2 py-0.5">{conversation.spans.length} {conversation.spans.length === 1 ? "run" : "runs"}</span>
+      </div>
+      <div className="max-h-48 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 font-mono text-[0.7rem] text-muted-foreground">
+        {conversation.spans.map((span, index) => (
+          <p key={`${span.start}-${span.end}-${index}`} className="flex justify-between gap-3 py-0.5">
+            <span>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</span>
+            <span className="text-foreground">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span>
+          </p>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function HoverTimelineDay({ date, conversations }: { date: string; conversations: Conversation[] }) {
+  const [hover, setHover] = useState<HoverTarget | null>(null)
+  const [pinned, setPinned] = useState<HoverTarget | null>(null)
+  const [closeTimer, setCloseTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const active = pinned ?? hover
+  const activeConversation = active ? conversations.find((conversation) => conversation.key === active.key) ?? null : null
+
+  const dayStart = new Date(conversations[0].start)
+  dayStart.setHours(0, 0, 0, 0)
+  const start = dayStart.getTime()
+  const end = start + 24 * 60 * 60 * 1000
+  const duration = end - start
+  const labels = [...new Set(conversations.map((conversation) => conversation.sourceLabel))]
+
+  function scheduleClose() {
+    if (closeTimer) clearTimeout(closeTimer)
+    setCloseTimer(setTimeout(() => setHover(null), 180))
+  }
+  function cancelClose() {
+    if (closeTimer) clearTimeout(closeTimer)
+    setCloseTimer(null)
+  }
+  function show(target: HoverTarget) {
+    cancelClose()
+    setHover(target)
+  }
+
+  useEffect(() => () => { if (closeTimer) clearTimeout(closeTimer) }, [closeTimer])
+
+  function targetFromBar(key: string, element: HTMLElement): HoverTarget {
+    const container = containerRef.current?.getBoundingClientRect()
+    return { key, leftPx: container ? element.getBoundingClientRect().left - container.left : 0, containerWidth: container?.width ?? 0 }
+  }
+  function targetFromConversation(conversation: Conversation): HoverTarget {
+    const container = containerRef.current
+    const track = container?.querySelector<HTMLElement>(`[data-lane="${conversation.sourceLabel}"]`)
+    if (!container || !track) return { key: conversation.key, leftPx: 0, containerWidth: 0 }
+    const containerRect = container.getBoundingClientRect()
+    const trackRect = track.getBoundingClientRect()
+    const pct = (Math.max(start, conversation.start) - start) / duration
+    return { key: conversation.key, leftPx: trackRect.left - containerRect.left + pct * trackRect.width, containerWidth: containerRect.width }
+  }
+  const containerWidth = active?.containerWidth ?? 0
+  const cardWidth = Math.min(352, Math.max(0, containerWidth - 8))
+  const cardLeft = active ? Math.max(0, Math.min(active.leftPx, containerWidth - cardWidth)) : 0
+
+  return (
+    <section className="min-w-0 rounded-xl border" data-testid="agentic-hover-day">
+      <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
+        <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
+        <p className="font-mono text-xs">{formatDuration(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
+      </header>
+      <div className="px-3 pb-3" onMouseLeave={scheduleClose}>
+        <div className="relative grid min-w-0 gap-2" ref={containerRef}>
+          {labels.map((label) => (
+            <div key={label} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] items-center gap-2">
+              <SourceLogo label={label} className="size-8" />
+              <div className="relative h-8 min-w-0 overflow-hidden rounded-md bg-muted/30" aria-label={`${label} daily timeline`} data-lane={label}>
+                {Array.from({ length: 23 }, (_, index) => index + 1).map((hour) => (
+                  <span key={hour} className={`pointer-events-none absolute inset-y-0 border-l ${hour % 6 === 0 ? "border-border/80" : "border-border/35"}`} style={{ left: `${(hour / 24) * 100}%` }} aria-hidden="true" />
+                ))}
+                {conversations.filter((conversation) => conversation.sourceLabel === label).flatMap((conversation) =>
+                  conversation.spans.map((span, index) => {
+                    const spanStart = Math.max(start, span.start)
+                    const spanEnd = Math.min(end, span.end)
+                    if (spanEnd <= spanStart) return null
+                    const leftPct = ((spanStart - start) / duration) * 100
+                    const isActive = active?.key === conversation.key
+                    return (
+                      <button
+                        key={`${conversation.key}-${span.start}-${index}`}
+                        type="button"
+                        data-testid="agentic-timeline-session"
+                        className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-[4px] transition-[opacity,box-shadow] ${sourceColor(label)} ${isActive ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""}`}
+                        style={{ left: `${leftPct}%`, width: `${((spanEnd - spanStart) / duration) * 100}%` }}
+                        aria-label={`Show ${conversation.conversationTitle || `${label} coding session`}`}
+                        aria-pressed={pinned?.key === conversation.key}
+                        onMouseEnter={(event) => show(targetFromBar(conversation.key, event.currentTarget))}
+                        onFocus={(event) => show(targetFromBar(conversation.key, event.currentTarget))}
+                        onBlur={scheduleClose}
+                        onClick={(event) => { const target = targetFromBar(conversation.key, event.currentTarget); setPinned((current) => (current?.key === conversation.key ? null : target)) }}
+                      />
+                    )
+                  })
+                )}
+              </div>
+            </div>
+          ))}
+          <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2 text-[0.6rem] text-muted-foreground">
+            <span />
+            <div className="flex justify-between font-mono"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+          </div>
+          {activeConversation && active && (
+            <div
+              className="absolute top-[calc(100%+0.25rem)] z-20 rounded-xl border bg-popover p-3 text-popover-foreground shadow-xl"
+              style={{ left: cardLeft, width: cardWidth }}
+              onMouseEnter={cancelClose}
+              onMouseLeave={scheduleClose}
+              data-testid="agentic-hover-card"
+            >
+              <SessionCard conversation={activeConversation} />
+              {pinned && <button type="button" className="mt-2 text-[0.7rem] text-muted-foreground underline-offset-2 hover:underline" onClick={() => setPinned(null)}>Unpin</button>}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="border-t">
+        {conversations.map((conversation) => (
+          <button
+            key={conversation.key}
+            type="button"
+            className={`flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-muted/30 ${active?.key === conversation.key ? "bg-muted/40" : ""}`}
+            data-testid="agentic-conversation"
+            onMouseEnter={() => show(targetFromConversation(conversation))}
+            onMouseLeave={scheduleClose}
+            onClick={() => setPinned((current) => (current?.key === conversation.key ? null : targetFromConversation(conversation)))}
+          >
+            <SourceLogo label={conversation.sourceLabel} className="size-5" />
+            <span className="min-w-0 flex-1 truncate text-sm">{conversation.conversationTitle || `${conversation.sourceLabel} coding session`}</span>
+            <span className="shrink-0 font-mono text-[0.7rem] text-muted-foreground">{format(new Date(conversation.start), "h:mm a")}</span>
+            <span className="w-16 shrink-0 text-right font-mono text-xs">{formatDuration(conversation.durationSeconds)}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 // PROTOTYPE: Three calmer agentic-coding layouts, switchable via ?variant=calm|focus|timeline.
 const prototypeVariants = [
+  { key: "hover", name: "Hover cards" },
   { key: "calm", name: "Aligned ledger" },
   { key: "focus", name: "Source focus" },
   { key: "timeline", name: "Day timeline" },
@@ -785,9 +959,9 @@ export default function AgenticCodingPage() {
   const [selectedSource, setSelectedSource] = useState("all")
   const selectedVariant = searchParams.get("variant")
   const variant: PrototypeVariant =
-    selectedVariant === "focus" || selectedVariant === "calm"
+    selectedVariant === "focus" || selectedVariant === "calm" || selectedVariant === "timeline"
       ? selectedVariant
-      : "timeline"
+      : "hover"
 
   const loadAgentTime = useCallback(async (showToast = false) => {
     setLoading(true)
@@ -1138,6 +1312,19 @@ export default function AgenticCodingPage() {
           }
         />
       )}
+      {variant === "hover" && (
+        loading && !agentTime ? (
+          <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Loading agentic coding…</div>
+        ) : dayGroups.length === 0 ? (
+          <div className="px-4 py-12 text-center text-sm text-muted-foreground">No agentic coding matches these filters.</div>
+        ) : (
+          <div className="grid min-w-0 gap-4">
+            {dayGroups.map(([date, dayConversations]) => (
+              <HoverTimelineDay key={date} date={date} conversations={dayConversations} />
+            ))}
+          </div>
+        )
+      )}
       {variant === "timeline" && (
         <>
           <Card className="rounded-lg">
@@ -1186,7 +1373,7 @@ export default function AgenticCodingPage() {
           </Card>
         </>
       )}
-      {!loading && conversations.length === 0 && variant !== "timeline" && (
+      {!loading && conversations.length === 0 && variant !== "timeline" && variant !== "hover" && (
         <p className="py-12 text-center text-sm text-muted-foreground">
           No agentic coding matches these filters.
         </p>
