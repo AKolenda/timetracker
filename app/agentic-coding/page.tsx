@@ -14,9 +14,20 @@ import {
   RefreshCw,
   ArrowLeft,
   ArrowRight,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -46,6 +57,7 @@ import { PageHeader } from "@/components/page-header"
 import { formatDuration } from "@/lib/format"
 
 const AGENT_TIME_START_DATE = "2026-08-30"
+const HIDDEN_CHATS_KEY = "timetracker-agentic-hidden-chats"
 
 type AgentTimeSourceInterval = {
   start: string
@@ -521,7 +533,7 @@ function conversationMeta(conversation: Conversation) {
   ].filter(Boolean).join(" · ")
 }
 
-function SessionCard({ conversation, className = "" }: { conversation: Conversation; className?: string }) {
+function SessionCard({ conversation, className = "", onRemove }: { conversation: Conversation; className?: string; onRemove?: () => void }) {
   return (
     <div className={`grid min-w-0 gap-2 ${className}`} data-testid="agentic-session-card">
       <div className="flex min-w-0 items-start gap-2.5">
@@ -533,27 +545,33 @@ function SessionCard({ conversation, className = "" }: { conversation: Conversat
           <p className="mt-0.5 truncate text-xs text-muted-foreground" title={conversationMeta(conversation)}>{conversationMeta(conversation)}</p>
         </div>
         {conversation.live && <Badge variant="secondary" className="text-[0.6rem]">Live</Badge>}
+        {onRemove && (
+          <button type="button" aria-label="Remove this chat" title="Remove this chat" className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive" onClick={onRemove} data-testid="agentic-remove-chat">
+            <X className="size-4" />
+          </button>
+        )}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 text-[0.7rem]">
-        <span className="rounded-full bg-muted px-2 py-0.5 font-mono">{format(new Date(conversation.start), "h:mm a")} – {format(new Date(conversation.end), "h:mm a")}</span>
-        <span className="rounded-full bg-muted px-2 py-0.5 font-mono">{formatDuration(conversation.durationSeconds)}</span>
-        <span className="rounded-full bg-muted px-2 py-0.5">{conversation.spans.length} {conversation.spans.length === 1 ? "run" : "runs"}</span>
-      </div>
-      <div className="max-h-48 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 font-mono text-[0.7rem] text-muted-foreground">
-        {conversation.spans.map((span, index) => (
-          <p key={`${span.start}-${span.end}-${index}`} className="flex justify-between gap-3 py-0.5">
-            <span>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</span>
-            <span className="text-foreground">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span>
-          </p>
-        ))}
-      </div>
+      <p className="font-mono text-xs"><span className="text-muted-foreground">{format(new Date(conversation.start), "h:mm a")} – {format(new Date(conversation.end), "h:mm a")}</span> · {formatDuration(conversation.durationSeconds)}{conversation.spans.length > 1 && <span className="text-muted-foreground"> · {conversation.spans.length} runs</span>}</p>
+      {conversation.spans.length > 1 && (
+        <div className="max-h-48 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 font-mono text-[0.7rem] text-muted-foreground">
+          {conversation.spans.map((span, index) => (
+            <p key={`${span.start}-${span.end}-${index}`} className="flex justify-between gap-3 py-0.5">
+              <span>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</span>
+              <span className="text-foreground">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span>
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
-function HoverTimelineDay({ date, conversations }: { date: string; conversations: Conversation[] }) {
+function HoverTimelineDay({ date, conversations, onHide }: { date: string; conversations: Conversation[]; onHide: (conversation: Conversation) => void }) {
   const [hover, setHover] = useState<HoverTarget | null>(null)
   const [pinned, setPinned] = useState<HoverTarget | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [removeTarget, setRemoveTarget] = useState<Conversation | null>(null)
+  const cardRef = useRef<HTMLDivElement | null>(null)
   const [closeTimer, setCloseTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const active = pinned ?? hover
@@ -581,6 +599,19 @@ function HoverTimelineDay({ date, conversations }: { date: string; conversations
 
   useEffect(() => () => { if (closeTimer) clearTimeout(closeTimer) }, [closeTimer])
 
+  useEffect(() => {
+    if (!pinned) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (cardRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('[data-testid="agentic-timeline-session"], [data-testid="agentic-conversation"], [role="alertdialog"]')) return
+      setPinned(null)
+      setHover(null)
+    }
+    document.addEventListener("pointerdown", onPointerDown)
+    return () => document.removeEventListener("pointerdown", onPointerDown)
+  }, [pinned])
+
   function targetFromBar(key: string, element: HTMLElement): HoverTarget {
     const container = containerRef.current?.getBoundingClientRect()
     return { key, leftPx: container ? element.getBoundingClientRect().left - container.left : 0, containerWidth: container?.width ?? 0 }
@@ -601,7 +632,10 @@ function HoverTimelineDay({ date, conversations }: { date: string; conversations
   return (
     <section className="min-w-0 rounded-xl border" data-testid="agentic-hover-day">
       <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
-        <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
+        <button type="button" className="flex min-w-0 items-center gap-2 rounded-md text-left hover:text-foreground" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
+          <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`} />
+          <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
+        </button>
         <p className="font-mono text-xs">{formatDuration(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
       </header>
       <div className="px-3 pb-3" onMouseLeave={scheduleClose}>
@@ -646,19 +680,33 @@ function HoverTimelineDay({ date, conversations }: { date: string; conversations
           </div>
           {activeConversation && active && (
             <div
+              ref={cardRef}
               className="absolute top-[calc(100%+0.25rem)] z-20 rounded-xl border bg-popover p-3 text-popover-foreground shadow-xl"
               style={{ left: cardLeft, width: cardWidth }}
               onMouseEnter={cancelClose}
               onMouseLeave={scheduleClose}
               data-testid="agentic-hover-card"
             >
-              <SessionCard conversation={activeConversation} />
-              {pinned && <button type="button" className="mt-2 text-[0.7rem] text-muted-foreground underline-offset-2 hover:underline" onClick={() => setPinned(null)}>Unpin</button>}
+              <SessionCard conversation={activeConversation} onRemove={() => { setPinned(active); setRemoveTarget(activeConversation) }} />
             </div>
           )}
         </div>
       </div>
-      <div className="border-t">
+      <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this chat?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{removeTarget?.conversationTitle || `${removeTarget?.sourceLabel} coding session`}” will be hidden from this page and its time removed from the totals here. You can restore hidden chats at any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (removeTarget) onHide(removeTarget); setRemoveTarget(null); setPinned(null); setHover(null) }}>Remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {expanded && <div className="border-t">
         {conversations.map((conversation) => (
           <button
             key={conversation.key}
@@ -675,7 +723,7 @@ function HoverTimelineDay({ date, conversations }: { date: string; conversations
             <span className="w-16 shrink-0 text-right font-mono text-xs">{formatDuration(conversation.durationSeconds)}</span>
           </button>
         ))}
-      </div>
+      </div>}
     </section>
   )
 }
@@ -957,6 +1005,19 @@ export default function AgenticCodingPage() {
   const [range, setRange] = useState("7d")
   const [search, setSearch] = useState("")
   const [selectedSource, setSelectedSource] = useState("all")
+  // Data only loads client-side after mount, so reading storage here never changes the first paint.
+  const [hiddenChatKeys, setHiddenChatKeys] = useState<string[]>(() => {
+    if (typeof window === "undefined") return []
+    try {
+      const saved = window.localStorage.getItem(HIDDEN_CHATS_KEY)
+      const parsed: unknown = saved ? JSON.parse(saved) : []
+      return Array.isArray(parsed) ? parsed.filter((key): key is string => typeof key === "string") : []
+    } catch { return [] }
+  })
+  const updateHiddenChats = useCallback((next: string[]) => {
+    setHiddenChatKeys(next)
+    try { window.localStorage.setItem(HIDDEN_CHATS_KEY, JSON.stringify(next)) } catch { /* storage unavailable */ }
+  }, [])
   const selectedVariant = searchParams.get("variant")
   const variant: PrototypeVariant =
     selectedVariant === "focus" || selectedVariant === "calm" || selectedVariant === "timeline"
@@ -1094,19 +1155,18 @@ export default function AgenticCodingPage() {
           ),
     [baseActivities, effectiveSelectedSource]
   )
-  const conversations = useMemo(
+  const allConversations = useMemo(
     () => buildConversations(visibleActivities),
     [visibleActivities]
   )
+  const conversations = useMemo(
+    () => allConversations.filter((conversation) => !hiddenChatKeys.includes(conversation.key)),
+    [allConversations, hiddenChatKeys]
+  )
+  const hiddenVisibleCount = allConversations.length - conversations.length
   const totalSeconds = useMemo(
-    () =>
-      unionSeconds(
-        visibleActivities.map((activity) => ({
-          start: activity.startMs,
-          end: activity.endMs,
-        }))
-      ),
-    [visibleActivities]
+    () => unionSeconds(conversations.flatMap((conversation) => conversation.spans)),
+    [conversations]
   )
   const dayGroups = useMemo(() => {
     const groups = new Map<string, Conversation[]>()
@@ -1319,8 +1379,14 @@ export default function AgenticCodingPage() {
           <div className="px-4 py-12 text-center text-sm text-muted-foreground">No agentic coding matches these filters.</div>
         ) : (
           <div className="grid min-w-0 gap-4">
+            {hiddenVisibleCount > 0 && (
+              <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                <span>{hiddenVisibleCount} hidden</span>
+                <Button variant="ghost" size="xs" onClick={() => updateHiddenChats(hiddenChatKeys.filter((key) => !allConversations.some((conversation) => conversation.key === key)))} data-testid="agentic-restore-hidden">Restore</Button>
+              </div>
+            )}
             {dayGroups.map(([date, dayConversations]) => (
-              <HoverTimelineDay key={date} date={date} conversations={dayConversations} />
+              <HoverTimelineDay key={date} date={date} conversations={dayConversations} onHide={(conversation) => updateHiddenChats([...hiddenChatKeys, conversation.key])} />
             ))}
           </div>
         )

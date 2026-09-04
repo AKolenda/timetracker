@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import Image from "next/image"
 import {
   Play,
@@ -198,6 +198,11 @@ function timelineSourceKey(source: ConversationSource) {
 
 function TimelinePreview({ sources, start, end }: { sources: ConversationSource[]; start: number; end: number }) {
   const duration = Math.max(1, end - start)
+  const [hover, setHover] = useState<{ key: string; leftPx: number; width: number } | null>(null)
+  const [pinned, setPinned] = useState<{ key: string; leftPx: number; width: number } | null>(null)
+  const [closeTimer, setCloseTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const active = pinned ?? hover
   const sourceMeta = {
     claude: { label: "Claude", bar: "bg-[#d97757]" },
     codex: { label: "Codex / ChatGPT", bar: "bg-emerald-500" },
@@ -210,17 +215,51 @@ function TimelinePreview({ sources, start, end }: { sources: ConversationSource[
   })).filter((lane) => lane.conversations.length > 0)
   const activeRanges = sources.flatMap((source) => source.spans)
   const gaps = subtractRanges({ start, end }, activeRanges)
+  const conversationKey = (source: ConversationSource, index: number) => `${source.source}-${source.conversationId || index}`
+  const activeSource = active ? sources.find((source, index) => conversationKey(source, index) === active.key) ?? null : null
 
-  return <div className="min-w-0" data-testid="agent-timeline-preview">
-    <div className="grid min-w-0 gap-1.5">
+  function scheduleClose() {
+    if (closeTimer) clearTimeout(closeTimer)
+    setCloseTimer(setTimeout(() => setHover(null), 180))
+  }
+  function cancelClose() {
+    if (closeTimer) clearTimeout(closeTimer)
+    setCloseTimer(null)
+  }
+  function targetFor(key: string, element: HTMLElement) {
+    const container = containerRef.current?.getBoundingClientRect()
+    return { key, leftPx: container ? element.getBoundingClientRect().left - container.left : 0, width: container?.width ?? 0 }
+  }
+  useEffect(() => () => { if (closeTimer) clearTimeout(closeTimer) }, [closeTimer])
+
+  const cardWidth = active ? Math.min(320, Math.max(0, active.width - 8)) : 0
+  const cardLeft = active ? Math.max(0, Math.min(active.leftPx, active.width - cardWidth)) : 0
+
+  return <div className="min-w-0" data-testid="agent-timeline-preview" onMouseLeave={scheduleClose}>
+    <div className="relative grid min-w-0 gap-1.5" ref={containerRef}>
       {lanes.map((lane) => <div key={lane.key} className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
         <SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-6" />
         <div className="relative h-6 min-w-0 overflow-hidden rounded-full bg-muted/40" aria-label={`${lane.label} activity lane`}>
-          {lane.conversations.flatMap((conversation) => conversation.spans.map((span, spanIndex) => {
-            const left = ((span.start - start) / duration) * 100
-            const width = ((span.end - span.start) / duration) * 100
-            return <span key={`${conversation.conversationId}-${span.start}-${spanIndex}`} className={`absolute inset-y-1 min-w-[3px] cursor-help rounded-full ${lane.bar}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${conversation.conversationTitle || lane.label} · ${format(new Date(span.start), "h:mm:ss a")}–${format(new Date(span.end), "h:mm:ss a")} · ${formatDuration(Math.floor((span.end - span.start) / 1000))}`} />
-          }))}
+          {lane.conversations.flatMap((conversation) => {
+            const key = conversationKey(conversation, sources.indexOf(conversation))
+            const isActive = active?.key === key
+            return conversation.spans.map((span, spanIndex) => {
+              const left = ((span.start - start) / duration) * 100
+              const width = ((span.end - span.start) / duration) * 100
+              return <button
+                type="button"
+                key={`${key}-${span.start}-${spanIndex}`}
+                className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-full transition-[opacity,box-shadow] ${lane.bar} ${isActive ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""}`}
+                style={{ left: `${left}%`, width: `${width}%` }}
+                aria-label={`Show ${conversation.conversationTitle || lane.label}`}
+                aria-pressed={pinned?.key === key}
+                onMouseEnter={(event) => { cancelClose(); setHover(targetFor(key, event.currentTarget)) }}
+                onFocus={(event) => { cancelClose(); setHover(targetFor(key, event.currentTarget)) }}
+                onBlur={scheduleClose}
+                onClick={(event) => { const target = targetFor(key, event.currentTarget); setPinned((current) => (current?.key === key ? null : target)) }}
+              />
+            })
+          })}
         </div>
       </div>)}
       {gaps.length > 0 && <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
@@ -229,8 +268,27 @@ function TimelinePreview({ sources, start, end }: { sources: ConversationSource[
           {gaps.map((gap, gapIndex) => <span key={`${gap.start}-${gap.end}-${gapIndex}`} className="absolute inset-y-1 min-w-[3px] cursor-help rounded-full" style={{ left: `${((gap.start - start) / duration) * 100}%`, width: `${((gap.end - gap.start) / duration) * 100}%`, backgroundImage: "repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in oklab, var(--muted-foreground) 35%, transparent) 4px 6px)" }} title={`Joined gap · ${format(new Date(gap.start), "h:mm:ss a")}–${format(new Date(gap.end), "h:mm:ss a")} · ${formatDuration(Math.floor((gap.end - gap.start) / 1000))}`} />)}
         </div>
       </div>}
+      <div className="flex min-w-0 justify-between pl-8 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
+      {activeSource && active && <div
+        className="absolute top-[calc(100%+0.25rem)] z-20 grid gap-2 rounded-xl border bg-popover p-3 text-popover-foreground shadow-xl"
+        style={{ left: cardLeft, width: cardWidth }}
+        onMouseEnter={cancelClose}
+        onMouseLeave={scheduleClose}
+        data-testid="agent-timeline-card"
+      >
+        <div className="flex min-w-0 items-start gap-2.5">
+          <SourceLogo source={activeSource.source} agent={activeSource.agent} className="size-7" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium leading-snug break-words">{activeSource.conversationTitle || `${activeSource.agent} conversation`}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{sourceDescription(activeSource)}{activeSource.model ? ` · ${activeSource.model}` : ""}</p>
+          </div>
+        </div>
+        <p className="font-mono text-xs"><span className="text-muted-foreground">{format(new Date(activeSource.spans[0].start), "h:mm a")} – {format(new Date((activeSource.spans.at(-1) ?? activeSource.spans[0]).end), "h:mm a")}</span> · {formatDuration(activeSource.durationSeconds)}{activeSource.spans.length > 1 && <span className="text-muted-foreground"> · {activeSource.spans.length} runs</span>}</p>
+        {activeSource.spans.length > 1 && <div className="max-h-40 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 font-mono text-[0.7rem] text-muted-foreground">
+          {activeSource.spans.map((span, spanIndex) => <p key={`${span.start}-${span.end}-${spanIndex}`} className="flex justify-between gap-3 py-0.5"><span>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</span><span className="text-foreground">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span></p>)}
+        </div>}
+      </div>}
     </div>
-    <div className="mt-1.5 flex min-w-0 justify-between pl-8 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
   </div>
 }
 
@@ -1223,8 +1281,8 @@ export default function TrackerPage() {
                   const sourceActiveSeconds = unionRangeSeconds(sourceConversations.flatMap((source) => source.spans))
                   const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
                   const expanded = expandedAgentSlice === slice.id
-                  return <div key={slice.id} className={`min-w-0 overflow-hidden rounded-xl border transition-colors ${expanded ? "bg-muted/15" : "bg-background"}`}>
-                    <div className="flex min-w-0 items-center gap-2 pr-2">
+                  return <div key={slice.id} className={`min-w-0 rounded-xl border transition-colors ${expanded ? "bg-muted/15" : "bg-background"}`}>
+                    <div className="flex min-w-0 items-center gap-2 overflow-hidden rounded-t-xl pr-2">
                       <button
                         type="button"
                         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-3 text-left transition-colors hover:bg-muted/25 sm:gap-3"
@@ -1261,20 +1319,6 @@ export default function TrackerPage() {
                           <span className="rounded-full bg-muted px-2 py-0.5">Active <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span></span>
                           {joinedGapSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Gaps <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></span>}
                           <span className="rounded-full bg-muted px-2 py-0.5">{sourceConversations.length} {sourceConversations.length === 1 ? "chat" : "chats"}</span>
-                        </div>
-                        <div className="grid min-w-0 gap-1">
-                          {sourceConversations.map((source, sourceIndex) => {
-                            const firstSpan = source.spans[0]
-                            const lastSpan = source.spans.at(-1) ?? firstSpan
-                            return <div key={`${source.source}-${source.conversationId}-${sourceIndex}`} className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-muted/30" title={source.conversationId ? `Chat ${source.conversationId}` : undefined}>
-                              <SourceLogo source={source.source} agent={source.agent} className="size-6" />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-xs font-medium">{source.conversationTitle || `${source.agent} conversation`}</p>
-                                <p className="truncate text-[0.7rem] text-muted-foreground">{sourceDescription(source)}{source.model ? ` · ${source.model}` : ""} · {format(new Date(firstSpan.start), "h:mm a")} – {format(new Date(lastSpan.end), "h:mm a")}</p>
-                              </div>
-                              <p className="shrink-0 font-mono text-xs tabular-nums">{formatDuration(source.durationSeconds)}</p>
-                            </div>
-                          })}
                         </div>
                       </> : <p className="text-xs text-muted-foreground">No chat details for this block. Update Agent Time and refresh.</p>}
                     </div>}
