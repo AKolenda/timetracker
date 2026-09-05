@@ -182,11 +182,22 @@ function unionRangeSeconds(ranges: TimeRange[]) {
 
 type ConversationSource = ReturnType<typeof groupConversationSources>[number]
 
-function draftDescription(slice: AgentImportSlice) {
-  const titled = groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end)
-    .filter((conversation) => conversation.conversationTitle.trim())
+/** The chat that best represents a draft: the longest one with a title, else the longest overall. */
+function primaryConversation(slice: AgentImportSlice) {
+  const conversations = groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end)
     .sort((a, b) => b.durationSeconds - a.durationSeconds)
-  return titled[0]?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
+  return conversations.find((conversation) => conversation.conversationTitle.trim()) ?? conversations[0] ?? null
+}
+
+function summaryKey(source: ConversationSource) {
+  return source.conversationId ? `${source.source}:${source.conversationId}` : null
+}
+
+function draftDescription(slice: AgentImportSlice, summaries: Record<string, string> = {}) {
+  const primary = primaryConversation(slice)
+  const key = primary ? summaryKey(primary) : null
+  if (key && summaries[key]) return summaries[key]
+  return primary?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
 }
 
 function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
@@ -645,6 +656,8 @@ export default function TrackerPage() {
   const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
   const [showHandledAgentProjects, setShowHandledAgentProjects] = useState(false)
   const [draftChat, setDraftChat] = useState<{ sliceId: string; source: ConversationSource } | null>(null)
+  const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
+  const requestedSummaries = useRef(new Set<string>())
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
     if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
     try {
@@ -782,7 +795,7 @@ export default function TrackerPage() {
     const gapStart = new Date(slice.start)
     const entry = await addTimeEntry({
       projectId: slice.projectId,
-      description: draftDescription(slice),
+      description: draftDescription(slice, chatSummaries),
       startTime: gapStart.toISOString(),
       endTime: new Date(slice.end).toISOString(),
       duration: slice.durationSeconds,
@@ -808,7 +821,7 @@ export default function TrackerPage() {
       const gapStart = new Date(slice.start)
       await addTimeEntry({
         projectId: slice.projectId,
-        description: draftDescription(slice),
+        description: draftDescription(slice, chatSummaries),
         startTime: gapStart.toISOString(),
         endTime: new Date(slice.end).toISOString(),
         duration: slice.durationSeconds,
@@ -970,6 +983,35 @@ export default function TrackerPage() {
     }
     return rows.sort((a, b) => b.sortKey.localeCompare(a.sortKey))
   }, [agentImportPreview.slices, data.settings.timezone, data.timeEntries])
+
+  // Ask for a client-facing description of each draft's main chat, once per chat.
+  useEffect(() => {
+    const pending = agentImportPreview.slices
+      .map((slice) => primaryConversation(slice))
+      .filter((source): source is ConversationSource => !!source)
+      .filter((source) => { const key = summaryKey(source); return !!key && !requestedSummaries.current.has(key) })
+    if (pending.length === 0) return
+    let cancelled = false
+    void (async () => {
+      for (const source of pending) {
+        const key = summaryKey(source)
+        if (!key || requestedSummaries.current.has(key)) continue
+        requestedSummaries.current.add(key)
+        try {
+          const query = new URLSearchParams({ source: source.source, id: source.conversationId, title: source.conversationTitle })
+          const response = await fetch(`/api/agent-time/summary?${query.toString()}`)
+          if (!response.ok) { requestedSummaries.current.delete(key); continue }
+          const body = await response.json() as { title?: string | null; configured?: boolean }
+          if (cancelled) return
+          if (body.title) setChatSummaries((current) => ({ ...current, [key]: body.title as string }))
+          if (body.configured === false) return
+        } catch {
+          requestedSummaries.current.delete(key)
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [agentImportPreview.slices])
 
   function restoreVisibleIgnoredAgentRanges() {
     setIgnoredAgentRanges((current) => {
@@ -1189,7 +1231,7 @@ export default function TrackerPage() {
                       <TableCell className="font-medium whitespace-normal break-words">
                         <button type="button" className="flex min-w-0 max-w-full cursor-pointer items-center gap-2 text-left" aria-expanded={expanded} onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}>
                           <span className="flex shrink-0 -space-x-1.5">{(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-5 ring-2 ring-background" />)}</span>
-                          <span className="min-w-0 flex-1 whitespace-normal break-words">{draftDescription(slice)}</span>
+                          <span className="min-w-0 flex-1 whitespace-normal break-words">{draftDescription(slice, chatSummaries)}</span>
                           <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
                         </button>
                         <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span> · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
