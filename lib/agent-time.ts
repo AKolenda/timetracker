@@ -25,6 +25,7 @@ type AgentTimeInterval = {
   model: string
   conversation_id: string
   conversation_title: string
+  conversation_summary: string
 }
 
 export type AgentTimeSourceInterval = {
@@ -36,6 +37,7 @@ export type AgentTimeSourceInterval = {
   model: string
   conversationId: string
   conversationTitle: string
+  conversationSummary: string
 }
 
 export type AgentTimeBlock = {
@@ -77,7 +79,8 @@ function isValidInterval(value: unknown): value is AgentTimeInterval {
     (value.source === undefined || typeof value.source === "string") &&
     (value.model === undefined || typeof value.model === "string") &&
     (value.conversation_id === undefined || typeof value.conversation_id === "string") &&
-    (value.conversation_title === undefined || typeof value.conversation_title === "string")
+    (value.conversation_title === undefined || typeof value.conversation_title === "string") &&
+    (value.conversation_summary === undefined || typeof value.conversation_summary === "string")
   )
 }
 
@@ -96,6 +99,7 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
       model: interval.model || "",
       conversation_id: interval.conversation_id || "",
       conversation_title: interval.conversation_title || "",
+      conversation_summary: interval.conversation_summary || "",
     })),
   }
 }
@@ -225,6 +229,7 @@ export function toImportData(
           model: interval.model,
           conversationId: interval.conversation_id,
           conversationTitle: interval.conversation_title,
+          conversationSummary: interval.conversation_summary,
         })),
         live: block.intervals.some((interval) => interval.live),
       }))

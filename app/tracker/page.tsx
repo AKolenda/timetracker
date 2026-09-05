@@ -94,6 +94,7 @@ type AgentTimeSourceInterval = {
   model: string
   conversationId: string
   conversationTitle: string
+  conversationSummary?: string
 }
 
 type AgentTimeResponse = {
@@ -195,6 +196,7 @@ function summaryKey(source: ConversationSource) {
 
 function draftDescription(slice: AgentImportSlice, summaries: Record<string, string> = {}) {
   const primary = primaryConversation(slice)
+  if (primary?.conversationSummary?.trim()) return primary.conversationSummary.trim()
   const key = primary ? summaryKey(primary) : null
   if (key && summaries[key]) return summaries[key]
   return primary?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
@@ -629,6 +631,7 @@ export default function TrackerPage() {
   const [timerBillable, setTimerBillable] = useState(true)
   const [editOpen, setEditOpen] = useState(false)
   const [editEntry, setEditEntry] = useState<TimeEntry | null>(null)
+  const [editDraft, setEditDraft] = useState<AgentImportSlice | null>(null)
   const [editForm, setEditForm] = useState({
     description: "",
     projectId: "",
@@ -791,9 +794,9 @@ export default function TrackerPage() {
     void loadAgentTime(false, normalizedGap)
   }
 
-  async function approveDraft(slice: AgentImportSlice, edit = false) {
+  async function approveDraft(slice: AgentImportSlice) {
     const gapStart = new Date(slice.start)
-    const entry = await addTimeEntry({
+    await addTimeEntry({
       projectId: slice.projectId,
       description: draftDescription(slice, chatSummaries),
       startTime: gapStart.toISOString(),
@@ -804,8 +807,7 @@ export default function TrackerPage() {
     })
     if (expandedAgentSlice === slice.id) setExpandedAgentSlice(null)
     if (draftChat?.sliceId === slice.id) setDraftChat(null)
-    if (edit) openEdit(entry)
-    else toast.success(`Approved ${formatDuration(slice.durationSeconds)}`)
+    toast.success(`Approved ${formatDuration(slice.durationSeconds)}`)
   }
 
   async function approveAllDrafts() {
@@ -911,7 +913,22 @@ export default function TrackerPage() {
     toast.success(`Started: ${entry.description || project.name}`)
   }
 
+  function openDraftEdit(slice: AgentImportSlice) {
+    setEditEntry(null)
+    setEditDraft(slice)
+    setEditForm({
+      description: draftDescription(slice, chatSummaries),
+      projectId: slice.projectId,
+      startTime: new Date(slice.start).toISOString(),
+      endTime: new Date(slice.end).toISOString(),
+      billable: true,
+      date: new Date(slice.start),
+    })
+    setEditOpen(true)
+  }
+
   function openEdit(entry: TimeEntry) {
+    setEditDraft(null)
     setEditEntry(entry)
     setEditForm({
       description: entry.description,
@@ -933,7 +950,7 @@ export default function TrackerPage() {
   }, [editForm.startTime, editForm.endTime])
 
   async function handleEditSave() {
-    if (!editEntry) return
+    if (!editEntry && !editDraft) return
     if (!editForm.projectId) {
       toast.error("Select a project")
       return
@@ -944,9 +961,8 @@ export default function TrackerPage() {
     }
     const startDt = new Date(editForm.startTime)
     const endDt = new Date(editForm.endTime)
-    const dateStr = localDateString(new Date(), data.settings.timezone)
-
-    await updateTimeEntry(editEntry.id, {
+    const dateStr = localDateString(editDraft ? startDt : new Date(), data.settings.timezone)
+    const values = {
       description: editForm.description,
       projectId: editForm.projectId,
       startTime: startDt.toISOString(),
@@ -954,10 +970,20 @@ export default function TrackerPage() {
       duration: editDuration,
       billable: editForm.billable,
       date: dateStr,
-    })
-    toast.success("Entry updated")
+    }
+
+    if (editDraft) {
+      await addTimeEntry(values)
+      if (expandedAgentSlice === editDraft.id) setExpandedAgentSlice(null)
+      if (draftChat?.sliceId === editDraft.id) setDraftChat(null)
+      toast.success(`Approved ${formatDuration(editDuration)}`)
+    } else if (editEntry) {
+      await updateTimeEntry(editEntry.id, values)
+      toast.success("Entry updated")
+    }
     setEditOpen(false)
     setEditEntry(null)
+    setEditDraft(null)
   }
 
   async function confirmDelete() {
@@ -988,7 +1014,7 @@ export default function TrackerPage() {
   useEffect(() => {
     const pending = agentImportPreview.slices
       .map((slice) => primaryConversation(slice))
-      .filter((source): source is ConversationSource => !!source)
+      .filter((source): source is ConversationSource => !!source && !source.conversationSummary?.trim())
       .filter((source) => { const key = summaryKey(source); return !!key && !requestedSummaries.current.has(key) })
     if (pending.length === 0) return
     let cancelled = false
@@ -1242,7 +1268,7 @@ export default function TrackerPage() {
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                       <TableCell><div className="flex items-center gap-0.5">
                         <Button variant="ghost" size="icon-xs" data-testid="approve-draft" aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => void approveDraft(slice, true)}><Pencil className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
                       </div></TableCell>
                     </TableRow>
@@ -1347,10 +1373,10 @@ export default function TrackerPage() {
       </Dialog>
 
       {/* Edit Entry Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) { setEditEntry(null); setEditDraft(null) } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Time Entry</DialogTitle>
+            <DialogTitle>{editDraft ? "Approve draft" : "Edit Time Entry"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -1506,7 +1532,7 @@ export default function TrackerPage() {
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={handleEditSave}>Save Changes</Button>
+            <Button onClick={handleEditSave}>{editDraft ? "Approve" : "Save Changes"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
