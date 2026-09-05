@@ -1155,25 +1155,25 @@ export default function TrackerPage() {
           {logRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No time entries yet</p>
           ) : (
-            <div className="overflow-x-auto rounded-xl border">
+            <div className="overflow-hidden rounded-xl border [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Description</TableHead>
-                <TableHead>Project</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>Amount</TableHead>
-                <TableHead className="w-24" />
+                <TableHead className="sm:w-[40%]">Description</TableHead>
+                <TableHead className="hidden w-[20%] sm:table-cell">Project</TableHead>
+                <TableHead className="hidden w-[12%] sm:table-cell">Date</TableHead>
+                <TableHead className="hidden w-24 sm:table-cell">Duration</TableHead>
+                <TableHead className="hidden w-[6.5rem] sm:table-cell">Amount</TableHead>
+                <TableHead className="w-px sm:w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {logRows.map((row, index) => {
                 const isNewDay = index === 0 || row.date !== logRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
-                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
@@ -1186,25 +1186,26 @@ export default function TrackerPage() {
                   return <Fragment key={slice.id}>
                     {dayHeader}
                     <TableRow data-testid="agent-draft-row" className="bg-amber-500/[0.07] hover:bg-amber-500/[0.11]">
-                      <TableCell className="font-medium">
+                      <TableCell className="font-medium whitespace-normal break-words">
                         <button type="button" className="flex min-w-0 max-w-full cursor-pointer items-center gap-2 text-left" aria-expanded={expanded} onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}>
                           <span className="flex shrink-0 -space-x-1.5">{(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-5 ring-2 ring-background" />)}</span>
-                          <span className="min-w-0 truncate">{draftDescription(slice)}</span>
+                          <span className="min-w-0 flex-1 whitespace-normal break-words">{draftDescription(slice)}</span>
                           <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
                         </button>
+                        <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span> · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                       </TableCell>
-                      <TableCell><span className="text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">{format(new Date(slice.start), "MMM d, yyyy")} <span className="opacity-70">{format(new Date(slice.start), "h:mm a")}–{format(new Date(slice.end), "h:mm a")}</span></TableCell>
-                      <TableCell className="font-mono text-xs text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
+                      <TableCell className="hidden whitespace-normal sm:table-cell"><span className="block text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
+                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}<span className="block opacity-70">{format(new Date(slice.start), "h:mm a")}–{format(new Date(slice.end), "h:mm a")}</span></TableCell>
+                      <TableCell className="hidden font-mono text-xs text-amber-700 sm:table-cell dark:text-amber-300">{formatDuration(slice.durationSeconds)}</TableCell>
+                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                       <TableCell><div className="flex items-center gap-0.5">
                         <Button variant="ghost" size="icon-xs" data-testid="approve-draft" aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => void approveDraft(slice, true)}><Pencil className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
                       </div></TableCell>
                     </TableRow>
-                    {expanded && <TableRow className="bg-amber-500/[0.04] hover:bg-amber-500/[0.04]"><TableCell colSpan={6} className="p-3">
-                      <div className="grid min-w-0 gap-3" data-testid="agent-source-details">
+                    {expanded && <TableRow className="bg-amber-500/[0.04] hover:bg-amber-500/[0.04]"><TableCell colSpan={6} className="min-w-0 p-3 whitespace-normal">
+                      <div className="grid w-0 min-w-full gap-3" data-testid="agent-source-details">
                         {sourceConversations.length > 0 ? <>
                           <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} onOpenChat={(source) => setDraftChat({ sliceId: slice.id, source })} />
                           <div className="flex min-w-0 flex-wrap gap-1.5 text-[0.7rem]">
@@ -1240,15 +1241,18 @@ export default function TrackerPage() {
                 return <Fragment key={entry.id}>
                   {dayHeader}
                   <TableRow>
-                  <TableCell className="font-medium">{entry.description || "Untitled"}</TableCell>
-                  <TableCell>
-                    <button className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
-                      {project?.name ?? "—"}<Pencil className="size-3" />
+                  <TableCell className="font-medium whitespace-normal break-words">
+                    <span className="block">{entry.description || "Untitled"}</span>
+                    <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span> · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
+                  </TableCell>
+                  <TableCell className="hidden whitespace-normal sm:table-cell">
+                    <button className="inline-flex max-w-full items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
+                      <span>{project?.name ?? "—"}</span><Pencil className="size-3 shrink-0" />
                     </button>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{format(parseLocalDate(entry.date), "MMM d, yyyy")}</TableCell>
-                  <TableCell className="font-mono text-xs">{formatDuration(entry.duration)}</TableCell>
-                  <TableCell className="font-mono text-xs">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
+                  <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(parseLocalDate(entry.date), "MMM d, yyyy")}</TableCell>
+                  <TableCell className="hidden font-mono text-xs sm:table-cell">{formatDuration(entry.duration)}</TableCell>
+                  <TableCell className="hidden font-mono text-xs sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                   <TableCell><div className="flex items-center gap-0.5">
                     <Button variant="ghost" size="icon-xs" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>
                     <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
