@@ -68,7 +68,7 @@ import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
-import { subtractRanges, type TimeRange } from "@/lib/agent-time-overlap"
+import { subtractRanges, occupiedProjectRanges, overlappingEntryIds, type TimeRange } from "@/lib/agent-time-overlap"
 import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
@@ -464,17 +464,12 @@ function buildAgentImportPlan(
   projectMappings: Record<string, string>,
   timeEntries: TimeEntry[],
   cutoff: number | null,
-  ignoredRanges: IgnoredAgentRange[] = []
+  ignoredRanges: IgnoredAgentRange[] = [],
+  activeTimers: ActiveTimer[] = []
 ): AgentImportPlan {
   const occupiedByProject = new Map<string, TimeRange[]>()
-  for (const entry of timeEntries) {
-    if (!entry.startTime || !entry.endTime) continue
-    const start = new Date(entry.startTime).getTime()
-    const end = new Date(entry.endTime).getTime()
-    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
-    const occupied = occupiedByProject.get(entry.projectId) ?? []
-    occupied.push({ start, end })
-    occupiedByProject.set(entry.projectId, occupied)
+  for (const projectId of new Set([...timeEntries, ...activeTimers].map((entry) => entry.projectId))) {
+    occupiedByProject.set(projectId, occupiedProjectRanges(projectId, timeEntries, activeTimers))
   }
 
   const slices: AgentImportSlice[] = []
@@ -736,9 +731,10 @@ export default function TrackerPage() {
       projectMappings,
       data.timeEntries,
       agentTimeCutoff,
-      ignoredAgentRanges
+      ignoredAgentRanges,
+      data.activeTimers
     ),
-    [agentTimeCutoff, availableAgentIntervals, data.timeEntries, ignoredAgentRanges, projectMappings]
+    [agentTimeCutoff, availableAgentIntervals, data.timeEntries, data.activeTimers, ignoredAgentRanges, projectMappings]
   )
   const agentImportPreviewSeconds = agentImportPreview.slices.reduce(
     (total, slice) => total + slice.durationSeconds,
@@ -794,48 +790,77 @@ export default function TrackerPage() {
     void loadAgentTime(false, normalizedGap)
   }
 
-  async function approveDraft(slice: AgentImportSlice) {
-    const gapStart = new Date(slice.start)
-    await addTimeEntry({
+  const importInFlight = useRef(false)
+  const importedEntries = useRef<TimeEntry[]>([])
+  const latestData = useRef(data)
+  latestData.current = data
+  useEffect(() => {
+    const savedIds = new Set(data.timeEntries.map((entry) => entry.id))
+    importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
+  }, [data.timeEntries])
+  const [importing, setImporting] = useState(false)
+  const overlapIds = overlappingEntryIds(data.timeEntries, data.activeTimers)
+
+  async function importDraftEntries(entries: Omit<TimeEntry, "id">[]) {
+    if (importInFlight.current) return false
+    importInFlight.current = true
+    setImporting(true)
+    let seconds = 0
+    try {
+      for (const entry of entries) {
+        const current = latestData.current
+        const gaps = subtractRanges(
+          { start: Date.parse(entry.startTime), end: Date.parse(entry.endTime!) },
+          occupiedProjectRanges(entry.projectId, [...current.timeEntries, ...importedEntries.current], current.activeTimers)
+        )
+        for (const gap of gaps) {
+          const duration = Math.floor((gap.end - gap.start) / 1000)
+          if (duration <= 0) continue
+          const saved = await addTimeEntry({
+            ...entry,
+            startTime: new Date(gap.start).toISOString(),
+            endTime: new Date(gap.end).toISOString(),
+            duration,
+            date: localDateString(new Date(gap.start), current.settings.timezone),
+          })
+          importedEntries.current.push(saved)
+          seconds += duration
+        }
+      }
+      if (seconds) toast.success(`Approved ${formatDuration(seconds)}. Overlapping time excluded.`)
+      else toast.error("No time imported: this time is already tracked or reserved by an active timer.")
+      return true
+    } catch {
+      toast.error("Import could not finish. Any entries already saved are protected from re-import; retry the remaining drafts.")
+      return false
+    } finally {
+      importInFlight.current = false
+      setImporting(false)
+    }
+  }
+
+  function draftEntry(slice: AgentImportSlice): Omit<TimeEntry, "id"> {
+    return {
       projectId: slice.projectId,
       description: draftDescription(slice, chatSummaries),
-      startTime: gapStart.toISOString(),
+      startTime: new Date(slice.start).toISOString(),
       endTime: new Date(slice.end).toISOString(),
       duration: slice.durationSeconds,
       billable: true,
-      date: localDateString(gapStart, data.settings.timezone),
-    })
+      date: localDateString(new Date(slice.start), data.settings.timezone),
+    }
+  }
+
+  async function approveDraft(slice: AgentImportSlice) {
+    if (!await importDraftEntries([draftEntry(slice)])) return
     if (expandedAgentSlice === slice.id) setExpandedAgentSlice(null)
     if (draftChat?.sliceId === slice.id) setDraftChat(null)
-    toast.success(`Approved ${formatDuration(slice.durationSeconds)}`)
   }
 
   async function approveAllDrafts() {
-    const plan = buildAgentImportPlan(
-      availableAgentIntervals,
-      projectMappings,
-      data.timeEntries,
-      agentTimeCutoff,
-      ignoredAgentRanges
-    )
-    let approved = 0
-    for (const slice of plan.slices) {
-      const gapStart = new Date(slice.start)
-      await addTimeEntry({
-        projectId: slice.projectId,
-        description: draftDescription(slice, chatSummaries),
-        startTime: gapStart.toISOString(),
-        endTime: new Date(slice.end).toISOString(),
-        duration: slice.durationSeconds,
-        billable: true,
-        date: localDateString(gapStart, data.settings.timezone),
-      })
-      approved++
-    }
+    if (!await importDraftEntries(agentImportPreview.slices.map(draftEntry))) return
     setExpandedAgentSlice(null)
     setDraftChat(null)
-    toast.success(approved ? `Approved ${approved} ${approved === 1 ? "draft" : "drafts"}` : "Nothing to approve")
-    if (plan.unmappedProjects.length) toast(`Map ${plan.unmappedProjects.join(", ")} to see the rest`)
   }
 
   async function saveHoursOnly() {
@@ -973,10 +998,9 @@ export default function TrackerPage() {
     }
 
     if (editDraft) {
-      await addTimeEntry(values)
+      if (!await importDraftEntries([values])) return
       if (expandedAgentSlice === editDraft.id) setExpandedAgentSlice(null)
       if (draftChat?.sliceId === editDraft.id) setDraftChat(null)
-      toast.success(`Approved ${formatDuration(editDuration)}`)
     } else if (editEntry) {
       await updateTimeEntry(editEntry.id, values)
       toast.success("Entry updated")
@@ -1098,7 +1122,7 @@ export default function TrackerPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_260px_auto_auto] sm:items-center">
+              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_260px_auto_auto] sm:items-center">
                 <Input
                   data-testid="timer-description"
                   placeholder="What are you working on?"
@@ -1108,7 +1132,7 @@ export default function TrackerPage() {
                 />
                 <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
                   <PopoverTrigger asChild>
-                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 w-full justify-between" >
+                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 min-w-0 w-full justify-between" >
                       <span className="truncate">{timerProject ? (() => { const project = getProject(timerProject); const client = project ? getClient(project.clientId) : undefined; return project ? `${client?.name ? `${client.name} — ` : ""}${project.name}` : "Select project" })() : "Select project"}</span>
                       <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                     </Button>
@@ -1180,7 +1204,7 @@ export default function TrackerPage() {
               data-testid="approve-all-drafts"
               className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300"
               onClick={() => void approveAllDrafts()}
-              disabled={agentTimeLoading}
+              disabled={agentTimeLoading || importing}
             >
               <Check className="size-3.5" data-icon="inline-start" />
               Approve {agentImportPreview.slices.length} {agentImportPreview.slices.length === 1 ? "draft" : "drafts"} · <span className="font-mono">{formatDuration(agentImportPreviewSeconds)}</span>
@@ -1192,6 +1216,10 @@ export default function TrackerPage() {
           </div>
         </CardHeader>
         <CardContent className="pb-4">
+          {agentImportPreview.skippedSeconds > 0 && <p role="status" data-testid="agent-overlap-warning" className="mb-3 rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
+            {formatDuration(agentImportPreview.skippedSeconds)} of overlapping agent time excluded for the same customer / project. Saved entries, other agent drafts, and active timers are protected. Stop an active timer to review any remaining time.
+          </p>}
+          {overlapIds.size > 0 && <p role="status" className="mb-3 text-sm text-red-700 dark:text-red-300">{overlapIds.size} saved {overlapIds.size === 1 ? "entry overlaps" : "entries overlap"} other time for the same customer / project. Review the red entries before billing.</p>}
           {agentTime && (unmappedAgentProjects.length > 0 || agentImportPreview.slices.length > 0 || agentImportPreview.ignoredSeconds > 0 || showHandledAgentProjects) && <div className="mb-3 grid min-w-0 gap-2" data-testid="agent-time-controls">
             {[...unmappedAgentProjects, ...(showHandledAgentProjects ? handledAgentProjects : [])].map((agentProject) => {
               const unmapped = unmappedAgentProjects.includes(agentProject)
@@ -1227,21 +1255,22 @@ export default function TrackerPage() {
               <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="sm:w-[40%]">Description</TableHead>
-                <TableHead className="hidden w-[20%] sm:table-cell">Project</TableHead>
+                <TableHead className="sm:w-[30%]">Description</TableHead>
+                <TableHead className="hidden w-[18%] sm:table-cell">Project</TableHead>
                 <TableHead className="hidden w-[12%] sm:table-cell">Date</TableHead>
+                <TableHead className="hidden min-w-28 sm:table-cell">Start / End</TableHead>
                 <TableHead className="hidden w-24 sm:table-cell">Duration</TableHead>
                 <TableHead className="hidden w-[6.5rem] sm:table-cell">Amount</TableHead>
                 <TableHead className="w-px sm:w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={7} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {logRows.map((row, index) => {
                 const isNewDay = index === 0 || row.date !== logRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
-                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={7} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
@@ -1263,16 +1292,17 @@ export default function TrackerPage() {
                         <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span> · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                       </TableCell>
                       <TableCell className="hidden whitespace-normal sm:table-cell"><span className="block text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
-                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}<span className="block opacity-70">{format(new Date(slice.start), "h:mm a")}–{format(new Date(slice.end), "h:mm a")}</span></TableCell>
+                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}</TableCell>
+                      <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</TableCell>
                       <TableCell className="hidden font-mono text-xs text-amber-700 sm:table-cell dark:text-amber-300">{formatDuration(slice.durationSeconds)}</TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                       <TableCell><div className="flex items-center gap-0.5">
-                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
                       </div></TableCell>
                     </TableRow>
-                    {expanded && <TableRow className="bg-amber-500/[0.04] hover:bg-amber-500/[0.04]"><TableCell colSpan={6} className="min-w-0 p-3 whitespace-normal">
+                    {expanded && <TableRow className="bg-amber-500/[0.04] hover:bg-amber-500/[0.04]"><TableCell colSpan={7} className="min-w-0 p-3 whitespace-normal">
                       <div className="grid w-0 min-w-full gap-3" data-testid="agent-source-details">
                         {sourceConversations.length > 0 ? <>
                           <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} onOpenChat={(source) => setDraftChat({ sliceId: slice.id, source })} />
@@ -1308,9 +1338,11 @@ export default function TrackerPage() {
                 const amount = entry.billable && project ? (entry.duration / 3600) * project.rate : 0
                 return <Fragment key={entry.id}>
                   {dayHeader}
-                  <TableRow>
+                  <TableRow className={overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
                   <TableCell className="font-medium whitespace-normal break-words">
                     <span className="block">{entry.description || "Untitled"}</span>
+                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
+                    {overlapIds.has(entry.id) && <span data-testid="entry-overlap-warning" className="mt-1 block text-xs text-red-700 dark:text-red-300">Overlapping time — same customer / project. Edit or delete to resolve.</span>}
                     <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span> · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                   </TableCell>
                   <TableCell className="hidden whitespace-normal sm:table-cell">
@@ -1319,6 +1351,7 @@ export default function TrackerPage() {
                     </button>
                   </TableCell>
                   <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(parseLocalDate(entry.date), "MMM d, yyyy")}</TableCell>
+                  <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</TableCell>
                   <TableCell className="hidden font-mono text-xs sm:table-cell">{formatDuration(entry.duration)}</TableCell>
                   <TableCell className="hidden font-mono text-xs sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                   <TableCell><div className="flex items-center gap-0.5">
