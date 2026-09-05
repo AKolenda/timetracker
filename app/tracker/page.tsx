@@ -10,12 +10,12 @@ import {
   Pencil,
   Clock,
   CalendarIcon,
-  Download,
   Plus,
   LoaderCircle,
-  TriangleAlert,
   ChevronsUpDown,
   ChevronDown,
+  Check,
+  MessageSquareText,
   X,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -29,7 +29,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogDescription,
   DialogClose,
 } from "@/components/ui/dialog"
 import {
@@ -61,6 +60,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
@@ -69,7 +69,7 @@ import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, type TimeRange } from "@/lib/agent-time-overlap"
-import { PERSONAL_AGENT_PROJECT, partitionAgentImportProjects } from "@/lib/agent-import-projects"
+import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
 type AgentTimeInterval = {
@@ -119,6 +119,9 @@ type AgentImportPlan = {
   unmappedSeconds: number
   unmappedBlocks: number
 }
+type LogRow =
+  | { kind: "entry"; entry: TimeEntry; date: string; sortKey: string }
+  | { kind: "draft"; slice: AgentImportSlice; date: string; sortKey: string }
 type IgnoredAgentRange = {
   id: string
   agentProject: string
@@ -127,7 +130,6 @@ type IgnoredAgentRange = {
 }
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
-const AGENT_REMINDER_DISMISSED_KEY = "timetracker-agent-time-dismissed-through"
 const IGNORED_AGENT_RANGES_KEY = "timetracker-agent-time-ignored-ranges"
 
 function sourceDescription(interval: AgentTimeSourceInterval) {
@@ -180,6 +182,13 @@ function unionRangeSeconds(ranges: TimeRange[]) {
 
 type ConversationSource = ReturnType<typeof groupConversationSources>[number]
 
+function draftDescription(slice: AgentImportSlice) {
+  const titled = groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end)
+    .filter((conversation) => conversation.conversationTitle.trim())
+    .sort((a, b) => b.durationSeconds - a.durationSeconds)
+  return titled[0]?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
+}
+
 function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
   if (source === "T3 Code") {
     return <Image src="/t3-code-logo.svg" alt="T3 Code" width={32} height={32} className={`shrink-0 rounded-md shadow-sm ${className}`} />
@@ -196,11 +205,60 @@ function timelineSourceKey(source: ConversationSource) {
   return "codex"
 }
 
-function TimelinePreview({ sources, start, end }: { sources: ConversationSource[]; start: number; end: number }) {
+type TimelineTarget = { key: string; leftPx: number; laneBottomPx: number; width: number; height: number }
+type TranscriptMessage = { role: "user" | "assistant"; text: string; at: string | null }
+type Transcript = { source: string; conversationId: string; title: string; messages: TranscriptMessage[] }
+
+function ChatTranscript({ source, onClose }: { source: ConversationSource; onClose: () => void }) {
+  const [state, setState] = useState<{ key: string; transcript?: Transcript; error?: string } | null>(null)
+  const key = `${source.source}:${source.conversationId}`
+
+  useEffect(() => {
+    let cancelled = false
+    const query = new URLSearchParams({ source: source.source, id: source.conversationId })
+    fetch(`/api/agent-time/transcript?${query.toString()}`)
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({})) as { transcript?: Transcript; error?: string }
+        if (cancelled) return
+        if (!response.ok || !body.transcript) setState({ key, error: body.error || "Unable to read the chat." })
+        else setState({ key, transcript: body.transcript })
+      })
+      .catch(() => { if (!cancelled) setState({ key, error: "Unable to read the chat." }) })
+    return () => { cancelled = true }
+  }, [source, key])
+
+  const title = state?.transcript?.title || source.conversationTitle || `${source.agent} conversation`
+  const loading = !state || state.key !== key
+
+  return <div className="min-w-0 overflow-hidden rounded-xl border bg-background" data-testid="agent-chat-panel">
+    <div className="flex min-w-0 items-start gap-2.5 border-b px-3 py-2.5">
+      <SourceLogo source={source.source} agent={source.agent} className="size-7" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium leading-snug break-words">{title}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{sourceDescription(source)}{source.model ? ` · ${source.model}` : ""} · {formatDuration(source.durationSeconds)}</p>
+      </div>
+      <Button type="button" variant="ghost" size="icon-xs" aria-label="Close chat" onClick={onClose}><X className="size-3.5" /></Button>
+    </div>
+    <div className="max-h-[28rem] min-w-0 overflow-y-auto overscroll-contain px-3 py-3">
+      {loading && <div className="grid gap-3"><Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" /><Skeleton className="h-16 w-4/5 rounded-2xl" /><Skeleton className="ml-auto h-8 w-1/2 rounded-2xl" /></div>}
+      {!loading && state?.error && <p className="py-6 text-center text-sm text-muted-foreground">{state.error}</p>}
+      {!loading && state?.transcript && state.transcript.messages.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">This chat has no messages yet.</p>}
+      {!loading && state?.transcript && state.transcript.messages.length > 0 && <div className="grid gap-3">
+        {state.transcript.messages.map((message, index) => <div key={`${message.at ?? index}-${index}`} className={`flex min-w-0 flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
+          <div className={`max-w-[92%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed sm:max-w-[85%] ${message.role === "user" ? "rounded-br-md bg-primary text-primary-foreground" : "rounded-bl-md bg-muted"}`}>{message.text}</div>
+          {message.at && <span className="mt-1 px-1 font-mono text-[0.65rem] text-muted-foreground">{format(new Date(message.at), "h:mm a")}</span>}
+        </div>)}
+      </div>}
+    </div>
+  </div>
+}
+
+function TimelinePreview({ sources, start, end, onOpenChat }: { sources: ConversationSource[]; start: number; end: number; onOpenChat: (source: ConversationSource) => void }) {
   const duration = Math.max(1, end - start)
-  const [hover, setHover] = useState<{ key: string; leftPx: number; width: number } | null>(null)
-  const [pinned, setPinned] = useState<{ key: string; leftPx: number; width: number } | null>(null)
-  const [closeTimer, setCloseTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
+  const [hover, setHover] = useState<TimelineTarget | null>(null)
+  const [pinned, setPinned] = useState<TimelineTarget | null>(null)
+  const [selectedRun, setSelectedRun] = useState<number | null>(null)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const active = pinned ?? hover
   const sourceMeta = {
@@ -218,21 +276,37 @@ function TimelinePreview({ sources, start, end }: { sources: ConversationSource[
   const conversationKey = (source: ConversationSource, index: number) => `${source.source}-${source.conversationId || index}`
   const activeSource = active ? sources.find((source, index) => conversationKey(source, index) === active.key) ?? null : null
 
-  function scheduleClose() {
-    if (closeTimer) clearTimeout(closeTimer)
-    setCloseTimer(setTimeout(() => setHover(null), 180))
-  }
   function cancelClose() {
-    if (closeTimer) clearTimeout(closeTimer)
-    setCloseTimer(null)
+    if (closeTimer.current) clearTimeout(closeTimer.current)
+    closeTimer.current = null
   }
-  function targetFor(key: string, element: HTMLElement) {
+  function scheduleClose() {
+    cancelClose()
+    closeTimer.current = setTimeout(() => setHover(null), 160)
+  }
+  function targetFor(key: string, element: HTMLElement): TimelineTarget {
     const container = containerRef.current?.getBoundingClientRect()
-    return { key, leftPx: container ? element.getBoundingClientRect().left - container.left : 0, width: container?.width ?? 0 }
+    const bar = element.getBoundingClientRect()
+    const lane = element.parentElement?.getBoundingClientRect() ?? bar
+    return {
+      key,
+      leftPx: container ? bar.left - container.left : 0,
+      laneBottomPx: container ? container.bottom - lane.top : 0,
+      width: container?.width ?? 0,
+      height: container?.height ?? 0,
+    }
   }
-  useEffect(() => () => { if (closeTimer) clearTimeout(closeTimer) }, [closeTimer])
+  useEffect(() => cancelClose, [])
+  useEffect(() => {
+    if (!pinned) return
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") { setPinned(null); setSelectedRun(null) }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [pinned])
 
-  const cardWidth = active ? Math.min(320, Math.max(0, active.width - 8)) : 0
+  const cardWidth = active ? Math.min(300, Math.max(0, active.width - 8)) : 0
   const cardLeft = active ? Math.max(0, Math.min(active.leftPx, active.width - cardWidth)) : 0
 
   return <div className="min-w-0" data-testid="agent-timeline-preview" onMouseLeave={scheduleClose}>
@@ -246,18 +320,24 @@ function TimelinePreview({ sources, start, end }: { sources: ConversationSource[
             return conversation.spans.map((span, spanIndex) => {
               const left = ((span.start - start) / duration) * 100
               const width = ((span.end - span.start) / duration) * 100
+              const isSelectedRun = isActive && pinned && selectedRun === spanIndex
               return <button
                 type="button"
                 key={`${key}-${span.start}-${spanIndex}`}
-                className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-full transition-[opacity,box-shadow] ${lane.bar} ${isActive ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""}`}
+                className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-full transition-[opacity,box-shadow] ${lane.bar} ${isSelectedRun ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : isActive ? "z-10 ring-1 ring-foreground/70 ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""} ${isActive && pinned && selectedRun !== null && !isSelectedRun ? "opacity-50" : ""}`}
                 style={{ left: `${left}%`, width: `${width}%` }}
                 aria-label={`Show ${conversation.conversationTitle || lane.label}`}
                 aria-pressed={pinned?.key === key}
-                onMouseEnter={(event) => { cancelClose(); setHover(targetFor(key, event.currentTarget)) }}
+                onMouseEnter={(event) => { cancelClose(); if (!pinned) setHover(targetFor(key, event.currentTarget)) }}
                 onMouseLeave={scheduleClose}
-                onFocus={(event) => { cancelClose(); setHover(targetFor(key, event.currentTarget)) }}
+                onFocus={(event) => { cancelClose(); if (!pinned) setHover(targetFor(key, event.currentTarget)) }}
                 onBlur={scheduleClose}
-                onClick={(event) => { const target = targetFor(key, event.currentTarget); setPinned((current) => (current?.key === key ? null : target)) }}
+                onClick={(event) => {
+                  const target = targetFor(key, event.currentTarget)
+                  if (pinned?.key === key) { setPinned(null); setSelectedRun(null); setHover(target); return }
+                  setPinned(target)
+                  setSelectedRun(conversation.spans.length > 1 ? spanIndex : null)
+                }}
               />
             })
           })}
@@ -271,22 +351,36 @@ function TimelinePreview({ sources, start, end }: { sources: ConversationSource[
       </div>}
       <div className="flex min-w-0 justify-between pl-8 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
       {activeSource && active && <div
-        className="absolute top-[calc(100%+0.25rem)] z-20 grid gap-2 rounded-xl border bg-popover p-3 text-popover-foreground shadow-xl"
-        style={{ left: cardLeft, width: cardWidth }}
+        className="absolute z-20 grid gap-2 rounded-xl border bg-popover p-2.5 text-popover-foreground shadow-xl before:absolute before:inset-x-0 before:top-full before:h-3 before:content-['']"
+        style={{ left: cardLeft, width: cardWidth, bottom: active.laneBottomPx + 6 }}
         onMouseEnter={cancelClose}
         onMouseLeave={scheduleClose}
         data-testid="agent-timeline-card"
       >
-        <div className="flex min-w-0 items-start gap-2.5">
+        <button
+          type="button"
+          className="-m-1 flex min-w-0 cursor-pointer items-start gap-2.5 rounded-lg p-1 text-left transition-colors hover:bg-muted/60"
+          onClick={() => onOpenChat(activeSource)}
+          aria-label={`Open chat ${activeSource.conversationTitle || activeSource.agent}`}
+        >
           <SourceLogo source={activeSource.source} agent={activeSource.agent} className="size-7" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium leading-snug break-words">{activeSource.conversationTitle || `${activeSource.agent} conversation`}</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{sourceDescription(activeSource)}{activeSource.model ? ` · ${activeSource.model}` : ""}</p>
+            <p className="line-clamp-2 text-sm font-medium leading-snug break-words">{activeSource.conversationTitle || `${activeSource.agent} conversation`}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{activeSource.model || sourceDescription(activeSource)} · {formatDuration(activeSource.durationSeconds)}</p>
           </div>
-        </div>
-        <p className="font-mono text-xs"><span className="text-muted-foreground">{format(new Date(activeSource.spans[0].start), "h:mm a")} – {format(new Date((activeSource.spans.at(-1) ?? activeSource.spans[0]).end), "h:mm a")}</span> · {formatDuration(activeSource.durationSeconds)}{activeSource.spans.length > 1 && <span className="text-muted-foreground"> · {activeSource.spans.length} runs</span>}</p>
-        {activeSource.spans.length > 1 && <div className="max-h-40 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 font-mono text-[0.7rem] text-muted-foreground">
-          {activeSource.spans.map((span, spanIndex) => <p key={`${span.start}-${span.end}-${spanIndex}`} className="flex justify-between gap-3 py-0.5"><span>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</span><span className="text-foreground">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span></p>)}
+          <MessageSquareText className="mt-1 size-4 shrink-0 text-muted-foreground" />
+        </button>
+        {activeSource.spans.length > 1 && <div className="flex min-w-0 flex-wrap gap-1">
+          {activeSource.spans.map((span, spanIndex) => {
+            const isSelected = pinned && selectedRun === spanIndex
+            return <button
+              key={`${span.start}-${span.end}-${spanIndex}`}
+              type="button"
+              className={`cursor-pointer rounded-md px-1.5 py-0.5 text-[0.7rem] transition-colors ${isSelected ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:text-foreground"}`}
+              aria-pressed={!!isSelected}
+              onClick={() => { if (!pinned) setPinned(active); setSelectedRun(isSelected ? null : spanIndex) }}
+            >Run {spanIndex + 1} · <span className="font-mono">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span></button>
+          })}
         </div>}
       </div>}
     </div>
@@ -321,16 +415,6 @@ function savedDailyAgentGap(today: string) {
     // Invalid preferences use the daily default.
   }
   return "15"
-}
-
-function savedAgentReminderDismissal() {
-  if (typeof window === "undefined") return 0
-  try {
-    const dismissedThrough = Number(localStorage.getItem(agentPreferenceStorageKey(AGENT_REMINDER_DISMISSED_KEY)) ?? 0)
-    return Number.isFinite(dismissedThrough) ? dismissedThrough : 0
-  } catch {
-    return 0
-  }
 }
 
 function savedIgnoredAgentRanges() {
@@ -553,16 +637,14 @@ export default function TrackerPage() {
     hours: "",
     billable: true,
   })
-  const [importOpen, setImportOpen] = useState(false)
   const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
   const [agentTimeLoading, setAgentTimeLoading] = useState(false)
   const [expandedAgentSlice, setExpandedAgentSlice] = useState<string | null>(null)
   const [gapMinutes, setGapMinutes] = useState("15")
   const [appliedGapMinutes, setAppliedGapMinutes] = useState("15")
-  const [dismissedAgentTimeThrough, setDismissedAgentTimeThrough] = useState(0)
   const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
-  const [agentProjectFilter, setAgentProjectFilter] = useState("all")
-  const [showHiddenAgentProjects, setShowHiddenAgentProjects] = useState(false)
+  const [showHandledAgentProjects, setShowHandledAgentProjects] = useState(false)
+  const [draftChat, setDraftChat] = useState<{ sliceId: string; source: ConversationSource } | null>(null)
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
     if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
     try {
@@ -587,14 +669,11 @@ export default function TrackerPage() {
   // without making the user open the import flow first.
   useEffect(() => {
     const savedGap = savedDailyAgentGap(todayEntryDate)
-    const savedDismissal = savedAgentReminderDismissal()
     const savedIgnoredRanges = savedIgnoredAgentRanges()
     const id = window.setTimeout(() => {
       setGapMinutes(savedGap)
       setAppliedGapMinutes(savedGap)
-      setDismissedAgentTimeThrough(savedDismissal)
       setIgnoredAgentRanges(savedIgnoredRanges)
-      if (new URLSearchParams(window.location.search).get("importAgentTime") === "1") setImportOpen(true)
       void loadAgentTime(true, savedGap)
     }, 0)
     return () => window.clearTimeout(id)
@@ -635,52 +714,27 @@ export default function TrackerPage() {
     [agentTime, agentTimeCutoff]
   )
 
-  const selectedAgentIntervals = useMemo(
-    () => availableAgentIntervals.filter(
-      (interval) => agentProjectFilter === "all" || interval.project === agentProjectFilter
-    ),
-    [agentProjectFilter, availableAgentIntervals]
-  )
-
   const agentImportPreview = useMemo(
     () => buildAgentImportPlan(
-      selectedAgentIntervals,
+      availableAgentIntervals,
       projectMappings,
       data.timeEntries,
       agentTimeCutoff,
       ignoredAgentRanges
     ),
-    [agentTimeCutoff, data.timeEntries, ignoredAgentRanges, projectMappings, selectedAgentIntervals]
+    [agentTimeCutoff, availableAgentIntervals, data.timeEntries, ignoredAgentRanges, projectMappings]
   )
-
   const agentImportPreviewSeconds = agentImportPreview.slices.reduce(
     (total, slice) => total + slice.durationSeconds,
     0
   )
-  const selectedPersonalIntervals = selectedAgentIntervals.filter(
-    (interval) => projectMappings[interval.project] === PERSONAL_AGENT_PROJECT
-  ).length
-  const selectedAgentProjects = useMemo(
-    () => [...new Set(selectedAgentIntervals.map((interval) => interval.project))],
-    [selectedAgentIntervals]
+  const unmappedAgentProjects = agentImportPreview.unmappedProjects
+  const handledAgentProjects = useMemo(
+    () => [...new Set(availableAgentIntervals.map((interval) => interval.project))]
+      .filter((project) => !unmappedAgentProjects.includes(project))
+      .sort((a, b) => a.localeCompare(b)),
+    [availableAgentIntervals, unmappedAgentProjects]
   )
-  const importableAgentProjects = useMemo(
-    () => [...new Set(agentImportPreview.slices.map((slice) => slice.interval.project))],
-    [agentImportPreview.slices]
-  )
-  const agentProjectVisibility = useMemo(
-    () => partitionAgentImportProjects({
-      projects: selectedAgentProjects,
-      mappings: projectMappings,
-      importableProjects: importableAgentProjects,
-      unmappedProjects: agentImportPreview.unmappedProjects,
-      selectedProject: agentProjectFilter === "all" ? undefined : agentProjectFilter,
-    }),
-    [agentImportPreview.unmappedProjects, agentProjectFilter, importableAgentProjects, projectMappings, selectedAgentProjects]
-  )
-  const agentProjectsToShow = showHiddenAgentProjects
-    ? [...agentProjectVisibility.visible, ...agentProjectVisibility.hidden]
-    : agentProjectVisibility.visible
 
   async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes) {
     setAgentTimeLoading(true)
@@ -694,8 +748,6 @@ export default function TrackerPage() {
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse
       setAgentTime(payload)
-      setAgentProjectFilter("all")
-      setShowHiddenAgentProjects(false)
       setExpandedAgentSlice(null)
     } catch (error) {
       if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
@@ -722,50 +774,53 @@ export default function TrackerPage() {
     } catch {
       // The current page still uses the choice when browser storage is unavailable.
     }
-    const handledCurrentActivity = unimportedAgentTime.latestEnd > dismissedAgentTimeThrough
-    dismissAgentTimeNotification()
-    toast.success(`Agent Time gap set to ${normalizedGap} ${normalizedGap === "1" ? "minute" : "minutes"} for today${handledCurrentActivity ? "; current reminder cleared" : ""}`)
+    toast.success(`Agent Time gap set to ${normalizedGap} ${normalizedGap === "1" ? "minute" : "minutes"} for today`)
     void loadAgentTime(false, normalizedGap)
   }
 
-  function openAgentTimeImport() {
-    setImportOpen(true)
-    if (!agentTime) void loadAgentTime()
+  async function approveDraft(slice: AgentImportSlice, edit = false) {
+    const gapStart = new Date(slice.start)
+    const entry = await addTimeEntry({
+      projectId: slice.projectId,
+      description: draftDescription(slice),
+      startTime: gapStart.toISOString(),
+      endTime: new Date(slice.end).toISOString(),
+      duration: slice.durationSeconds,
+      billable: true,
+      date: localDateString(gapStart, data.settings.timezone),
+    })
+    if (expandedAgentSlice === slice.id) setExpandedAgentSlice(null)
+    if (draftChat?.sliceId === slice.id) setDraftChat(null)
+    if (edit) openEdit(entry)
+    else toast.success(`Approved ${formatDuration(slice.durationSeconds)}`)
   }
 
-  async function importAgentTime() {
-    if (!agentTime) return
+  async function approveAllDrafts() {
     const plan = buildAgentImportPlan(
-      selectedAgentIntervals,
+      availableAgentIntervals,
       projectMappings,
       data.timeEntries,
       agentTimeCutoff,
       ignoredAgentRanges
     )
-    if (plan.unmappedProjects.length) {
-      toast.error(`Choose a TimeTracker project for ${plan.unmappedProjects.join(", ")}`)
-      return
-    }
-
-    let imported = 0
+    let approved = 0
     for (const slice of plan.slices) {
       const gapStart = new Date(slice.start)
-      const gapEnd = new Date(slice.end)
       await addTimeEntry({
         projectId: slice.projectId,
-        description: `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`,
+        description: draftDescription(slice),
         startTime: gapStart.toISOString(),
-        endTime: gapEnd.toISOString(),
+        endTime: new Date(slice.end).toISOString(),
         duration: slice.durationSeconds,
         billable: true,
         date: localDateString(gapStart, data.settings.timezone),
       })
-      imported++
+      approved++
     }
-    toast.success(imported ? `Imported ${imported} uncovered ${imported === 1 ? "entry" : "entries"}` : "Everything was already tracked")
-    if (plan.skippedSeconds > 0) toast(`Skipped ${formatDuration(plan.skippedSeconds)} already tracked`)
-    dismissAgentTimeNotification()
-    setImportOpen(false)
+    setExpandedAgentSlice(null)
+    setDraftChat(null)
+    toast.success(approved ? `Approved ${approved} ${approved === 1 ? "draft" : "drafts"}` : "Nothing to approve")
+    if (plan.unmappedProjects.length) toast(`Map ${plan.unmappedProjects.join(", ")} to see the rest`)
   }
 
   async function saveHoursOnly() {
@@ -899,12 +954,6 @@ export default function TrackerPage() {
     setDeleteTarget(null)
   }
 
-  const sortedEntries = useMemo(
-    () => [...data.timeEntries].sort((a, b) =>
-      `${b.date}${b.startTime ?? ""}`.localeCompare(`${a.date}${a.startTime ?? ""}`)
-    ),
-    [data.timeEntries]
-  )
   const todayCompletedSeconds = useMemo(
     () => data.timeEntries
       .filter((entry) => entry.date === todayEntryDate)
@@ -912,36 +961,19 @@ export default function TrackerPage() {
     [data.timeEntries, todayEntryDate]
   )
 
-  const unimportedAgentTime = useMemo(() => {
-    if (!agentTime) return { seconds: 0, blocks: 0, unmappedProjects: [] as string[], latestEnd: 0 }
-    const plan = buildAgentImportPlan(
-      agentTime.intervals,
-      projectMappings,
-      data.timeEntries,
-      agentTimeCutoff,
-      ignoredAgentRanges
-    )
-    const unmappedProjects = new Set(plan.unmappedProjects)
-    const latestMappedSliceEnd = plan.slices.reduce(
-      (latest, slice) => Math.max(latest, slice.end),
-      0
-    )
-    const latestUnmappedEnd = agentTime.intervals.reduce((latest, interval) => {
-      if (!unmappedProjects.has(interval.project)) return latest
-      const end = new Date(interval.end).getTime()
-      return Number.isFinite(end) ? Math.max(latest, end) : latest
-    }, 0)
-    return {
-      seconds: plan.slices.reduce((total, slice) => total + slice.durationSeconds, 0) + plan.unmappedSeconds,
-      blocks: plan.slices.length + plan.unmappedBlocks,
-      unmappedProjects: plan.unmappedProjects,
-      latestEnd: Math.max(latestMappedSliceEnd, latestUnmappedEnd),
+  const logRows = useMemo(() => {
+    const rows: LogRow[] = data.timeEntries.map((entry) => ({ kind: "entry", entry, date: entry.date, sortKey: `${entry.date}${entry.startTime ?? ""}` }))
+    for (const slice of agentImportPreview.slices) {
+      const start = new Date(slice.start)
+      const date = localDateString(start, data.settings.timezone)
+      rows.push({ kind: "draft", slice, date, sortKey: `${date}${start.toISOString()}` })
     }
-  }, [agentTime, agentTimeCutoff, data.timeEntries, ignoredAgentRanges, projectMappings])
+    return rows.sort((a, b) => b.sortKey.localeCompare(a.sortKey))
+  }, [agentImportPreview.slices, data.settings.timezone, data.timeEntries])
 
   function restoreVisibleIgnoredAgentRanges() {
     setIgnoredAgentRanges((current) => {
-      const next = current.filter((range) => !selectedAgentIntervals.some((interval) => {
+      const next = current.filter((range) => !availableAgentIntervals.some((interval) => {
         if (interval.project !== range.agentProject) return false
         const intervalStart = new Date(interval.start).getTime()
         const intervalEnd = new Date(interval.end).getTime()
@@ -950,7 +982,7 @@ export default function TrackerPage() {
       persistIgnoredAgentRanges(next)
       return next
     })
-    toast.success("Removed Agent Time restored")
+    toast.success("Skipped Agent Time restored")
   }
 
   function ignoreAgentSlice(slice: AgentImportSlice) {
@@ -967,19 +999,10 @@ export default function TrackerPage() {
       return next
     })
     if (expandedAgentSlice === slice.id) setExpandedAgentSlice(null)
-    toast("Removed from Agent Time imports", {
+    if (draftChat?.sliceId === slice.id) setDraftChat(null)
+    toast("Skipped", {
       description: `${format(new Date(slice.start), "MMM d, h:mm a")} – ${format(new Date(slice.end), "h:mm a")}`,
     })
-  }
-
-  function dismissAgentTimeNotification() {
-    if (!unimportedAgentTime.latestEnd) return
-    setDismissedAgentTimeThrough(unimportedAgentTime.latestEnd)
-    try {
-      localStorage.setItem(agentPreferenceStorageKey(AGENT_REMINDER_DISMISSED_KEY), String(unimportedAgentTime.latestEnd))
-    } catch {
-      // Dismissal still applies until this page is refreshed.
-    }
   }
 
   async function saveProjectEdit() {
@@ -1080,95 +1103,58 @@ export default function TrackerPage() {
         </CardContent>
       </Card>
 
-      {unimportedAgentTime.seconds > 0 && unimportedAgentTime.latestEnd > dismissedAgentTimeThrough && (
-        <Card data-testid="agent-time-reminder" className="mb-6 border-amber-500/40 bg-amber-500/5">
-          <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex gap-3">
-              <TriangleAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
-              <div className="min-w-0">
-                <p className="font-medium">{formatDuration(unimportedAgentTime.seconds)} of Agent Time has not been imported</p>
-                <p className="text-sm text-muted-foreground">
-                  {unimportedAgentTime.blocks} {unimportedAgentTime.blocks === 1 ? "block is" : "blocks are"} not covered by an existing timed entry.
-                  {unimportedAgentTime.unmappedProjects.length > 0 && ` Map ${unimportedAgentTime.unmappedProjects.slice(0, 3).join(", ")}${unimportedAgentTime.unmappedProjects.length > 3 ? ` and ${unimportedAgentTime.unmappedProjects.length - 3} more` : ""} to client projects before importing.`}
-                </p>
-                <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
-                  <Label htmlFor="tracker-agent-gap" className="text-xs text-muted-foreground">Agent Time gap</Label>
-                  <Input
-                    id="tracker-agent-gap"
-                    data-testid="tracker-agent-gap"
-                    type="number"
-                    min="0"
-                    max="240"
-                    inputMode="numeric"
-                    value={gapMinutes}
-                    onChange={(event) => setGapMinutes(event.target.value)}
-                    className="h-8 w-16"
-                  />
-                  <span className="text-xs text-muted-foreground">min today</span>
-                  <Button
-                    data-testid="apply-agent-gap"
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={applyGapMinutes}
-                    disabled={agentTimeLoading}
-                  >
-                    {agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}
-                    Apply
-                  </Button>
-                  <span className="text-[0.65rem] text-muted-foreground">Resets to 15 tomorrow</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <Button
-                data-testid="dismiss-agent-time-reminder"
-                variant="ghost"
-                onClick={() => {
-                  dismissAgentTimeNotification()
-                  toast("Agent Time reminder dismissed until there is new activity")
-                }}
-              >
-                <X className="size-3.5" data-icon="inline-start" />
-                Dismiss
-              </Button>
-              {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE ? (
-                <Button variant="outline" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
-              ) : (
-                <Button variant="ghost" onClick={showAllAgentTime}>Show from Aug 30</Button>
-              )}
-              <Button variant="outline" onClick={openAgentTimeImport}>
-                <Download className="size-3.5" data-icon="inline-start" />
-                Review and import
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-sm font-medium">Time Log</CardTitle>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {agentImportPreview.slices.length > 0 && <Button
+              size="sm"
+              data-testid="approve-all-drafts"
+              className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300"
+              onClick={() => void approveAllDrafts()}
+              disabled={agentTimeLoading}
+            >
+              <Check className="size-3.5" data-icon="inline-start" />
+              Approve {agentImportPreview.slices.length} {agentImportPreview.slices.length === 1 ? "draft" : "drafts"} · <span className="font-mono">{formatDuration(agentImportPreviewSeconds)}</span>
+            </Button>}
             <Button variant="outline" size="sm" onClick={() => setAddHoursOpen(true)}>
               <Plus className="size-3.5" data-icon="inline-start" />
               Add hours
             </Button>
-            <Button variant="outline" size="sm" onClick={openAgentTimeImport}>
-              <Download className="size-3.5" data-icon="inline-start" />
-              Import Agent Time
-            </Button>
           </div>
         </CardHeader>
-        {sortedEntries.length === 0 ? (
-          <CardContent>
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No time entries yet
-            </p>
-          </CardContent>
-        ) : (
-          <CardContent className="pb-4">
+        <CardContent className="pb-4">
+          {agentTime && (unmappedAgentProjects.length > 0 || agentImportPreview.slices.length > 0 || agentImportPreview.ignoredSeconds > 0 || showHandledAgentProjects) && <div className="mb-3 grid min-w-0 gap-2" data-testid="agent-time-controls">
+            {[...unmappedAgentProjects, ...(showHandledAgentProjects ? handledAgentProjects : [])].map((agentProject) => {
+              const unmapped = unmappedAgentProjects.includes(agentProject)
+              return <div key={agentProject} className={`grid min-w-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] sm:gap-2 ${unmapped ? "border-amber-500/40 bg-amber-500/5" : "bg-muted/20"}`}>
+                <p className="min-w-0 truncate text-sm" title={agentProject}>{agentProject}</p>
+                <Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}>
+                  <SelectTrigger className="h-8 w-full min-w-0 max-w-full"><SelectValue placeholder="Choose client / project" /></SelectTrigger>
+                  <SelectContent position="popper" className="max-w-[calc(100vw-2rem)]">
+                    <SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>
+                    {data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            })}
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex h-8 items-center rounded-full border bg-background pl-3" title="Join gaps up to this many minutes">
+                <span>Gap</span>
+                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center font-mono text-xs text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent" />
+                <span className="pr-3">min</span>
+              </div>
+              <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8 rounded-full" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
+              {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE
+                ? <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
+                : <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
+              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></Button>}
+              {handledAgentProjects.length > 0 && <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={() => setShowHandledAgentProjects((current) => !current)}>{showHandledAgentProjects ? "Hide projects" : "Projects"}</Button>}
+            </div>
+          </div>}
+          {logRows.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No time entries yet</p>
+          ) : (
             <div className="overflow-x-auto rounded-xl border">
               <Table>
             <TableHeader>
@@ -1182,15 +1168,77 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedEntries[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
-              {sortedEntries.map((entry, index) => {
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows.map((row, index) => {
+                const isNewDay = index === 0 || row.date !== logRows[index - 1]?.date
+                const isToday = row.date === todayEntryDate
+                const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                if (row.kind === "draft") {
+                  const slice = row.slice
+                  const project = getProject(slice.projectId)
+                  const amount = project ? (slice.durationSeconds / 3600) * project.rate : 0
+                  const expanded = expandedAgentSlice === slice.id
+                  const sourceConversations = expanded ? groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end) : []
+                  const laneKeys = [...new Set(groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end).map(timelineSourceKey))]
+                  const sourceActiveSeconds = unionRangeSeconds(sourceConversations.flatMap((source) => source.spans))
+                  const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
+                  return <Fragment key={slice.id}>
+                    {dayHeader}
+                    <TableRow data-testid="agent-draft-row" className="bg-amber-500/[0.07] hover:bg-amber-500/[0.11]">
+                      <TableCell className="font-medium">
+                        <button type="button" className="flex min-w-0 max-w-full cursor-pointer items-center gap-2 text-left" aria-expanded={expanded} onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}>
+                          <span className="flex shrink-0 -space-x-1.5">{(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-5 ring-2 ring-background" />)}</span>
+                          <span className="min-w-0 truncate">{draftDescription(slice)}</span>
+                          <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+                        </button>
+                      </TableCell>
+                      <TableCell><span className="text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">{format(new Date(slice.start), "MMM d, yyyy")} <span className="opacity-70">{format(new Date(slice.start), "h:mm a")}–{format(new Date(slice.end), "h:mm a")}</span></TableCell>
+                      <TableCell className="font-mono text-xs text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
+                      <TableCell><div className="flex items-center gap-0.5">
+                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => void approveDraft(slice, true)}><Pencil className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
+                      </div></TableCell>
+                    </TableRow>
+                    {expanded && <TableRow className="bg-amber-500/[0.04] hover:bg-amber-500/[0.04]"><TableCell colSpan={6} className="p-3">
+                      <div className="grid min-w-0 gap-3" data-testid="agent-source-details">
+                        {sourceConversations.length > 0 ? <>
+                          <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} onOpenChat={(source) => setDraftChat({ sliceId: slice.id, source })} />
+                          <div className="flex min-w-0 flex-wrap gap-1.5 text-[0.7rem]">
+                            <span className="rounded-full bg-muted px-2 py-0.5">Active <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span></span>
+                            {joinedGapSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Gaps <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></span>}
+                          </div>
+                          <div className="grid min-w-0 gap-1">
+                            {sourceConversations.map((source, sourceIndex) => {
+                              const selected = draftChat?.sliceId === slice.id && draftChat.source === source
+                              return <button
+                                key={`${source.source}-${source.conversationId || sourceIndex}`}
+                                type="button"
+                                className={`flex min-w-0 cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors ${selected ? "bg-muted" : "hover:bg-muted/60"}`}
+                                aria-pressed={selected}
+                                onClick={() => setDraftChat(selected ? null : { sliceId: slice.id, source })}
+                              >
+                                <SourceLogo source={source.source} agent={source.agent} className="size-5" />
+                                <span className="min-w-0 flex-1 truncate text-sm">{source.conversationTitle || `${source.agent} conversation`}</span>
+                                <span className="shrink-0 font-mono text-xs text-muted-foreground">{formatDuration(source.durationSeconds)}</span>
+                                <MessageSquareText className="size-3.5 shrink-0 text-muted-foreground" />
+                              </button>
+                            })}
+                          </div>
+                          {draftChat?.sliceId === slice.id && <ChatTranscript source={draftChat.source} onClose={() => setDraftChat(null)} />}
+                        </> : <p className="text-xs text-muted-foreground">No chat details for this block. Refresh Agent Time.</p>}
+                      </div>
+                    </TableCell></TableRow>}
+                  </Fragment>
+                }
+                const entry = row.entry
                 const project = getProject(entry.projectId)
                 const amount = entry.billable && project ? (entry.duration / 3600) * project.rate : 0
-                const isNewDay = index === 0 || entry.date !== sortedEntries[index - 1]?.date
-                const isToday = entry.date === todayEntryDate
-                const dayLabel = isToday ? "Today" : format(parseLocalDate(entry.date), "EEEE, MMMM d, yyyy")
                 return <Fragment key={entry.id}>
-                  {isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>}
+                  {dayHeader}
                   <TableRow>
                   <TableCell className="font-medium">{entry.description || "Untitled"}</TableCell>
                   <TableCell>
@@ -1212,8 +1260,8 @@ export default function TrackerPage() {
             </TableBody>
               </Table>
             </div>
-          </CardContent>
-        )}
+          )}
+        </CardContent>
       </Card>
 
       <Dialog open={addHoursOpen} onOpenChange={setAddHoursOpen}>
@@ -1238,106 +1286,6 @@ export default function TrackerPage() {
             <div className="flex items-center gap-2"><Checkbox id="hours-billable" checked={hoursForm.billable} onCheckedChange={(value) => setHoursForm({ ...hoursForm, billable: value === true })} /><Label htmlFor="hours-billable">Billable</Label></div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setAddHoursOpen(false)}>Cancel</Button><Button onClick={saveHoursOnly}>Add hours</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={importOpen} onOpenChange={setImportOpen}>
-        <DialogContent
-          data-testid="agent-import-dialog"
-          className="max-h-[calc(100dvh-2rem)] min-w-0 gap-0 overflow-x-hidden overflow-y-auto overscroll-contain p-0 sm:max-w-2xl"
-        >
-          <DialogHeader className="border-b px-4 py-3 sm:px-5 sm:py-4">
-            <DialogTitle className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-              <span>Import Agent Time</span>
-              {agentTime && agentImportPreview.slices.length > 0 && <span className="rounded-full bg-primary/10 px-2.5 py-0.5 font-mono text-xs font-medium text-primary">{formatDuration(agentImportPreviewSeconds)}</span>}
-            </DialogTitle>
-            <DialogDescription className="sr-only">Review Agent Time blocks and import the uncovered time as entries.</DialogDescription>
-          </DialogHeader>
-          <div className="grid min-w-0 gap-3 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {agentTime && <Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger aria-label="Agent Time project" className="h-9 min-w-0 flex-1 basis-full rounded-full sm:basis-40"><SelectValue /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value="all">All projects · {availableAgentIntervals.length}</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select>}
-              <div className="flex h-9 shrink-0 items-center rounded-full border bg-background pl-3 text-xs text-muted-foreground" title="Join gaps up to this many minutes">
-                <span>Gap</span>
-                <Input id="agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-8 w-12 border-0 bg-transparent px-1 text-center font-mono text-xs text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent" />
-                <span className="pr-3">min</span>
-              </div>
-              <Button variant="outline" size="sm" className="h-9 rounded-full" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
-              {agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE && <Button variant="ghost" size="sm" className="h-9 rounded-full text-muted-foreground" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
-            </div>
-            {agentTime && <>
-              {(agentProjectsToShow.length > 0 || agentProjectVisibility.hidden.length > 0) && <div className="grid min-w-0 gap-2">
-                {agentProjectsToShow.map((agentProject) => <div key={agentProject} className="grid min-w-0 items-center gap-1.5 rounded-xl border bg-muted/20 px-2.5 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] sm:gap-2 sm:px-3"><p className="min-w-0 truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger className="h-8 w-full min-w-0 max-w-full"><SelectValue placeholder="Choose client / project" /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
-                {agentProjectVisibility.hidden.length > 0 && <Button type="button" variant="ghost" size="sm" className="w-fit justify-self-start text-muted-foreground" onClick={() => setShowHiddenAgentProjects((current) => !current)}>{showHiddenAgentProjects ? "Hide handled" : `Show ${agentProjectVisibility.hidden.length} hidden`}</Button>}
-              </div>}
-              <div className="grid min-w-0 gap-2" data-testid="agent-import-review">
-                {agentImportPreview.slices.map((slice) => {
-                  const mappedProject = getProject(slice.projectId)
-                  const mappedProjectLabel = mappedProject ? `${getClient(mappedProject.clientId)?.name ? `${getClient(mappedProject.clientId)?.name} — ` : ""}${mappedProject.name}` : "Unknown project"
-                  const sourceConversations = groupConversationSources(
-                    slice.interval.sourceIntervals ?? [],
-                    slice.start,
-                    slice.end
-                  )
-                  const laneKeys = [...new Set(sourceConversations.map(timelineSourceKey))]
-                  const sourceActiveSeconds = unionRangeSeconds(sourceConversations.flatMap((source) => source.spans))
-                  const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
-                  const expanded = expandedAgentSlice === slice.id
-                  return <div key={slice.id} className={`min-w-0 rounded-xl border transition-colors ${expanded ? "bg-muted/15" : "bg-background"}`}>
-                    <div className="flex min-w-0 items-center gap-2 overflow-hidden rounded-t-xl pr-2">
-                      <button
-                        type="button"
-                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-muted/25 sm:gap-3 sm:px-3 sm:py-3"
-                        aria-expanded={expanded}
-                        onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}
-                      >
-                        <div className="flex w-12 shrink-0 -space-x-1.5 sm:w-[4.5rem]">
-                          {(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-5 ring-2 ring-background sm:size-7" />)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-medium leading-snug sm:text-sm"><span className="text-muted-foreground">{format(new Date(slice.start), "MMM d")}</span> {format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>
-                          <p className="truncate text-[0.7rem] text-muted-foreground sm:text-xs" title={`${slice.interval.project} → ${mappedProjectLabel}`}><span className="font-mono font-medium text-foreground sm:hidden">{formatDuration(slice.durationSeconds)} · </span>{slice.interval.project} <span className="mx-1 opacity-60">→</span> {mappedProjectLabel}</p>
-                        </div>
-                        <p className="hidden shrink-0 font-mono text-sm font-medium tabular-nums sm:block">{formatDuration(slice.durationSeconds)}</p>
-                        <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
-                      </button>
-                      <Button
-                        type="button"
-                        data-testid="ignore-agent-slice"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 shrink-0 rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:size-9"
-                        aria-label={`Do not import ${format(new Date(slice.start), "MMM d, h:mm a")} to ${format(new Date(slice.end), "h:mm a")}`}
-                        title="Do not import"
-                        onClick={() => ignoreAgentSlice(slice)}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                    {expanded && <div className="grid min-w-0 gap-3 border-t px-2.5 py-3 sm:px-3" data-testid="agent-source-details">
-                      {sourceConversations.length > 0 ? <>
-                        <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} />
-                        <div className="flex min-w-0 flex-wrap gap-1.5 text-[0.7rem]">
-                          <span className="rounded-full bg-muted px-2 py-0.5">Active <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span></span>
-                          {joinedGapSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Gaps <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></span>}
-                          <span className="rounded-full bg-muted px-2 py-0.5">{sourceConversations.length} {sourceConversations.length === 1 ? "chat" : "chats"}</span>
-                        </div>
-                      </> : <p className="text-xs text-muted-foreground">No chat details for this block. Update Agent Time and refresh.</p>}
-                    </div>}
-                  </div>
-                })}
-                {agentImportPreview.slices.length === 0 && <p className="rounded-xl border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">{agentImportPreview.unmappedProjects.length > 0 ? "Map the projects above to see importable time." : "Nothing new to import."}</p>}
-              </div>
-              {(agentImportPreview.skippedSeconds > 0 || agentImportPreview.ignoredSeconds > 0 || agentImportPreview.unmappedProjects.length > 0 || selectedPersonalIntervals > 0) && <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[0.7rem] text-muted-foreground">
-                {agentImportPreview.skippedSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Already tracked <span className="font-mono">{formatDuration(agentImportPreview.skippedSeconds)}</span></span>}
-                {agentImportPreview.ignoredSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Removed <span className="font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></span>}
-                {agentImportPreview.unmappedProjects.length > 0 && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-700 dark:text-amber-300">{agentImportPreview.unmappedProjects.length} unmapped</span>}
-                {selectedPersonalIntervals > 0 && <span className="rounded-full bg-muted px-2 py-0.5">{selectedPersonalIntervals} personal</span>}
-                {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-6 rounded-full px-2 text-[0.7rem]" onClick={restoreVisibleIgnoredAgentRanges}>Restore removed</Button>}
-              </div>}
-            </>}
-            {!agentTime && !agentTimeLoading && <p className="rounded-xl border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">Press Refresh to load Agent Time.</p>}
-          </div>
-          <DialogFooter className="mx-0 mb-0 min-w-0 border-t px-3 py-3 sm:rounded-b-lg sm:px-5"><Button variant="outline" className="rounded-full" onClick={() => setImportOpen(false)}>Cancel</Button><Button className="rounded-full" onClick={() => void importAgentTime()} disabled={!agentTime || agentTimeLoading || agentImportPreview.slices.length === 0}>Import {agentImportPreview.slices.length > 0 ? `${agentImportPreview.slices.length} ${agentImportPreview.slices.length === 1 ? "entry" : "entries"}` : ""}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
