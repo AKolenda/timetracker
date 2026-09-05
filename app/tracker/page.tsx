@@ -113,6 +113,7 @@ type AgentImportSlice = {
   durationSeconds: number
 }
 type AgentImportPlan = {
+  overlapReviewKey: string
   slices: AgentImportSlice[]
   skippedSeconds: number
   ignoredSeconds: number
@@ -475,6 +476,7 @@ function buildAgentImportPlan(
   const slices: AgentImportSlice[] = []
   const unmappedProjects = new Set<string>()
   let skippedSeconds = 0
+  const overlapReviewRanges: string[] = []
   let ignoredSeconds = 0
   let unmappedSeconds = 0
   let unmappedBlocks = 0
@@ -494,6 +496,9 @@ function buildAgentImportPlan(
 
     const occupied = occupiedByProject.get(projectId) ?? []
     const trackedGaps = subtractRanges({ start: sourceStart, end: sourceEnd }, occupied)
+    for (const overlap of subtractRanges({ start: sourceStart, end: sourceEnd }, trackedGaps)) {
+      overlapReviewRanges.push(`${projectId}:${overlap.start}:${overlap.end}`)
+    }
     const trackedUncoveredSeconds = trackedGaps.reduce(
       (total, gap) => total + Math.floor((gap.end - gap.start) / 1000),
       0
@@ -527,6 +532,7 @@ function buildAgentImportPlan(
 
   return {
     slices,
+    overlapReviewKey: JSON.stringify([...new Set(overlapReviewRanges)].sort()),
     skippedSeconds,
     ignoredSeconds,
     unmappedProjects: [...unmappedProjects].sort(),
@@ -652,6 +658,7 @@ export default function TrackerPage() {
   const [gapMinutes, setGapMinutes] = useState("15")
   const [appliedGapMinutes, setAppliedGapMinutes] = useState("15")
   const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
+  const [reviewedOverlapKey, setReviewedOverlapKey] = useState<string | null>(null)
   const [showHandledAgentProjects, setShowHandledAgentProjects] = useState(false)
   const [draftChat, setDraftChat] = useState<{ sliceId: string; source: ConversationSource } | null>(null)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
@@ -682,6 +689,11 @@ export default function TrackerPage() {
     const savedGap = savedDailyAgentGap(todayEntryDate)
     const savedIgnoredRanges = savedIgnoredAgentRanges()
     const id = window.setTimeout(() => {
+      try {
+        setReviewedOverlapKey(localStorage.getItem(agentPreferenceStorageKey("timetracker-reviewed-agent-overlaps")))
+      } catch {
+        // The notice can still be dismissed for this page when storage is unavailable.
+      }
       setGapMinutes(savedGap)
       setAppliedGapMinutes(savedGap)
       setIgnoredAgentRanges(savedIgnoredRanges)
@@ -736,6 +748,15 @@ export default function TrackerPage() {
     ),
     [agentTimeCutoff, availableAgentIntervals, data.timeEntries, data.activeTimers, ignoredAgentRanges, projectMappings]
   )
+  function dismissOverlapNotice() {
+    setReviewedOverlapKey(agentImportPreview.overlapReviewKey)
+    try {
+      localStorage.setItem(agentPreferenceStorageKey("timetracker-reviewed-agent-overlaps"), agentImportPreview.overlapReviewKey)
+    } catch {
+      // Keep the current dismissal even if browser storage is unavailable.
+    }
+  }
+
   const agentImportPreviewSeconds = agentImportPreview.slices.reduce(
     (total, slice) => total + slice.durationSeconds,
     0
@@ -1216,9 +1237,10 @@ export default function TrackerPage() {
           </div>
         </CardHeader>
         <CardContent className="pb-4">
-          {agentImportPreview.skippedSeconds > 0 && <p role="status" data-testid="agent-overlap-warning" className="mb-3 rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
-            {formatDuration(agentImportPreview.skippedSeconds)} of overlapping agent time excluded for the same customer / project. Saved entries, other agent drafts, and active timers are protected. Stop an active timer to review any remaining time.
-          </p>}
+          {agentImportPreview.skippedSeconds > 0 && reviewedOverlapKey !== agentImportPreview.overlapReviewKey && <div role="status" data-testid="agent-overlap-warning" className="mb-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
+            <p className="min-w-0 flex-1">{formatDuration(agentImportPreview.skippedSeconds)} of overlapping agent time excluded for the same customer / project. Saved entries, other agent drafts, and active timers are protected. Stop an active timer to review any remaining time.</p>
+            <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed overlap notice" title="Reviewed — dismiss notice" onClick={dismissOverlapNotice}><X className="size-4" /></Button>
+          </div>}
           {overlapIds.size > 0 && <p role="status" className="mb-3 text-sm text-red-700 dark:text-red-300">{overlapIds.size} saved {overlapIds.size === 1 ? "entry overlaps" : "entries overlap"} other time for the same customer / project. Review the red entries before billing.</p>}
           {agentTime && (unmappedAgentProjects.length > 0 || agentImportPreview.slices.length > 0 || agentImportPreview.ignoredSeconds > 0 || showHandledAgentProjects) && <div className="mb-3 grid min-w-0 gap-2" data-testid="agent-time-controls">
             {[...unmappedAgentProjects, ...(showHandledAgentProjects ? handledAgentProjects : [])].map((agentProject) => {

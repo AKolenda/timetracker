@@ -41,6 +41,10 @@ export function occupiedProjectRanges(
   ].filter((range) => Number.isFinite(range.start) && !Number.isNaN(range.end) && range.end > range.start)
 }
 
+// Ignore up to five minutes of overlap when warning about timer handoffs.
+// Import subtraction remains exact to avoid counting any tracked time twice.
+const OVERLAP_WARNING_TOLERANCE_MS = 5 * 60_000
+
 export function overlappingEntryIds(entries: TrackedRange[], timers: RunningRange[] = [], now = Date.now()): Set<string> {
   const conflicts = new Set<string>()
   for (const entry of entries) {
@@ -50,7 +54,7 @@ export function overlappingEntryIds(entries: TrackedRange[], timers: RunningRang
     const occupied = occupiedProjectRanges(entry.projectId, entries.filter((other) => other.id !== entry.id))
     occupied.push(...timers.filter((timer) => timer.projectId === entry.projectId)
       .map((timer) => ({ start: Date.parse(timer.startTime), end: now })))
-    if (occupied.some((range) => range.start < source.end && range.end > source.start && range.end > range.start)) conflicts.add(entry.id)
+    if (occupied.some((range) => Math.min(range.end, source.end) - Math.max(range.start, source.start) > OVERLAP_WARNING_TOLERANCE_MS)) conflicts.add(entry.id)
   }
   return conflicts
 }
