@@ -185,7 +185,7 @@ function SourceLogo({ source, agent, className = "size-6" }: { source: string; a
     return <Image src="/t3-code-logo.svg" alt="T3 Code" width={32} height={32} className={`shrink-0 rounded-md shadow-sm ${className}`} />
   }
   if (source === "Claude" || agent === "Claude" || agent === "Fable") {
-    return <span className={`grid shrink-0 place-items-center rounded-md bg-[#d97757] text-white shadow-sm ${className}`} aria-label="Claude logo"><svg viewBox="0 0 24 24" className="size-[72%]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7M8.2 3.4l7.6 17.2M20.6 8.2 3.4 15.8M15.8 3.4 8.2 20.6M3.4 8.2l17.2 7.6" /></svg></span>
+    return <span className={`grid shrink-0 place-items-center rounded-md bg-[#f0eee6] shadow-sm ${className}`} aria-label="Claude logo"><Image src="/claude-logo.svg" alt="" width={32} height={32} className="size-[72%]" /></span>
   }
   return <span className={`grid shrink-0 place-items-center rounded-md bg-emerald-600 text-white shadow-sm ${className}`} aria-label="ChatGPT logo"><svg viewBox="0 0 24 24" className="size-[76%]" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M11.217 19.384A3.501 3.501 0 0 0 18 18.167V13l-6-3.35" /><path d="M5.214 15.014A3.501 3.501 0 0 0 9.66 20.28L14 17.746V10.8" /><path d="M6 7.63c-1.391-.236-2.787.395-3.534 1.689a3.474 3.474 0 0 0 1.271 4.745L8 16.578l6-3.348" /><path d="M12.783 4.616A3.501 3.501 0 0 0 6 5.833V10.9l6 3.45" /><path d="M18.786 8.986A3.501 3.501 0 0 0 14.34 3.72L10 6.254V13.2" /><path d="M18 16.302c1.391.236 2.787-.395 3.534-1.689a3.474 3.474 0 0 0-1.271-4.745l-4.308-2.514L10 10.774" /></svg></span>
 }
@@ -254,6 +254,7 @@ function TimelinePreview({ sources, start, end }: { sources: ConversationSource[
                 aria-label={`Show ${conversation.conversationTitle || lane.label}`}
                 aria-pressed={pinned?.key === key}
                 onMouseEnter={(event) => { cancelClose(); setHover(targetFor(key, event.currentTarget)) }}
+                onMouseLeave={scheduleClose}
                 onFocus={(event) => { cancelClose(); setHover(targetFor(key, event.currentTarget)) }}
                 onBlur={scheduleClose}
                 onClick={(event) => { const target = targetFor(key, event.currentTarget); setPinned((current) => (current?.key === key ? null : target)) }}
@@ -1245,16 +1246,16 @@ export default function TrackerPage() {
           data-testid="agent-import-dialog"
           className="max-h-[calc(100dvh-2rem)] min-w-0 gap-0 overflow-x-hidden overflow-y-auto overscroll-contain p-0 sm:max-w-2xl"
         >
-          <DialogHeader className="border-b px-5 py-4">
+          <DialogHeader className="border-b px-4 py-3 sm:px-5 sm:py-4">
             <DialogTitle className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <span>Import Agent Time</span>
               {agentTime && agentImportPreview.slices.length > 0 && <span className="rounded-full bg-primary/10 px-2.5 py-0.5 font-mono text-xs font-medium text-primary">{formatDuration(agentImportPreviewSeconds)}</span>}
             </DialogTitle>
             <DialogDescription className="sr-only">Review Agent Time blocks and import the uncovered time as entries.</DialogDescription>
           </DialogHeader>
-          <div className="grid min-w-0 gap-4 px-5 py-4">
+          <div className="grid min-w-0 gap-3 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {agentTime && <Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger aria-label="Agent Time project" className="h-9 min-w-0 flex-1 basis-40 rounded-full"><SelectValue /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value="all">All projects · {availableAgentIntervals.length}</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select>}
+              {agentTime && <Select value={agentProjectFilter} onValueChange={setAgentProjectFilter}><SelectTrigger aria-label="Agent Time project" className="h-9 min-w-0 flex-1 basis-full rounded-full sm:basis-40"><SelectValue /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value="all">All projects · {availableAgentIntervals.length}</SelectItem>{[...new Set(availableAgentIntervals.map((interval) => interval.project))].map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select>}
               <div className="flex h-9 shrink-0 items-center rounded-full border bg-background pl-3 text-xs text-muted-foreground" title="Join gaps up to this many minutes">
                 <span>Gap</span>
                 <Input id="agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-8 w-12 border-0 bg-transparent px-1 text-center font-mono text-xs text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent" />
@@ -1265,7 +1266,7 @@ export default function TrackerPage() {
             </div>
             {agentTime && <>
               {(agentProjectsToShow.length > 0 || agentProjectVisibility.hidden.length > 0) && <div className="grid min-w-0 gap-2">
-                {agentProjectsToShow.map((agentProject) => <div key={agentProject} className="grid min-w-0 items-center gap-2 rounded-xl border bg-muted/20 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"><p className="min-w-0 truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger className="h-8 w-full min-w-0 max-w-full"><SelectValue placeholder="Choose client / project" /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
+                {agentProjectsToShow.map((agentProject) => <div key={agentProject} className="grid min-w-0 items-center gap-1.5 rounded-xl border bg-muted/20 px-2.5 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] sm:gap-2 sm:px-3"><p className="min-w-0 truncate text-sm font-medium" title={agentProject}>{agentProject}</p><Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}><SelectTrigger className="h-8 w-full min-w-0 max-w-full"><SelectValue placeholder="Choose client / project" /></SelectTrigger><SelectContent position="popper" className="max-w-[calc(100vw-2rem)]"><SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>{data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}</SelectContent></Select></div>)}
                 {agentProjectVisibility.hidden.length > 0 && <Button type="button" variant="ghost" size="sm" className="w-fit justify-self-start text-muted-foreground" onClick={() => setShowHiddenAgentProjects((current) => !current)}>{showHiddenAgentProjects ? "Hide handled" : `Show ${agentProjectVisibility.hidden.length} hidden`}</Button>}
               </div>}
               <div className="grid min-w-0 gap-2" data-testid="agent-import-review">
@@ -1285,16 +1286,16 @@ export default function TrackerPage() {
                     <div className="flex min-w-0 items-center gap-2 overflow-hidden rounded-t-xl pr-2">
                       <button
                         type="button"
-                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-3 text-left transition-colors hover:bg-muted/25 sm:gap-3"
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-muted/25 sm:gap-3 sm:px-3 sm:py-3"
                         aria-expanded={expanded}
                         onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}
                       >
-                        <div className="flex shrink-0 -space-x-2 sm:-space-x-1.5">
-                          {(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-6 ring-2 ring-background sm:size-7" />)}
+                        <div className="flex w-12 shrink-0 -space-x-1.5 sm:w-[4.5rem]">
+                          {(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-5 ring-2 ring-background sm:size-7" />)}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium leading-snug"><span className="text-muted-foreground">{format(new Date(slice.start), "MMM d")}</span> {format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>
-                          <p className="truncate text-xs text-muted-foreground" title={`${slice.interval.project} → ${mappedProjectLabel}`}><span className="font-mono font-medium text-foreground sm:hidden">{formatDuration(slice.durationSeconds)} · </span>{slice.interval.project} <span className="mx-1 opacity-60">→</span> {mappedProjectLabel}</p>
+                          <p className="truncate text-xs font-medium leading-snug sm:text-sm"><span className="text-muted-foreground">{format(new Date(slice.start), "MMM d")}</span> {format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</p>
+                          <p className="truncate text-[0.7rem] text-muted-foreground sm:text-xs" title={`${slice.interval.project} → ${mappedProjectLabel}`}><span className="font-mono font-medium text-foreground sm:hidden">{formatDuration(slice.durationSeconds)} · </span>{slice.interval.project} <span className="mx-1 opacity-60">→</span> {mappedProjectLabel}</p>
                         </div>
                         <p className="hidden shrink-0 font-mono text-sm font-medium tabular-nums sm:block">{formatDuration(slice.durationSeconds)}</p>
                         <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
@@ -1304,7 +1305,7 @@ export default function TrackerPage() {
                         data-testid="ignore-agent-slice"
                         variant="ghost"
                         size="icon"
-                        className="shrink-0 rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        className="size-8 shrink-0 rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:size-9"
                         aria-label={`Do not import ${format(new Date(slice.start), "MMM d, h:mm a")} to ${format(new Date(slice.end), "h:mm a")}`}
                         title="Do not import"
                         onClick={() => ignoreAgentSlice(slice)}
@@ -1312,7 +1313,7 @@ export default function TrackerPage() {
                         <Trash2 className="size-4" />
                       </Button>
                     </div>
-                    {expanded && <div className="grid min-w-0 gap-3 border-t px-3 py-3" data-testid="agent-source-details">
+                    {expanded && <div className="grid min-w-0 gap-3 border-t px-2.5 py-3 sm:px-3" data-testid="agent-source-details">
                       {sourceConversations.length > 0 ? <>
                         <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} />
                         <div className="flex min-w-0 flex-wrap gap-1.5 text-[0.7rem]">
@@ -1336,7 +1337,7 @@ export default function TrackerPage() {
             </>}
             {!agentTime && !agentTimeLoading && <p className="rounded-xl border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">Press Refresh to load Agent Time.</p>}
           </div>
-          <DialogFooter className="mx-0 mb-0 min-w-0 border-t px-5 py-3 sm:rounded-b-lg"><Button variant="outline" className="rounded-full" onClick={() => setImportOpen(false)}>Cancel</Button><Button className="rounded-full" onClick={() => void importAgentTime()} disabled={!agentTime || agentTimeLoading || agentImportPreview.slices.length === 0}>Import {agentImportPreview.slices.length > 0 ? `${agentImportPreview.slices.length} ${agentImportPreview.slices.length === 1 ? "entry" : "entries"}` : ""}</Button></DialogFooter>
+          <DialogFooter className="mx-0 mb-0 min-w-0 border-t px-3 py-3 sm:rounded-b-lg sm:px-5"><Button variant="outline" className="rounded-full" onClick={() => setImportOpen(false)}>Cancel</Button><Button className="rounded-full" onClick={() => void importAgentTime()} disabled={!agentTime || agentTimeLoading || agentImportPreview.slices.length === 0}>Import {agentImportPreview.slices.length > 0 ? `${agentImportPreview.slices.length} ${agentImportPreview.slices.length === 1 ? "entry" : "entries"}` : ""}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

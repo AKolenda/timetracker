@@ -166,19 +166,10 @@ function SourceLogo({
   if (label === "Claude") {
     return (
       <span
-        className={`grid shrink-0 place-items-center rounded-md bg-[#d97757] text-white shadow-sm ${className}`}
+        className={`grid shrink-0 place-items-center rounded-md bg-[#f0eee6] shadow-sm ${className}`}
         aria-label="Claude logo"
       >
-        <svg
-          viewBox="0 0 24 24"
-          className="size-[72%]"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        >
-          <path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7M8.2 3.4l7.6 17.2M20.6 8.2 3.4 15.8M15.8 3.4 8.2 20.6M3.4 8.2l17.2 7.6" />
-        </svg>
+        <Image src="/claude-logo.svg" alt="" width={32} height={32} className="size-[72%]" />
       </span>
     )
   }
@@ -664,6 +655,7 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
                         aria-label={`Show ${conversation.conversationTitle || `${label} coding session`}`}
                         aria-pressed={pinned?.key === conversation.key}
                         onMouseEnter={(event) => show(targetFromBar(conversation.key, event.currentTarget))}
+                        onMouseLeave={scheduleClose}
                         onFocus={(event) => show(targetFromBar(conversation.key, event.currentTarget))}
                         onBlur={scheduleClose}
                         onClick={(event) => { const target = targetFromBar(conversation.key, event.currentTarget); setPinned((current) => (current?.key === conversation.key ? null : target)) }}
