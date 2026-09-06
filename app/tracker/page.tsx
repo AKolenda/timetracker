@@ -661,6 +661,7 @@ export default function TrackerPage() {
   const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
   const [reviewedAgentOverlaps, setReviewedAgentOverlaps] = useState<string[]>([])
   const [reviewedEntryOverlaps, setReviewedEntryOverlaps] = useState<string[]>([])
+  const [reviewEntryOverlapsOpen, setReviewEntryOverlapsOpen] = useState(false)
   const [showHandledAgentProjects, setShowHandledAgentProjects] = useState(false)
   const [draftChat, setDraftChat] = useState<{ sliceId: string; source: ConversationSource } | null>(null)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
@@ -1261,7 +1262,7 @@ export default function TrackerPage() {
             </div>
           </details>}
           {(reviewedAgentOverlaps.length > 0 || reviewedEntryOverlaps.length > 0) && <Button type="button" variant="ghost" size="sm" className="mb-2" onClick={() => { saveOverlapReviews("agent", []); saveOverlapReviews("entry", []) }}>Show dismissed overlap notices</Button>}
-          {overlapIds.size > 0 && <p role="status" className="mb-3 text-sm text-red-700 dark:text-red-300">{overlapIds.size} saved {overlapIds.size === 1 ? "entry overlaps" : "entries overlap"} other time for the same customer / project. Review the red entries before billing.</p>}
+          {overlapIds.size > 0 && <button type="button" data-testid="review-saved-overlaps" onClick={() => setReviewEntryOverlapsOpen(true)} className="mb-3 block cursor-pointer text-left text-sm text-red-700 underline underline-offset-4 dark:text-red-300">Review {overlapIds.size} saved {overlapIds.size === 1 ? "entry with overlapping time" : "entries with overlapping time"}</button>}
           {agentTime && (unmappedAgentProjects.length > 0 || agentImportPreview.slices.length > 0 || agentImportPreview.ignoredSeconds > 0 || showHandledAgentProjects) && <div className="mb-3 grid min-w-0 gap-2" data-testid="agent-time-controls">
             {[...unmappedAgentProjects, ...(showHandledAgentProjects ? handledAgentProjects : [])].map((agentProject) => {
               const unmapped = unmappedAgentProjects.includes(agentProject)
@@ -1417,6 +1418,28 @@ export default function TrackerPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={reviewEntryOverlapsOpen} onOpenChange={setReviewEntryOverlapsOpen}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader><DialogTitle>Review saved-entry conflicts</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Dismiss a flag to keep the time entry and clear its warning, or edit its times to fix the overlap.</p>
+          {overlapIds.size === 0 ? <p data-testid="overlap-review-complete" className="py-4 text-sm">All saved-entry flags reviewed.</p> : <div className="grid gap-3">
+            {data.timeEntries.filter((entry) => overlapIds.has(entry.id)).map((entry) => {
+              const project = getProject(entry.projectId)
+              return <div key={entry.id} data-testid="saved-overlap-review-item" className="min-w-0 rounded-lg border p-3">
+                <p className="break-words font-medium">{entry.description || "Untitled"}</p>
+                <p className="break-words text-xs text-muted-foreground">{getClient(project?.clientId ?? "")?.name} · {project?.name ?? "Unknown project"}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{format(new Date(entry.startTime), "MMM d, yyyy h:mm a")} – {format(new Date(entry.endTime!), "MMM d, h:mm a")}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => { setReviewEntryOverlapsOpen(false); openEdit(entry) }}>Edit times</Button>
+                  <Button type="button" size="sm" data-testid="dismiss-saved-overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss flag</Button>
+                </div>
+              </div>
+            })}
+          </div>}
+          <DialogFooter><Button variant="outline" onClick={() => setReviewEntryOverlapsOpen(false)}>Done</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={addHoursOpen} onOpenChange={setAddHoursOpen}>
         <DialogContent>
