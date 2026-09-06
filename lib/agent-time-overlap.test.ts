@@ -75,3 +75,20 @@ test("applies the same five-minute warning tolerance to active timers", () => {
 test("still excludes small overlaps from imports despite the warning tolerance", () => {
   assert.deepEqual(subtractRanges({ start: minute(28), end: minute(60) }, occupiedProjectRanges("a", [entry("one", 0, 30)])), [{ start: minute(30), end: minute(60) }])
 })
+
+test("entry dismissals stay valid when unrelated entries change", async () => {
+  const { overlappingEntryReviewKeys } = await import("./agent-time-overlap.ts")
+  const entries = [entry("one", 0, 30), entry("two", 20, 60)]
+  const initial = overlappingEntryReviewKeys(entries)
+  const updated = overlappingEntryReviewKeys([...entries, entry("unrelated", 80, 90)])
+  assert.equal(initial.get("one"), updated.get("one"))
+  assert.notEqual(initial.get("one"), initial.get("two"))
+  assert.equal(initial.get("one"), overlappingEntryReviewKeys([...entries].reverse()).get("one"))
+})
+
+test("changing a conflicting entry invalidates its previous review", async () => {
+  const { overlappingEntryReviewKeys } = await import("./agent-time-overlap.ts")
+  const initial = overlappingEntryReviewKeys([entry("one", 0, 30), entry("two", 20, 60)])
+  assert.notEqual(initial.get("one"), overlappingEntryReviewKeys([entry("one", 0, 30), entry("two", 21, 60)]).get("one"))
+  assert.equal(overlappingEntryReviewKeys([entry("one", 0, 30), entry("two", 30, 60)]).size, 0)
+})

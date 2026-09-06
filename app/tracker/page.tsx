@@ -68,7 +68,7 @@ import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
-import { subtractRanges, occupiedProjectRanges, overlappingEntryIds, type TimeRange } from "@/lib/agent-time-overlap"
+import { subtractRanges, occupiedProjectRanges, overlappingEntryReviewKeys, type TimeRange } from "@/lib/agent-time-overlap"
 import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
@@ -113,7 +113,7 @@ type AgentImportSlice = {
   durationSeconds: number
 }
 type AgentImportPlan = {
-  overlapReviewKey: string
+  overlaps: { key: string; projectId: string; start: number; end: number }[]
   slices: AgentImportSlice[]
   skippedSeconds: number
   ignoredSeconds: number
@@ -476,7 +476,7 @@ function buildAgentImportPlan(
   const slices: AgentImportSlice[] = []
   const unmappedProjects = new Set<string>()
   let skippedSeconds = 0
-  const overlapReviewRanges: string[] = []
+  const overlapReviewRanges = new Map<string, { key: string; projectId: string; start: number; end: number }>()
   let ignoredSeconds = 0
   let unmappedSeconds = 0
   let unmappedBlocks = 0
@@ -497,7 +497,8 @@ function buildAgentImportPlan(
     const occupied = occupiedByProject.get(projectId) ?? []
     const trackedGaps = subtractRanges({ start: sourceStart, end: sourceEnd }, occupied)
     for (const overlap of subtractRanges({ start: sourceStart, end: sourceEnd }, trackedGaps)) {
-      overlapReviewRanges.push(`${projectId}:${overlap.start}:${overlap.end}`)
+      const key = `${projectId}:${overlap.start}:${overlap.end}`
+      overlapReviewRanges.set(key, { key, projectId, ...overlap })
     }
     const trackedUncoveredSeconds = trackedGaps.reduce(
       (total, gap) => total + Math.floor((gap.end - gap.start) / 1000),
@@ -532,7 +533,7 @@ function buildAgentImportPlan(
 
   return {
     slices,
-    overlapReviewKey: JSON.stringify([...new Set(overlapReviewRanges)].sort()),
+    overlaps: [...overlapReviewRanges.values()],
     skippedSeconds,
     ignoredSeconds,
     unmappedProjects: [...unmappedProjects].sort(),
@@ -658,7 +659,8 @@ export default function TrackerPage() {
   const [gapMinutes, setGapMinutes] = useState("15")
   const [appliedGapMinutes, setAppliedGapMinutes] = useState("15")
   const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
-  const [reviewedOverlapKey, setReviewedOverlapKey] = useState<string | null>(null)
+  const [reviewedAgentOverlaps, setReviewedAgentOverlaps] = useState<string[]>([])
+  const [reviewedEntryOverlaps, setReviewedEntryOverlaps] = useState<string[]>([])
   const [showHandledAgentProjects, setShowHandledAgentProjects] = useState(false)
   const [draftChat, setDraftChat] = useState<{ sliceId: string; source: ConversationSource } | null>(null)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
@@ -690,7 +692,12 @@ export default function TrackerPage() {
     const savedIgnoredRanges = savedIgnoredAgentRanges()
     const id = window.setTimeout(() => {
       try {
-        setReviewedOverlapKey(localStorage.getItem(agentPreferenceStorageKey("timetracker-reviewed-agent-overlaps")))
+        const readReviews = (key: string): string[] => {
+          const value: unknown = JSON.parse(localStorage.getItem(agentPreferenceStorageKey(key)) || "[]")
+          return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+        }
+        setReviewedAgentOverlaps(readReviews("timetracker-reviewed-agent-overlaps"))
+        setReviewedEntryOverlaps(readReviews("timetracker-reviewed-entry-overlaps"))
       } catch {
         // The notice can still be dismissed for this page when storage is unavailable.
       }
@@ -748,14 +755,16 @@ export default function TrackerPage() {
     ),
     [agentTimeCutoff, availableAgentIntervals, data.timeEntries, data.activeTimers, ignoredAgentRanges, projectMappings]
   )
-  function dismissOverlapNotice() {
-    setReviewedOverlapKey(agentImportPreview.overlapReviewKey)
+  function saveOverlapReviews(kind: "agent" | "entry", keys: string[]) {
+    if (kind === "agent") setReviewedAgentOverlaps(keys)
+    else setReviewedEntryOverlaps(keys)
     try {
-      localStorage.setItem(agentPreferenceStorageKey("timetracker-reviewed-agent-overlaps"), agentImportPreview.overlapReviewKey)
+      localStorage.setItem(agentPreferenceStorageKey(`timetracker-reviewed-${kind}-overlaps`), JSON.stringify(keys))
     } catch {
-      // Keep the current dismissal even if browser storage is unavailable.
+      // Reviews still apply for this page when browser storage is unavailable.
     }
   }
+  const pendingAgentOverlaps = agentImportPreview.overlaps.filter((overlap) => !reviewedAgentOverlaps.includes(overlap.key))
 
   const agentImportPreviewSeconds = agentImportPreview.slices.reduce(
     (total, slice) => total + slice.durationSeconds,
@@ -820,7 +829,8 @@ export default function TrackerPage() {
     importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
   }, [data.timeEntries])
   const [importing, setImporting] = useState(false)
-  const overlapIds = overlappingEntryIds(data.timeEntries, data.activeTimers)
+  const entryOverlapKeys = overlappingEntryReviewKeys(data.timeEntries, data.activeTimers)
+  const overlapIds = new Set([...entryOverlapKeys].filter(([, key]) => !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
 
   async function importDraftEntries(entries: Omit<TimeEntry, "id">[]) {
     if (importInFlight.current) return false
@@ -1237,10 +1247,20 @@ export default function TrackerPage() {
           </div>
         </CardHeader>
         <CardContent className="pb-4">
-          {agentImportPreview.skippedSeconds > 0 && reviewedOverlapKey !== agentImportPreview.overlapReviewKey && <div role="status" data-testid="agent-overlap-warning" className="mb-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
-            <p className="min-w-0 flex-1">{formatDuration(agentImportPreview.skippedSeconds)} of overlapping agent time excluded for the same customer / project. Saved entries, other agent drafts, and active timers are protected. Stop an active timer to review any remaining time.</p>
-            <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed overlap notice" title="Reviewed — dismiss notice" onClick={dismissOverlapNotice}><X className="size-4" /></Button>
-          </div>}
+          {pendingAgentOverlaps.length > 0 && <details data-testid="agent-overlap-warning" className="mb-3 rounded-lg border p-3 text-sm">
+            <summary className="cursor-pointer text-muted-foreground">{pendingAgentOverlaps.length} excluded agent time {pendingAgentOverlaps.length === 1 ? "block" : "blocks"} to review</summary>
+            <p className="my-2 text-xs text-muted-foreground">This time was already covered and was not imported. Review and dismiss each item; duplicate import protection stays on.</p>
+            <div className="grid gap-2">
+              {pendingAgentOverlaps.map((overlap) => {
+                const project = getProject(overlap.projectId)
+                return <div key={overlap.key} data-testid="agent-overlap-item" className="flex min-w-0 items-start gap-2 rounded-md bg-muted/30 p-2">
+                  <div className="min-w-0 flex-1 break-words"><p>{project ? `${getClient(project.clientId)?.name ?? ""} — ${project.name}` : "Unknown project"}</p><p className="text-xs text-muted-foreground">{format(new Date(overlap.start), "MMM d, yyyy h:mm a")} – {format(new Date(overlap.end), "MMM d, h:mm a")} · {formatDuration(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
+                  <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed agent overlap" title="Reviewed — dismiss this item" onClick={() => saveOverlapReviews("agent", [...reviewedAgentOverlaps, overlap.key])}><X className="size-4" /></Button>
+                </div>
+              })}
+            </div>
+          </details>}
+          {(reviewedAgentOverlaps.length > 0 || reviewedEntryOverlaps.length > 0) && <Button type="button" variant="ghost" size="sm" className="mb-2" onClick={() => { saveOverlapReviews("agent", []); saveOverlapReviews("entry", []) }}>Show dismissed overlap notices</Button>}
           {overlapIds.size > 0 && <p role="status" className="mb-3 text-sm text-red-700 dark:text-red-300">{overlapIds.size} saved {overlapIds.size === 1 ? "entry overlaps" : "entries overlap"} other time for the same customer / project. Review the red entries before billing.</p>}
           {agentTime && (unmappedAgentProjects.length > 0 || agentImportPreview.slices.length > 0 || agentImportPreview.ignoredSeconds > 0 || showHandledAgentProjects) && <div className="mb-3 grid min-w-0 gap-2" data-testid="agent-time-controls">
             {[...unmappedAgentProjects, ...(showHandledAgentProjects ? handledAgentProjects : [])].map((agentProject) => {
@@ -1364,7 +1384,14 @@ export default function TrackerPage() {
                   <TableCell className="font-medium whitespace-normal break-words">
                     <span className="block">{entry.description || "Untitled"}</span>
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
-                    {overlapIds.has(entry.id) && <span data-testid="entry-overlap-warning" className="mt-1 block text-xs text-red-700 dark:text-red-300">Overlapping time — same customer / project. Edit or delete to resolve.</span>}
+                    {overlapIds.has(entry.id) && <div data-testid="entry-overlap-warning" className="mt-1 text-xs text-red-700 dark:text-red-300">
+                      <p>Overlapping time — same customer / project.</p>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(entry)}>Edit times</Button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setDeleteTarget(entry)}>Delete entry</Button>
+                        <Button type="button" variant="ghost" size="sm" aria-label="Dismiss reviewed entry overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss</Button>
+                      </div>
+                    </div>}
                     <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span> · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                   </TableCell>
                   <TableCell className="hidden whitespace-normal sm:table-cell">

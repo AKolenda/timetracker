@@ -45,16 +45,24 @@ export function occupiedProjectRanges(
 // Import subtraction remains exact to avoid counting any tracked time twice.
 const OVERLAP_WARNING_TOLERANCE_MS = 5 * 60_000
 
-export function overlappingEntryIds(entries: TrackedRange[], timers: RunningRange[] = [], now = Date.now()): Set<string> {
-  const conflicts = new Set<string>()
+/** Stable per-entry review keys change only when that entry or its conflicts change. */
+export function overlappingEntryReviewKeys(entries: TrackedRange[], timers: RunningRange[] = [], now = Date.now()): Map<string, string> {
+  const reviews = new Map<string, string>()
   for (const entry of entries) {
-    if (!entry.endTime) continue // Hours-only entries have no known interval.
-    const source = { start: Date.parse(entry.startTime), end: Date.parse(entry.endTime) }
-    if (!Number.isFinite(source.start) || !Number.isFinite(source.end) || source.end <= source.start) continue
-    const occupied = occupiedProjectRanges(entry.projectId, entries.filter((other) => other.id !== entry.id))
-    occupied.push(...timers.filter((timer) => timer.projectId === entry.projectId)
-      .map((timer) => ({ start: Date.parse(timer.startTime), end: now })))
-    if (occupied.some((range) => Math.min(range.end, source.end) - Math.max(range.start, source.start) > OVERLAP_WARNING_TOLERANCE_MS)) conflicts.add(entry.id)
+    if (!entry.endTime) continue
+    const start = Date.parse(entry.startTime)
+    const end = Date.parse(entry.endTime)
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue
+    const conflicts = [
+      ...entries.filter((other) => other.id !== entry.id && other.projectId === entry.projectId && other.endTime),
+      ...timers.filter((timer) => timer.projectId === entry.projectId).map((timer) => ({ ...timer, endTime: null })),
+    ].filter((other) => Math.min(other.endTime ? Date.parse(other.endTime) : now, end) - Math.max(Date.parse(other.startTime), start) > OVERLAP_WARNING_TOLERANCE_MS)
+      .map((other) => [other.id, other.startTime, other.endTime]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    if (conflicts.length) reviews.set(entry.id, JSON.stringify([entry.id, entry.projectId, entry.startTime, entry.endTime, conflicts]))
   }
-  return conflicts
+  return reviews
+}
+
+export function overlappingEntryIds(entries: TrackedRange[], timers: RunningRange[] = [], now = Date.now()): Set<string> {
+  return new Set(overlappingEntryReviewKeys(entries, timers, now).keys())
 }
