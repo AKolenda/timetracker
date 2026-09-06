@@ -1,0 +1,11 @@
+[Unit]
+Description=Check TimeTracker master for updates every minute
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+Unit=timetracker-update.service
+
+[Install]
+WantedBy=timers.target

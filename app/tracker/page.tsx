@@ -64,6 +64,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { TrackerReviewDialog } from "@/components/tracker-review-dialog"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
@@ -611,6 +612,14 @@ function TodayTotal({
   )
 }
 
+function ImportProjectPicker({ value, onChange, choices }: { value: string; onChange: (value: string) => void; choices: { value: string; label: string }[] }) {
+  const [open, setOpen] = useState(false)
+  return <Popover open={open} onOpenChange={setOpen}>
+    <PopoverTrigger asChild><Button variant="outline" role="combobox" aria-expanded={open} className="w-full min-w-0 justify-between"><span className="truncate">{choices.find((choice) => choice.value === value)?.label ?? "Choose client / project"}</span><ChevronsUpDown className="ml-2 size-4 shrink-0" /></Button></PopoverTrigger>
+    <PopoverContent className="w-[min(24rem,calc(100vw-3rem))] p-1" align="start"><Command><CommandInput placeholder="Search clients and projects…" /><CommandList><CommandEmpty>No matching projects.</CommandEmpty><CommandGroup>{choices.map((choice) => <CommandItem key={choice.value} value={choice.value + " " + choice.label} onSelect={() => { onChange(choice.value); setOpen(false) }}><Check className={`size-4 ${choice.value === value ? "opacity-100" : "opacity-0"}`} /><span className="min-w-0 break-words">{choice.label}</span></CommandItem>)}</CommandGroup></CommandList></Command></PopoverContent>
+  </Popover>
+}
+
 export default function TrackerPage() {
   const {
     data,
@@ -662,7 +671,9 @@ export default function TrackerPage() {
   const [reviewedAgentOverlaps, setReviewedAgentOverlaps] = useState<string[]>([])
   const [reviewedEntryOverlaps, setReviewedEntryOverlaps] = useState<string[]>([])
   const [reviewEntryOverlapsOpen, setReviewEntryOverlapsOpen] = useState(false)
-  const [showHandledAgentProjects, setShowHandledAgentProjects] = useState(false)
+  const [reviewAgentOverlapsOpen, setReviewAgentOverlapsOpen] = useState(false)
+  const [projectsOpen, setProjectsOpen] = useState(false)
+  const [importSettingsOpen, setImportSettingsOpen] = useState(false)
   const [draftChat, setDraftChat] = useState<{ sliceId: string; source: ConversationSource } | null>(null)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
   const requestedSummaries = useRef(new Set<string>())
@@ -1248,49 +1259,12 @@ export default function TrackerPage() {
           </div>
         </CardHeader>
         <CardContent className="pb-4">
-          {pendingAgentOverlaps.length > 0 && <details data-testid="agent-overlap-warning" className="mb-3 rounded-lg border p-3 text-sm">
-            <summary className="cursor-pointer text-muted-foreground">{pendingAgentOverlaps.length} excluded agent time {pendingAgentOverlaps.length === 1 ? "block" : "blocks"} to review</summary>
-            <p className="my-2 text-xs text-muted-foreground">This time was already covered and was not imported. Review and dismiss each item; duplicate import protection stays on.</p>
-            <div className="grid gap-2">
-              {pendingAgentOverlaps.map((overlap) => {
-                const project = getProject(overlap.projectId)
-                return <div key={overlap.key} data-testid="agent-overlap-item" className="flex min-w-0 items-start gap-2 rounded-md bg-muted/30 p-2">
-                  <div className="min-w-0 flex-1 break-words"><p>{project ? `${getClient(project.clientId)?.name ?? ""} — ${project.name}` : "Unknown project"}</p><p className="text-xs text-muted-foreground">{format(new Date(overlap.start), "MMM d, yyyy h:mm a")} – {format(new Date(overlap.end), "MMM d, h:mm a")} · {formatDuration(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
-                  <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed agent overlap" title="Reviewed — dismiss this item" onClick={() => saveOverlapReviews("agent", [...reviewedAgentOverlaps, overlap.key])}><X className="size-4" /></Button>
-                </div>
-              })}
-            </div>
-          </details>}
-          {(reviewedAgentOverlaps.length > 0 || reviewedEntryOverlaps.length > 0) && <Button type="button" variant="ghost" size="sm" className="mb-2" onClick={() => { saveOverlapReviews("agent", []); saveOverlapReviews("entry", []) }}>Show dismissed overlap notices</Button>}
-          {overlapIds.size > 0 && <button type="button" data-testid="review-saved-overlaps" onClick={() => setReviewEntryOverlapsOpen(true)} className="mb-3 block cursor-pointer text-left text-sm text-red-700 underline underline-offset-4 dark:text-red-300">Review {overlapIds.size} saved {overlapIds.size === 1 ? "entry with overlapping time" : "entries with overlapping time"}</button>}
-          {agentTime && (unmappedAgentProjects.length > 0 || agentImportPreview.slices.length > 0 || agentImportPreview.ignoredSeconds > 0 || showHandledAgentProjects) && <div className="mb-3 grid min-w-0 gap-2" data-testid="agent-time-controls">
-            {[...unmappedAgentProjects, ...(showHandledAgentProjects ? handledAgentProjects : [])].map((agentProject) => {
-              const unmapped = unmappedAgentProjects.includes(agentProject)
-              return <div key={agentProject} className={`grid min-w-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] sm:gap-2 ${unmapped ? "border-amber-500/40 bg-amber-500/5" : "bg-muted/20"}`}>
-                <p className="min-w-0 truncate text-sm" title={agentProject}>{agentProject}</p>
-                <Select value={projectMappings[agentProject] ?? ""} onValueChange={(projectId) => saveProjectMapping(agentProject, projectId)}>
-                  <SelectTrigger className="h-8 w-full min-w-0 max-w-full"><SelectValue placeholder="Choose client / project" /></SelectTrigger>
-                  <SelectContent position="popper" className="max-w-[calc(100vw-2rem)]">
-                    <SelectItem value={PERSONAL_AGENT_PROJECT}>Personal — don&apos;t import</SelectItem>
-                    {data.projects.map((project) => <SelectItem key={project.id} value={project.id}>{getClient(project.clientId)?.name ? `${getClient(project.clientId)?.name} — ${project.name}` : project.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            })}
-            <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <div className="flex h-8 items-center rounded-full border bg-background pl-3" title="Join gaps up to this many minutes">
-                <span>Gap</span>
-                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center font-mono text-xs text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent" />
-                <span className="pr-3">min</span>
-              </div>
-              <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8 rounded-full" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
-              {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE
-                ? <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
-                : <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
-              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></Button>}
-              {handledAgentProjects.length > 0 && <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={() => setShowHandledAgentProjects((current) => !current)}>{showHandledAgentProjects ? "Hide projects" : "Projects"}</Button>}
-            </div>
-          </div>}
+          <div data-testid="agent-time-controls" className="mb-3 flex min-w-0 flex-wrap items-center gap-1 border-b pb-3">
+            <Button type="button" variant="ghost" size="sm" data-testid="review-saved-overlaps" onClick={() => setReviewEntryOverlapsOpen(true)}>Saved conflicts{overlapIds.size > 0 && <span className="ml-1 rounded bg-muted px-1.5 text-xs tabular-nums">{overlapIds.size}</span>}</Button>
+            <Button type="button" variant="ghost" size="sm" data-testid="review-agent-overlaps" onClick={() => setReviewAgentOverlapsOpen(true)}>Excluded time</Button>
+            <Button type="button" variant="ghost" size="sm" data-testid="review-agent-projects" onClick={() => setProjectsOpen(true)}>Projects</Button>
+            <Button type="button" variant="ghost" size="sm" data-testid="import-settings" onClick={() => setImportSettingsOpen(true)}>Import settings</Button>
+          </div>
           {logRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No time entries yet</p>
           ) : (
@@ -1385,14 +1359,7 @@ export default function TrackerPage() {
                   <TableCell className="font-medium whitespace-normal break-words">
                     <span className="block">{entry.description || "Untitled"}</span>
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
-                    {overlapIds.has(entry.id) && <div data-testid="entry-overlap-warning" className="mt-1 text-xs text-red-700 dark:text-red-300">
-                      <p>Overlapping time — same customer / project.</p>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(entry)}>Edit times</Button>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => setDeleteTarget(entry)}>Delete entry</Button>
-                        <Button type="button" variant="ghost" size="sm" aria-label="Dismiss reviewed entry overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss</Button>
-                      </div>
-                    </div>}
+                    {overlapIds.has(entry.id) && <button type="button" className="mt-1 block cursor-pointer text-xs text-red-700 underline underline-offset-4 dark:text-red-300" onClick={() => setReviewEntryOverlapsOpen(true)}>Review overlap</button>}
                     <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span> · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                   </TableCell>
                   <TableCell className="hidden whitespace-normal sm:table-cell">
@@ -1419,25 +1386,54 @@ export default function TrackerPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={reviewEntryOverlapsOpen} onOpenChange={setReviewEntryOverlapsOpen}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader><DialogTitle>Review saved-entry conflicts</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Dismiss a flag to keep the time entry and clear its warning, or edit its times to fix the overlap.</p>
-          {overlapIds.size === 0 ? <p data-testid="overlap-review-complete" className="py-4 text-sm">All saved-entry flags reviewed.</p> : <div className="grid gap-3">
-            {data.timeEntries.filter((entry) => overlapIds.has(entry.id)).map((entry) => {
-              const project = getProject(entry.projectId)
-              return <div key={entry.id} data-testid="saved-overlap-review-item" className="min-w-0 rounded-lg border p-3">
-                <p className="break-words font-medium">{entry.description || "Untitled"}</p>
-                <p className="break-words text-xs text-muted-foreground">{getClient(project?.clientId ?? "")?.name} · {project?.name ?? "Unknown project"}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{format(new Date(entry.startTime), "MMM d, yyyy h:mm a")} – {format(new Date(entry.endTime!), "MMM d, h:mm a")}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => { setReviewEntryOverlapsOpen(false); openEdit(entry) }}>Edit times</Button>
-                  <Button type="button" size="sm" data-testid="dismiss-saved-overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss flag</Button>
-                </div>
+      <TrackerReviewDialog open={reviewEntryOverlapsOpen} onOpenChange={setReviewEntryOverlapsOpen} title="Saved conflicts" description="Keep the entry and dismiss its flag, or edit the times to resolve the overlap." emptyText="All saved-entry flags reviewed."
+        actions={reviewedEntryOverlaps.length > 0 && <Button variant="ghost" size="sm" onClick={() => saveOverlapReviews("entry", [])}>Show dismissed flags</Button>}
+        items={data.timeEntries.filter((entry) => overlapIds.has(entry.id)).map((entry) => {
+          const project = getProject(entry.projectId)
+          const client = getClient(project?.clientId ?? "")
+          const timeLabel = `${format(new Date(entry.startTime), "MMM d, yyyy h:mm a")} – ${format(new Date(entry.endTime!), "MMM d, h:mm a")}`
+          return { id: entry.id, searchText: `${entry.description} ${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="saved-overlap-review-item">
+            <p className="break-words font-medium">{entry.description || "Untitled"}</p>
+            <p className="break-words text-xs text-muted-foreground">{client?.name} / {project?.name ?? "Unknown project"}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{timeLabel}</p>
+            <div className="mt-2 flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => { setReviewEntryOverlapsOpen(false); openEdit(entry) }}>Edit times</Button><Button type="button" variant="ghost" size="sm" data-testid="dismiss-saved-overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss flag</Button></div>
+          </div> }
+        })}
+      />
+      <TrackerReviewDialog open={reviewAgentOverlapsOpen} onOpenChange={setReviewAgentOverlapsOpen} title="Excluded time" description="Already covered time is kept out of imports. Review these blocks at your own pace." emptyText="All excluded time reviewed."
+        actions={<>{pendingAgentOverlaps.length > 0 && <Button variant="outline" size="sm" onClick={() => saveOverlapReviews("agent", [...new Set([...reviewedAgentOverlaps, ...pendingAgentOverlaps.map((item) => item.key)])])}>Dismiss all reviewed</Button>}{reviewedAgentOverlaps.length > 0 && <Button variant="ghost" size="sm" onClick={() => saveOverlapReviews("agent", [])}>Show dismissed blocks</Button>}</>}
+        items={pendingAgentOverlaps.map((overlap) => {
+          const project = getProject(overlap.projectId)
+          const client = getClient(project?.clientId ?? "")
+          const timeLabel = `${format(new Date(overlap.start), "MMM d, yyyy h:mm a")} – ${format(new Date(overlap.end), "MMM d, h:mm a")}`
+          return { id: overlap.key, searchText: `${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="agent-overlap-item" className="flex min-w-0 items-start gap-2">
+            <div className="min-w-0 flex-1"><p className="break-words font-medium">{project?.name ?? "Unknown project"}</p><p className="text-xs text-muted-foreground">{client?.name}</p><p className="mt-1 text-xs text-muted-foreground">{timeLabel}</p><p className="mt-1 text-xs tabular-nums">{formatDuration(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
+            <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed agent overlap" onClick={() => saveOverlapReviews("agent", [...reviewedAgentOverlaps, overlap.key])}><X className="size-4" /></Button>
+          </div> }
+        })}
+      />
+      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Import projects" description="Choose where each desktop project belongs. Personal projects stay out of imports." emptyText="No desktop projects to map."
+        items={[...unmappedAgentProjects, ...handledAgentProjects].map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+          <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
+          <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={[{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]} />
+        </div> }))}
+      />
+      <Dialog open={importSettingsOpen} onOpenChange={setImportSettingsOpen}>
+        <DialogContent><DialogHeader><DialogTitle>Import settings</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Adjust gap grouping and the period included in your review.</p>
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex h-8 items-center rounded-full border bg-background pl-3" title="Join gaps up to this many minutes">
+                <span>Gap</span>
+                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center font-mono text-xs text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent" />
+                <span className="pr-3">min</span>
               </div>
-            })}
-          </div>}
-          <DialogFooter><Button variant="outline" onClick={() => setReviewEntryOverlapsOpen(false)}>Done</Button></DialogFooter>
+              <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8 rounded-full" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
+              {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE
+                ? <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
+                : <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
+              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></Button>}
+            </div>
+          <DialogFooter><Button variant="outline" onClick={() => setImportSettingsOpen(false)}>Done</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
