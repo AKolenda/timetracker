@@ -66,6 +66,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
+import { InvoiceEstimates } from "@/components/invoice-estimates"
+import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
 import { PageHeader } from "@/components/page-header"
 import { applyEmailTemplateVariables } from "@/lib/email-template"
 import { useStore } from "@/lib/store"
@@ -193,12 +195,15 @@ export default function InvoicesPage() {
     [selectedClientId, getProjectsByClient]
   )
 
+  const invoiceEstimates = useMemo(() => buildInvoiceEstimates(data), [data])
+
   const unbilledEntries = useMemo(() => {
+    const billed = invoicedSourceIds(data.invoices, "time")
     const entries: (TimeEntry & { projectName: string; rate: number })[] = []
     for (const project of clientProjects) {
       const projectEntries = getTimeEntriesByProject(project.id)
       for (const entry of projectEntries) {
-        if (entry.billable) {
+        if (entry.billable && !billed.has(entry.id)) {
           entries.push({
             ...entry,
             projectName: project.name,
@@ -210,14 +215,15 @@ export default function InvoicesPage() {
     return entries.sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     )
-  }, [clientProjects, getTimeEntriesByProject])
+  }, [clientProjects, getTimeEntriesByProject, data.invoices])
 
   const unbilledExpenses = useMemo(() => {
+    const billed = invoicedSourceIds(data.invoices, "expense")
     const expenses: (Expense & { projectName: string })[] = []
     for (const project of clientProjects) {
       const projectExpenses = getExpensesByProject(project.id)
       for (const expense of projectExpenses) {
-        if (!expense.invoiced) {
+        if (!expense.invoiced && !billed.has(expense.id)) {
           expenses.push({ ...expense, projectName: project.name })
         }
       }
@@ -225,7 +231,7 @@ export default function InvoicesPage() {
     return expenses.sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     )
-  }, [clientProjects, getExpensesByProject])
+  }, [clientProjects, getExpensesByProject, data.invoices])
 
   function openCreate() {
     const configuredDueDays = Number(data.settings.defaultInvoiceDueDays)
@@ -538,6 +544,8 @@ export default function InvoicesPage() {
           </Button>
         }
       />
+
+      <InvoiceEstimates estimates={invoiceEstimates} />
 
       <div className="mb-5 max-w-md">
         <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" placeholder="Search invoice number, client, or status" /></div>
