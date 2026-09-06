@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 const PAGE_SIZE = 6
 
-export function TrackerReviewDialog({ open, onOpenChange, title, description, items, emptyText, actions }: {
+export function TrackerReviewDialog({ open, onOpenChange, title, description, items, emptyText, actions, onCloseAutoFocus }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
@@ -15,6 +15,7 @@ export function TrackerReviewDialog({ open, onOpenChange, title, description, it
   items: { id: string; searchText: string; content: ReactNode }[]
   emptyText: string
   actions?: ReactNode
+  onCloseAutoFocus?: (event: Event) => void
 }) {
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(0)
@@ -22,7 +23,7 @@ export function TrackerReviewDialog({ open, onOpenChange, title, description, it
   const lastPage = Math.max(0, Math.ceil(filtered.length / PAGE_SIZE) - 1)
   const currentPage = Math.min(page, lastPage)
   return <Dialog open={open} onOpenChange={(value) => { onOpenChange(value); if (!value) { setQuery(""); setPage(0) } }}>
-    <DialogContent className="flex max-h-[85dvh] flex-col gap-3 overflow-hidden sm:max-w-2xl">
+    <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex max-h-[85dvh] flex-col gap-3 overflow-hidden sm:max-w-2xl">
       <DialogHeader className="pr-8"><DialogTitle>{title}</DialogTitle><DialogDescription className="max-w-prose">{description}</DialogDescription></DialogHeader>
       <Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Search by project, client, or date…" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} className="shrink-0" />
       {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}

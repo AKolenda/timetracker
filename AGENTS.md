@@ -13,3 +13,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 Before pushing any change intended for production, run a mobile viewport test at a phone-sized width (390px or equivalent). Confirm that the key changed screen renders, has no horizontal overflow, and has no browser console errors. Do not push until this verification has passed; report any limitation, such as missing local credentials or data, before requesting release approval.
 
 For tracker controls, use the seeded fixture instead of a blank or personal-data screen: run `pnpm test:mobile:fixture`, open `/tracker?fixture=mobile` at a 390px viewport, and verify the description, project picker, billable control, start button, and an active timer are all visible and usable. The project picker must open and expose its search field. Record the viewport width, the absence of horizontal overflow, and any console errors before pushing.
+
+## Tracker visual conventions
+
+Use the shared small-button corner radius (rounded-md) for tracker controls and compact labels, matching the Approve button. Avoid pill-shaped boxes. Hide native number-input spinner arrows while retaining editable numeric fields and visible keyboard focus. Keep review and project-management lists in searchable, paginated modals rather than expanding the time log.

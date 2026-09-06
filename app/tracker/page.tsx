@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import Image from "next/image"
 import {
+  ArrowUpRight,
   Play,
   Pause,
   Square,
@@ -69,7 +70,7 @@ import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
-import { subtractRanges, occupiedProjectRanges, overlappingEntryReviewKeys, type TimeRange } from "@/lib/agent-time-overlap"
+import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRange } from "@/lib/agent-time-overlap"
 import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
@@ -328,7 +329,7 @@ function TimelinePreview({ sources, start, end, onOpenChat }: { sources: Convers
     <div className="relative grid min-w-0 gap-1.5" ref={containerRef}>
       {lanes.map((lane) => <div key={lane.key} className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
         <SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-6" />
-        <div className="relative h-6 min-w-0 overflow-hidden rounded-full bg-muted/40" aria-label={`${lane.label} activity lane`}>
+        <div className="relative h-6 min-w-0 overflow-hidden rounded-md bg-muted/40" aria-label={`${lane.label} activity lane`}>
           {lane.conversations.flatMap((conversation) => {
             const key = conversationKey(conversation, sources.indexOf(conversation))
             const isActive = active?.key === key
@@ -339,7 +340,7 @@ function TimelinePreview({ sources, start, end, onOpenChat }: { sources: Convers
               return <button
                 type="button"
                 key={`${key}-${span.start}-${spanIndex}`}
-                className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-full transition-[opacity,box-shadow] ${lane.bar} ${isSelectedRun ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : isActive ? "z-10 ring-1 ring-foreground/70 ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""} ${isActive && pinned && selectedRun !== null && !isSelectedRun ? "opacity-50" : ""}`}
+                className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-md transition-[opacity,box-shadow] ${lane.bar} ${isSelectedRun ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : isActive ? "z-10 ring-1 ring-foreground/70 ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""} ${isActive && pinned && selectedRun !== null && !isSelectedRun ? "opacity-50" : ""}`}
                 style={{ left: `${left}%`, width: `${width}%` }}
                 aria-label={`Show ${conversation.conversationTitle || lane.label}`}
                 aria-pressed={pinned?.key === key}
@@ -360,8 +361,8 @@ function TimelinePreview({ sources, start, end, onOpenChat }: { sources: Convers
       </div>)}
       {gaps.length > 0 && <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
         <span className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-[0.5rem] font-bold text-muted-foreground" aria-label="Joined gap">GAP</span>
-        <div className="relative h-6 min-w-0 overflow-hidden rounded-full bg-muted/20" aria-label="Joined gap filler lane">
-          {gaps.map((gap, gapIndex) => <span key={`${gap.start}-${gap.end}-${gapIndex}`} className="absolute inset-y-1 min-w-[3px] cursor-help rounded-full" style={{ left: `${((gap.start - start) / duration) * 100}%`, width: `${((gap.end - gap.start) / duration) * 100}%`, backgroundImage: "repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in oklab, var(--muted-foreground) 35%, transparent) 4px 6px)" }} title={`Joined gap · ${format(new Date(gap.start), "h:mm:ss a")}–${format(new Date(gap.end), "h:mm:ss a")} · ${formatDuration(Math.floor((gap.end - gap.start) / 1000))}`} />)}
+        <div className="relative h-6 min-w-0 overflow-hidden rounded-md bg-muted/20" aria-label="Joined gap filler lane">
+          {gaps.map((gap, gapIndex) => <span key={`${gap.start}-${gap.end}-${gapIndex}`} className="absolute inset-y-1 min-w-[3px] cursor-help rounded-md" style={{ left: `${((gap.start - start) / duration) * 100}%`, width: `${((gap.end - gap.start) / duration) * 100}%`, backgroundImage: "repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in oklab, var(--muted-foreground) 35%, transparent) 4px 6px)" }} title={`Joined gap · ${format(new Date(gap.start), "h:mm:ss a")}–${format(new Date(gap.end), "h:mm:ss a")} · ${formatDuration(Math.floor((gap.end - gap.start) / 1000))}`} />)}
         </div>
       </div>}
       <div className="flex min-w-0 justify-between pl-8 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
@@ -671,6 +672,13 @@ export default function TrackerPage() {
   const [reviewedAgentOverlaps, setReviewedAgentOverlaps] = useState<string[]>([])
   const [reviewedEntryOverlaps, setReviewedEntryOverlaps] = useState<string[]>([])
   const [reviewEntryOverlapsOpen, setReviewEntryOverlapsOpen] = useState(false)
+  const jumpToEntry = useRef<string | null>(null)
+  const [highlightedEntry, setHighlightedEntry] = useState<string | null>(null)
+  useEffect(() => {
+    if (!highlightedEntry) return
+    const timeout = window.setTimeout(() => setHighlightedEntry(null), 4500)
+    return () => window.clearTimeout(timeout)
+  }, [highlightedEntry])
   const [reviewAgentOverlapsOpen, setReviewAgentOverlapsOpen] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [importSettingsOpen, setImportSettingsOpen] = useState(false)
@@ -841,7 +849,8 @@ export default function TrackerPage() {
     importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
   }, [data.timeEntries])
   const [importing, setImporting] = useState(false)
-  const entryOverlapKeys = overlappingEntryReviewKeys(data.timeEntries, data.activeTimers)
+  const overlapDetails = entryOverlapDetails(data.timeEntries, data.activeTimers)
+  const entryOverlapKeys = new Map([...overlapDetails].map(([id, details]) => [id, details.reviewKey]))
   const overlapIds = new Set([...entryOverlapKeys].filter(([, key]) => !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
 
   async function importDraftEntries(entries: Omit<TimeEntry, "id">[]) {
@@ -1324,8 +1333,8 @@ export default function TrackerPage() {
                         {sourceConversations.length > 0 ? <>
                           <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} onOpenChat={(source) => setDraftChat({ sliceId: slice.id, source })} />
                           <div className="flex min-w-0 flex-wrap gap-1.5 text-[0.7rem]">
-                            <span className="rounded-full bg-muted px-2 py-0.5">Active <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span></span>
-                            {joinedGapSeconds > 0 && <span className="rounded-full bg-muted px-2 py-0.5">Gaps <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></span>}
+                            <span className="rounded-md bg-muted px-2 py-0.5">Active <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span></span>
+                            {joinedGapSeconds > 0 && <span className="rounded-md bg-muted px-2 py-0.5">Gaps <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></span>}
                           </div>
                           <div className="grid min-w-0 gap-1">
                             {sourceConversations.map((source, sourceIndex) => {
@@ -1355,7 +1364,7 @@ export default function TrackerPage() {
                 const amount = entry.billable && project ? (entry.duration / 3600) * project.rate : 0
                 return <Fragment key={entry.id}>
                   {dayHeader}
-                  <TableRow className={overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
+                  <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} aria-label={entry.description || "Untitled time entry"} className={highlightedEntry === entry.id ? "bg-amber-500/15 outline-2 -outline-offset-2 outline-amber-500" : overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
                   <TableCell className="font-medium whitespace-normal break-words">
                     <span className="block">{entry.description || "Untitled"}</span>
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
@@ -1386,14 +1395,28 @@ export default function TrackerPage() {
         </CardContent>
       </Card>
 
-      <TrackerReviewDialog open={reviewEntryOverlapsOpen} onOpenChange={setReviewEntryOverlapsOpen} title="Saved conflicts" description="Keep the entry and dismiss its flag, or edit the times to resolve the overlap." emptyText="All saved-entry flags reviewed."
+      <TrackerReviewDialog open={reviewEntryOverlapsOpen} onOpenChange={setReviewEntryOverlapsOpen} onCloseAutoFocus={(event) => {
+        if (!jumpToEntry.current) return
+        event.preventDefault()
+        const id = jumpToEntry.current
+        jumpToEntry.current = null
+        window.requestAnimationFrame(() => {
+          const row = document.getElementById(`time-entry-${id}`)
+          row?.focus({ preventScroll: true })
+          row?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "center" })
+        })
+      }} title="Saved conflicts" description="Keep the entry and dismiss its flag, or edit the times to resolve the overlap." emptyText="All saved-entry flags reviewed."
         actions={reviewedEntryOverlaps.length > 0 && <Button variant="ghost" size="sm" onClick={() => saveOverlapReviews("entry", [])}>Show dismissed flags</Button>}
         items={data.timeEntries.filter((entry) => overlapIds.has(entry.id)).map((entry) => {
           const project = getProject(entry.projectId)
           const client = getClient(project?.clientId ?? "")
           const timeLabel = `${format(new Date(entry.startTime), "MMM d, yyyy h:mm a")} – ${format(new Date(entry.endTime!), "MMM d, h:mm a")}`
           return { id: entry.id, searchText: `${entry.description} ${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="saved-overlap-review-item">
-            <p className="break-words font-medium">{entry.description || "Untitled"}</p>
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 break-words font-medium">{entry.description || "Untitled"}</p>
+              <Button type="button" variant="ghost" size="icon-sm" data-testid="find-conflict-in-log" aria-label="Find entry in time log" title="Find in time log" onClick={() => { jumpToEntry.current = entry.id; setHighlightedEntry(entry.id); setReviewEntryOverlapsOpen(false) }}><ArrowUpRight className="size-4" /></Button>
+            </div>
+            <p data-testid="overlap-minutes" className="mb-1 text-sm font-medium tabular-nums text-red-700 dark:text-red-300">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format((overlapDetails.get(entry.id)?.overlapMilliseconds ?? 0) / 60_000)} min overlapping</p>
             <p className="break-words text-xs text-muted-foreground">{client?.name} / {project?.name ?? "Unknown project"}</p>
             <p className="mt-1 text-xs text-muted-foreground">{timeLabel}</p>
             <div className="mt-2 flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => { setReviewEntryOverlapsOpen(false); openEdit(entry) }}>Edit times</Button><Button type="button" variant="ghost" size="sm" data-testid="dismiss-saved-overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss flag</Button></div>
@@ -1422,16 +1445,16 @@ export default function TrackerPage() {
         <DialogContent><DialogHeader><DialogTitle>Import settings</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">Adjust gap grouping and the period included in your review.</p>
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <div className="flex h-8 items-center rounded-full border bg-background pl-3" title="Join gaps up to this many minutes">
+              <div className="flex h-8 items-center rounded-md border bg-background pl-3 focus-within:ring-2 focus-within:ring-ring" title="Join gaps up to this many minutes">
                 <span>Gap</span>
-                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center font-mono text-xs text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent" />
+                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center text-xs tabular-nums text-foreground shadow-none [appearance:textfield] focus-visible:ring-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none dark:bg-transparent" />
                 <span className="pr-3">min</span>
               </div>
-              <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8 rounded-full" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
+              <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
               {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE
-                ? <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
-                : <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
-              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8 rounded-full" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></Button>}
+                ? <Button type="button" variant="ghost" size="sm" className="h-8" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
+                : <Button type="button" variant="ghost" size="sm" className="h-8" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
+              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></Button>}
             </div>
           <DialogFooter><Button variant="outline" onClick={() => setImportSettingsOpen(false)}>Done</Button></DialogFooter>
         </DialogContent>

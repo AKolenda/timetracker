@@ -92,3 +92,17 @@ test("changing a conflicting entry invalidates its previous review", async () =>
   assert.notEqual(initial.get("one"), overlappingEntryReviewKeys([entry("one", 0, 30), entry("two", 21, 60)]).get("one"))
   assert.equal(overlappingEntryReviewKeys([entry("one", 0, 30), entry("two", 30, 60)]).size, 0)
 })
+
+test("reports actual overlapping minutes and counts intersecting conflicts once", async () => {
+  const { entryOverlapDetails } = await import("./agent-time-overlap.ts")
+  const details = entryOverlapDetails([entry("one", 0, 60), entry("two", 10, 30), entry("three", 20, 40)])
+  assert.equal(details.get("one")?.overlapMilliseconds, minute(30))
+  assert.equal(details.get("two")?.overlapMilliseconds, minute(20))
+})
+
+test("clips active overlap to now and saved-entry boundaries", async () => {
+  const { entryOverlapDetails } = await import("./agent-time-overlap.ts")
+  const timer = { id: "timer", projectId: "a", startTime: at(20) }
+  assert.equal(entryOverlapDetails([entry("one", 10, 40)], [timer], minute(28.5)).get("one")?.overlapMilliseconds, minute(8.5))
+  assert.equal(entryOverlapDetails([entry("one", 10, 40)], [timer], minute(50)).get("one")?.overlapMilliseconds, minute(20))
+})
