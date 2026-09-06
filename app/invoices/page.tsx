@@ -19,7 +19,7 @@ import { toast } from "sonner"
 import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -66,7 +66,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
-import { InvoiceEstimates } from "@/components/invoice-estimates"
+import { InvoiceEstimateRow, InvoiceEstimatePreview } from "@/components/invoice-estimates"
 import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
 import { PageHeader } from "@/components/page-header"
 import { applyEmailTemplateVariables } from "@/lib/email-template"
@@ -171,6 +171,7 @@ export default function InvoicesPage() {
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [search, setSearch] = useState("")
+  const [estimateId, setEstimateId] = useState<string | null>(null)
 
   const [selectedClientId, setSelectedClientId] = useState("")
   const [taxRate, setTaxRate] = useState("0")
@@ -528,30 +529,29 @@ export default function InvoicesPage() {
     })
   }, [sortedInvoices, search, getClient])
 
+  const filteredEstimates = invoiceEstimates.filter((estimate) => `${estimate.clientName} ${estimate.currency} invoice preview`.toLowerCase().includes(search.trim().toLowerCase()))
+
   return (
     <>
       <PageHeader
         title="Invoices"
         description="Generate and manage client invoices"
-        actions={
-          <Button
-            size="sm"
-            onClick={openCreate}
-            disabled={data.clients.length === 0}
-          >
-            <Plus className="size-4" data-icon="inline-start" />
-            New Invoice
-          </Button>
-        }
       />
 
-      <InvoiceEstimates estimates={invoiceEstimates} />
-
+      <Card data-testid="invoice-section">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="text-sm font-medium">Invoice Log</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            {filteredEstimates.length > 0 && <Button size="sm" data-testid="review-invoice-previews" className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300" onClick={() => setEstimateId(filteredEstimates[0].id)}><Eye className="size-3.5" />Review {filteredEstimates.length} {filteredEstimates.length === 1 ? "preview" : "previews"}</Button>}
+            <Button size="sm" variant="outline" onClick={openCreate} disabled={data.clients.length === 0}><Plus className="size-3.5" />New Invoice</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
       <div className="mb-5 max-w-md">
         <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" placeholder="Search invoice number, client, or status" /></div>
       </div>
 
-      {filteredInvoices.length === 0 ? (
+      {filteredInvoices.length === 0 && filteredEstimates.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
@@ -575,7 +575,7 @@ export default function InvoicesPage() {
       ) : (
         <>
           {/* Desktop table */}
-          <Card className="hidden md:block">
+          <div className="hidden overflow-hidden rounded-md border md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -589,6 +589,7 @@ export default function InvoicesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+              {filteredEstimates.map((estimate) => <InvoiceEstimateRow key={estimate.id} estimate={estimate} onReview={() => setEstimateId(estimate.id)} />)}
               {filteredInvoices.map((inv) => {
                   const client = getClient(inv.clientId)
                   return (
@@ -694,10 +695,11 @@ export default function InvoicesPage() {
                 })}
               </TableBody>
             </Table>
-          </Card>
+          </div>
 
           {/* Mobile cards */}
           <div className="space-y-3 md:hidden">
+            {filteredEstimates.map((estimate) => <InvoiceEstimateRow key={estimate.id} estimate={estimate} onReview={() => setEstimateId(estimate.id)} mobile />)}
             {filteredInvoices.map((inv) => {
               const client = getClient(inv.clientId)
               return (
@@ -799,6 +801,10 @@ export default function InvoicesPage() {
           </div>
         </>
       )}
+
+        </CardContent>
+      </Card>
+      <InvoiceEstimatePreview selected={invoiceEstimates.find((estimate) => estimate.id === estimateId)} onClose={() => setEstimateId(null)} />
 
       {/* Create Invoice Dialog — full-width responsive */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
