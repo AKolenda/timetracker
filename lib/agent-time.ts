@@ -122,7 +122,9 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
 }
 
 /** Reads Agent Time's server-side local-network endpoint. The URL is deliberately not client-configurable. */
-export async function fetchAgentTime(): Promise<AgentTimePayload> {
+export async function fetchAgentTime(dbHosts: string[] = []): Promise<AgentTimePayload> {
+  const allUrls = [...new Set([...AGENT_TIME_URLS, ...dbHosts])]
+
   const payloads = await Promise.all(
     AGENT_TIME_URLS.map(async (url) => {
       try {

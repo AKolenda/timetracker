@@ -29,10 +29,7 @@ import {
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency } from "@/lib/format"
-import {
-  getBrowserTimezone,
-  listTimezones,
-} from "@/lib/datetime"
+import { getBrowserTimezone, listTimezones } from "@/lib/datetime"
 
 const CURRENCIES = [
   { value: "USD", label: "USD — United States Dollar" },
@@ -60,12 +57,20 @@ export default function SettingsPage() {
   useEffect(() => {
     fetch("/api/set-resend-key")
       .then((r) => r.json())
-      .then((d) => setResendStatus({ configured: !!d.configured, masked: d.masked ?? null }))
+      .then((d) =>
+        setResendStatus({
+          configured: !!d.configured,
+          masked: d.masked ?? null,
+        })
+      )
       .catch(() => {})
   }, [])
 
   async function handleSendTest() {
-    if (!testEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail.trim())) {
+    if (
+      !testEmail.trim() ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail.trim())
+    ) {
       toast.error("Enter a valid recipient email")
       return
     }
@@ -76,7 +81,10 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: testEmail.trim(),
-          from: form.emailFromAddress || form.businessEmail || "invoices@resend.dev",
+          from:
+            form.emailFromAddress ||
+            form.businessEmail ||
+            "invoices@resend.dev",
           template: {
             subject: form.emailSubject,
             greeting: form.emailGreeting,
@@ -128,7 +136,8 @@ export default function SettingsPage() {
         nextInvoiceNumber: form.nextInvoiceNumber,
         timezone: form.timezone,
         defaultInvoiceDueDays: form.defaultInvoiceDueDays,
-        displayCurrency: form.displayCurrency === "none" ? "" : form.displayCurrency,
+        displayCurrency:
+          form.displayCurrency === "none" ? "" : form.displayCurrency,
       })
       toast.success("Settings saved")
     } catch {
@@ -168,7 +177,10 @@ export default function SettingsPage() {
       toast.success("Resend API key saved")
       setResendKey("")
       const status = await fetch("/api/set-resend-key").then((r) => r.json())
-      setResendStatus({ configured: !!status.configured, masked: status.masked ?? null })
+      setResendStatus({
+        configured: !!status.configured,
+        masked: status.masked ?? null,
+      })
     } catch {
       toast.error("Failed to save API key")
     } finally {
@@ -203,174 +215,176 @@ export default function SettingsPage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="grid gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">
-              Your Information
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="biz-name">Name / Business Name</Label>
-              <Input
-                id="biz-name"
-                value={form.businessName}
-                onChange={(e) =>
-                  setForm({ ...form, businessName: e.target.value })
-                }
-                placeholder="John Doe or Acme LLC"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="biz-email">Email</Label>
-              <Input
-                id="biz-email"
-                type="email"
-                value={form.businessEmail}
-                onChange={(e) =>
-                  setForm({ ...form, businessEmail: e.target.value })
-                }
-                placeholder="you@example.com"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="biz-phone">Phone</Label>
-              <Input
-                id="biz-phone"
-                value={form.businessPhone}
-                onChange={(e) =>
-                  setForm({ ...form, businessPhone: e.target.value })
-                }
-                placeholder="+1 (555) 000-0000"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="biz-address">Address</Label>
-              <Textarea
-                id="biz-address"
-                value={form.businessAddress}
-                onChange={(e) =>
-                  setForm({ ...form, businessAddress: e.target.value })
-                }
-                placeholder="123 Main St&#10;City, State ZIP"
-                rows={3}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="timezone">Timezone</Label>
-              <Select
-                value={form.timezone || getBrowserTimezone()}
-                onValueChange={(v) => setForm({ ...form, timezone: v })}
-              >
-                <SelectTrigger id="timezone">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="max-h-[300px]">
-                  {listTimezones().map((tz) => (
-                    <SelectItem key={tz} value={tz}>
-                      {tz}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Used to date your time entries correctly. Detected browser timezone:{" "}
-                <code className="font-mono">{getBrowserTimezone()}</code>.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">
+                Your Information
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="biz-name">Name / Business Name</Label>
+                <Input
+                  id="biz-name"
+                  value={form.businessName}
+                  onChange={(e) =>
+                    setForm({ ...form, businessName: e.target.value })
+                  }
+                  placeholder="John Doe or Acme LLC"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="biz-email">Email</Label>
+                <Input
+                  id="biz-email"
+                  type="email"
+                  value={form.businessEmail}
+                  onChange={(e) =>
+                    setForm({ ...form, businessEmail: e.target.value })
+                  }
+                  placeholder="you@example.com"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="biz-phone">Phone</Label>
+                <Input
+                  id="biz-phone"
+                  value={form.businessPhone}
+                  onChange={(e) =>
+                    setForm({ ...form, businessPhone: e.target.value })
+                  }
+                  placeholder="+1 (555) 000-0000"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="biz-address">Address</Label>
+                <Textarea
+                  id="biz-address"
+                  value={form.businessAddress}
+                  onChange={(e) =>
+                    setForm({ ...form, businessAddress: e.target.value })
+                  }
+                  placeholder="123 Main St&#10;City, State ZIP"
+                  rows={3}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="timezone">Timezone</Label>
+                <Select
+                  value={form.timezone || getBrowserTimezone()}
+                  onValueChange={(v) => setForm({ ...form, timezone: v })}
+                >
+                  <SelectTrigger id="timezone">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {listTimezones().map((tz) => (
+                      <SelectItem key={tz} value={tz}>
+                        {tz}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Used to date your time entries correctly. Detected browser
+                  timezone:{" "}
+                  <code className="font-mono">{getBrowserTimezone()}</code>.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">
-              Remittance Information
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              This information appears on your invoices so clients know how to pay you
-            </p>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">
+                Remittance Information
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                This information appears on your invoices so clients know how to
+                pay you
+              </p>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="rem-first">First Name</Label>
+                  <Input
+                    id="rem-first"
+                    value={form.remittanceFirstName}
+                    onChange={(e) =>
+                      setForm({ ...form, remittanceFirstName: e.target.value })
+                    }
+                    placeholder="John"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="rem-last">Last Name</Label>
+                  <Input
+                    id="rem-last"
+                    value={form.remittanceLastName}
+                    onChange={(e) =>
+                      setForm({ ...form, remittanceLastName: e.target.value })
+                    }
+                    placeholder="Doe"
+                  />
+                </div>
+              </div>
+              <Separator />
               <div className="grid gap-2">
-                <Label htmlFor="rem-first">First Name</Label>
+                <Label htmlFor="rem-bank">Bank Name</Label>
                 <Input
-                  id="rem-first"
-                  value={form.remittanceFirstName}
+                  id="rem-bank"
+                  value={form.remittanceBankName}
                   onChange={(e) =>
-                    setForm({ ...form, remittanceFirstName: e.target.value })
+                    setForm({ ...form, remittanceBankName: e.target.value })
                   }
-                  placeholder="John"
+                  placeholder="Chase Bank"
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="rem-last">Last Name</Label>
-                <Input
-                  id="rem-last"
-                  value={form.remittanceLastName}
-                  onChange={(e) =>
-                    setForm({ ...form, remittanceLastName: e.target.value })
-                  }
-                  placeholder="Doe"
-                />
-              </div>
-            </div>
-            <Separator />
-            <div className="grid gap-2">
-              <Label htmlFor="rem-bank">Bank Name</Label>
-              <Input
-                id="rem-bank"
-                value={form.remittanceBankName}
-                onChange={(e) =>
-                  setForm({ ...form, remittanceBankName: e.target.value })
-                }
-                placeholder="Chase Bank"
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="rem-routing">Routing Number</Label>
-                <Input
-                  id="rem-routing"
-                  value={form.remittanceRoutingNumber}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      remittanceRoutingNumber: e.target.value,
-                    })
-                  }
-                  placeholder="021000021"
-                />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="rem-routing">Routing Number</Label>
+                  <Input
+                    id="rem-routing"
+                    value={form.remittanceRoutingNumber}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        remittanceRoutingNumber: e.target.value,
+                      })
+                    }
+                    placeholder="021000021"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="rem-account">Account Number</Label>
+                  <Input
+                    id="rem-account"
+                    value={form.remittanceAccountNumber}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        remittanceAccountNumber: e.target.value,
+                      })
+                    }
+                    placeholder="123456789"
+                  />
+                </div>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="rem-account">Account Number</Label>
-                <Input
-                  id="rem-account"
-                  value={form.remittanceAccountNumber}
+                <Label htmlFor="rem-notes">Additional Notes</Label>
+                <Textarea
+                  id="rem-notes"
+                  value={form.remittanceNotes}
                   onChange={(e) =>
-                    setForm({
-                      ...form,
-                      remittanceAccountNumber: e.target.value,
-                    })
+                    setForm({ ...form, remittanceNotes: e.target.value })
                   }
-                  placeholder="123456789"
+                  placeholder="Wire transfer instructions, Zelle info, etc."
+                  rows={3}
                 />
               </div>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="rem-notes">Additional Notes</Label>
-              <Textarea
-                id="rem-notes"
-                value={form.remittanceNotes}
-                onChange={(e) =>
-                  setForm({ ...form, remittanceNotes: e.target.value })
-                }
-                placeholder="Wire transfer instructions, Zelle info, etc."
-                rows={3}
-              />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid gap-6">
@@ -448,8 +462,7 @@ export default function SettingsPage() {
                     onChange={(e) =>
                       setForm({
                         ...form,
-                        defaultInvoiceDueDays:
-                          parseInt(e.target.value) || 0,
+                        defaultInvoiceDueDays: parseInt(e.target.value) || 0,
                       })
                     }
                     className="w-20 font-mono"
@@ -459,14 +472,17 @@ export default function SettingsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Default due-date offset when creating a new invoice. <code className="font-mono">0</code> = due on receipt.
+                  Default due-date offset when creating a new invoice.{" "}
+                  <code className="font-mono">0</code> = due on receipt.
                 </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="display-currency">Display Currency</Label>
                 <Select
                   value={form.displayCurrency || ""}
-                  onValueChange={(v) => setForm({ ...form, displayCurrency: v })}
+                  onValueChange={(v) =>
+                    setForm({ ...form, displayCurrency: v })
+                  }
                 >
                   <SelectTrigger id="display-currency">
                     <SelectValue placeholder="None (show USD only)" />
@@ -481,7 +497,8 @@ export default function SettingsPage() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Show a converted total alongside USD on dashboard &amp; reports. Rate refreshes daily from frankfurter.app.
+                  Show a converted total alongside USD on dashboard &amp;
+                  reports. Rate refreshes daily from frankfurter.app.
                 </p>
               </div>
               <Separator />
@@ -549,7 +566,10 @@ export default function SettingsPage() {
                     </Button>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="resend-key" className="text-xs text-muted-foreground">
+                    <Label
+                      htmlFor="resend-key"
+                      className="text-xs text-muted-foreground"
+                    >
                       Replace key
                     </Label>
                     <div className="flex gap-2">
@@ -595,7 +615,8 @@ export default function SettingsPage() {
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                Your API key is stored server-side as an environment variable and never exposed to the browser.
+                Your API key is stored server-side as an environment variable
+                and never exposed to the browser.
               </p>
               {resendStatus.configured && (
                 <>
@@ -621,7 +642,8 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Sends a sample invoice using your saved Email Format settings.
+                      Sends a sample invoice using your saved Email Format
+                      settings.
                     </p>
                   </div>
                 </>
@@ -637,8 +659,8 @@ export default function SettingsPage() {
                     Email Format
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Customize the subject, greeting, and signature.
-                    Variables: <code className="font-mono">{"{{invoiceNumber}}"}</code>{" "}
+                    Customize the subject, greeting, and signature. Variables:{" "}
+                    <code className="font-mono">{"{{invoiceNumber}}"}</code>{" "}
                     <code className="font-mono">{"{{businessName}}"}</code>{" "}
                     <code className="font-mono">{"{{clientName}}"}</code>{" "}
                     <code className="font-mono">{"{{total}}"}</code>{" "}
@@ -663,7 +685,8 @@ export default function SettingsPage() {
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Must be on a domain you&apos;ve verified in Resend. Falls back to your business email.
+                  Must be on a domain you&apos;ve verified in Resend. Falls back
+                  to your business email.
                 </p>
               </div>
               <div className="grid gap-2">
@@ -725,8 +748,40 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
-        </div>
 
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">
+                Agent Time Integrations
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="agent-time">API Nodes (one per line)</Label>
+                <Textarea
+                  id="agent-time"
+                  placeholder="http://10.40.40.10:8080/api/data"
+                  value={(form.agentTimeHosts || []).join("\n")}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      agentTimeHosts: e.target.value
+                        .split("\n")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  className="min-h-[100px]"
+                />
+                <p className="text-sm text-muted-foreground">
+                  TimeTracker will merge overlapping imports if you provide URLs
+                  for multiple Agent Time network endpoints running on different
+                  workstations or VMs.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Payout Threshold Dialog */}
@@ -761,7 +816,9 @@ export default function SettingsPage() {
               <div className="flex items-baseline justify-between gap-3">
                 <Label htmlFor="payout-amount">Minimum Payout Amount</Label>
                 <div className="flex items-baseline">
-                  <span className="font-mono text-2xl font-bold text-muted-foreground">$</span>
+                  <span className="font-mono text-2xl font-bold text-muted-foreground">
+                    $
+                  </span>
                   <Input
                     id="payout-amount"
                     type="number"
@@ -793,8 +850,12 @@ export default function SettingsPage() {
                 </div>
               </div>
               <Slider
-                value={[Math.min(10000, Math.max(50, form.payoutMinAmount || 50))]}
-                onValueChange={([v]) => setForm({ ...form, payoutMinAmount: v })}
+                value={[
+                  Math.min(10000, Math.max(50, form.payoutMinAmount || 50)),
+                ]}
+                onValueChange={([v]) =>
+                  setForm({ ...form, payoutMinAmount: v })
+                }
                 min={50}
                 max={10000}
                 step={50}
@@ -829,7 +890,7 @@ export default function SettingsPage() {
 
       {/* Email Preview Dialog — full PDF-size */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto p-0">
+        <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto p-0 sm:max-w-4xl">
           <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-3">
             <DialogTitle>Invoice Email Preview</DialogTitle>
           </div>
@@ -845,7 +906,7 @@ export default function SettingsPage() {
                 <p className="text-sm text-gray-500">{form.businessPhone}</p>
               )}
               {form.businessAddress && (
-                <p className="mt-1 whitespace-pre-line text-sm text-gray-500">
+                <p className="mt-1 text-sm whitespace-pre-line text-gray-500">
                   {form.businessAddress}
                 </p>
               )}
@@ -853,7 +914,7 @@ export default function SettingsPage() {
 
             <div className="mt-8 flex justify-between">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-gray-400">
+                <p className="text-xs font-medium tracking-wider text-gray-400 uppercase">
                   Bill To
                 </p>
                 <p className="mt-2 text-lg font-semibold">Client Name</p>
@@ -861,7 +922,8 @@ export default function SettingsPage() {
               </div>
               <div className="text-right">
                 <p className="font-mono text-3xl font-bold">
-                  {form.invoicePrefix}{form.nextInvoiceNumber}
+                  {form.invoicePrefix}
+                  {form.nextInvoiceNumber}
                 </p>
                 <p className="mt-2 text-sm text-gray-500">
                   Issued: May 8, 2026
@@ -874,16 +936,16 @@ export default function SettingsPage() {
             <table className="mt-8 w-full border-collapse">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  <th className="border-b-2 border-gray-200 px-4 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">
                     Description
                   </th>
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                     Qty
                   </th>
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                     Rate
                   </th>
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                     Amount
                   </th>
                 </tr>
@@ -934,7 +996,7 @@ export default function SettingsPage() {
               </tbody>
             </table>
 
-            <div className="ml-auto mt-6 w-72">
+            <div className="mt-6 ml-auto w-72">
               <div className="flex justify-between py-2 text-sm">
                 <span className="text-gray-500">Subtotal</span>
                 <span className="font-mono">$1,289.99</span>
@@ -951,7 +1013,7 @@ export default function SettingsPage() {
 
             {(form.remittanceFirstName || form.remittanceBankName) && (
               <div className="mt-8 rounded-lg border-2 border-dashed border-gray-300 p-5">
-                <p className="mb-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                <p className="mb-3 text-[11px] font-bold tracking-wider text-gray-500 uppercase">
                   Remittance Information
                 </p>
                 {(form.remittanceFirstName || form.remittanceLastName) && (
@@ -983,7 +1045,7 @@ export default function SettingsPage() {
                   </p>
                 )}
                 {form.remittanceNotes && (
-                  <p className="mt-2 whitespace-pre-line text-xs text-gray-500">
+                  <p className="mt-2 text-xs whitespace-pre-line text-gray-500">
                     {form.remittanceNotes}
                   </p>
                 )}

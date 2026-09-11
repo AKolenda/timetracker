@@ -82,6 +82,7 @@ export interface Settings {
   timezone: string
   defaultInvoiceDueDays: number
   displayCurrency: string
+  agentTimeHosts?: string[]
 }
 
 export interface Invoice {
