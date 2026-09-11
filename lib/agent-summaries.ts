@@ -24,7 +24,12 @@ const CODEX_EFFORT = process.env.AGENT_SUMMARY_CODEX_EFFORT || "low"
 const CLAUDE_CLI_MODEL = process.env.AGENT_SUMMARY_CLAUDE_MODEL || "claude-sonnet-5"
 const API_MODEL = process.env.AGENT_SUMMARY_API_MODEL || "claude-opus-5"
 
-const INSTRUCTIONS = `You write one-line descriptions for time entries on a client invoice.\n- Identify the feature or product change worked on (subject and outcome).\n- Ignore incidental artifacts: never name meeting transcripts, Google Meet codes, file paths, subagents, or raw tools.\n- Do not copy or truncate raw user messages.\n- Use 3 to 8 words in sentence case with no trailing period (e.g. "Build Mosaic offer calculator").`
+const INSTRUCTIONS = `You write one-line descriptions for time entries on a client invoice.
+- Provide a high-level, client-friendly summary of the value delivered (e.g. "Improve user experience" or "Clean up final stages").
+- Avoid overly technical details, file names, subagents, tools, or specific component names like 'pipeline editor' or 'input styling'.
+- Ignore incidental artifacts: never name meeting transcripts or Google Meet codes.
+- Do not copy raw user messages.
+- Use 3 to 8 words in sentence case with no trailing period.`
 
 /** Runs a CLI with stdin closed; Codex otherwise waits for more input from the pipe. */
 function run(command: string, args: string[]) {
