@@ -4,7 +4,12 @@ export const DEFAULT_AGENT_TIME_GAP_MINUTES = 15
 
 // The Agent Time desktop service is intentionally private to the local network.
 // Deployments may override this, but the VM can work without any cloud configuration.
-const AGENT_TIME_URL = process.env.AGENT_TIME_REMOTE_URL || "http://10.40.40.10:8080/api/data"
+const AGENT_TIME_URLS = (
+  process.env.AGENT_TIME_REMOTE_URL || "http://10.40.40.10:8080/api/data"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
 const REQUEST_TIMEOUT_MS = 5_000
 const MAX_GAP_MINUTES = 24 * 60
 
@@ -78,21 +83,33 @@ function isValidInterval(value: unknown): value is AgentTimeInterval {
     typeof value.live === "boolean" &&
     (value.source === undefined || typeof value.source === "string") &&
     (value.model === undefined || typeof value.model === "string") &&
-    (value.conversation_id === undefined || typeof value.conversation_id === "string") &&
-    (value.conversation_title === undefined || typeof value.conversation_title === "string") &&
-    (value.conversation_summary === undefined || typeof value.conversation_summary === "string")
+    (value.conversation_id === undefined ||
+      typeof value.conversation_id === "string") &&
+    (value.conversation_title === undefined ||
+      typeof value.conversation_title === "string") &&
+    (value.conversation_summary === undefined ||
+      typeof value.conversation_summary === "string")
   )
 }
 
 function payloadFromUnknown(value: unknown): AgentTimePayload {
-  if (!isRecord(value) || !Array.isArray(value.projects) || !Array.isArray(value.intervals)) {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.projects) ||
+    !Array.isArray(value.intervals)
+  ) {
     throw new Error("Agent Time returned an unexpected response.")
   }
 
   return {
-    now: typeof value.now === "number" && Number.isFinite(value.now) ? value.now : Date.now() / 1000,
+    now:
+      typeof value.now === "number" && Number.isFinite(value.now)
+        ? value.now
+        : Date.now() / 1000,
     timezone: typeof value.timezone === "string" ? value.timezone : "",
-    projects: value.projects.filter((project): project is string => typeof project === "string"),
+    projects: value.projects.filter(
+      (project): project is string => typeof project === "string"
+    ),
     intervals: value.intervals.filter(isValidInterval).map((interval) => ({
       ...interval,
       source: interval.source || interval.agent,
@@ -106,41 +123,73 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
 
 /** Reads Agent Time's server-side local-network endpoint. The URL is deliberately not client-configurable. */
 export async function fetchAgentTime(): Promise<AgentTimePayload> {
-  const response = await fetch(AGENT_TIME_URL, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    headers: process.env.AGENT_TIME_API_KEY
-      ? { Authorization: `Bearer ${process.env.AGENT_TIME_API_KEY}` }
-      : undefined,
-  })
+  const payloads = await Promise.all(
+    AGENT_TIME_URLS.map(async (url) => {
+      try {
+        const response = await fetch(url, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          headers: process.env.AGENT_TIME_API_KEY
+            ? { Authorization: `Bearer ${process.env.AGENT_TIME_API_KEY}` }
+            : undefined,
+        })
+        if (response.ok) {
+          return payloadFromUnknown(await response.json())
+        }
+      } catch {
+        // Ignore errors for individual URLs to remain resilient if one VM goes offline
+      }
+      return null
+    })
+  )
 
-  if (!response.ok) {
-    throw new Error(`Agent Time responded with ${response.status}.`)
+  const validPayloads = payloads.filter(
+    (p): p is AgentTimePayload => p !== null
+  )
+  if (validPayloads.length === 0) {
+    throw new Error(
+      "Agent Time responded with an error or could not be reached."
+    )
   }
 
-  return payloadFromUnknown(await response.json())
+  return {
+    now: validPayloads[0].now,
+    timezone: validPayloads[0].timezone,
+    projects: [...new Set(validPayloads.flatMap((p) => p.projects))],
+    intervals: validPayloads.flatMap((p) => p.intervals),
+  }
 }
 
 export function parseGapMinutes(value: string | null): number {
-  if (value === null || value.trim() === "") return DEFAULT_AGENT_TIME_GAP_MINUTES
+  if (value === null || value.trim() === "")
+    return DEFAULT_AGENT_TIME_GAP_MINUTES
 
   const minutes = Number(value)
   if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_GAP_MINUTES) {
-    throw new Error(`gapMinutes must be a whole number between 0 and ${MAX_GAP_MINUTES}.`)
+    throw new Error(
+      `gapMinutes must be a whole number between 0 and ${MAX_GAP_MINUTES}.`
+    )
   }
 
   return minutes
 }
 
-export function parseDateBoundary(value: string | null, boundary: "start" | "end"): number | null {
+export function parseDateBoundary(
+  value: string | null,
+  boundary: "start" | "end"
+): number | null {
   if (value === null || value === "") return null
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(`${boundary === "start" ? "from" : "to"} must use YYYY-MM-DD.`)
+    throw new Error(
+      `${boundary === "start" ? "from" : "to"} must use YYYY-MM-DD.`
+    )
   }
 
   const date = new Date(`${value}T00:00:00`)
   if (Number.isNaN(date.getTime())) {
-    throw new Error(`${boundary === "start" ? "from" : "to"} must be a valid date.`)
+    throw new Error(
+      `${boundary === "start" ? "from" : "to"} must be a valid date.`
+    )
   }
 
   if (boundary === "end") date.setDate(date.getDate() + 1)
@@ -178,11 +227,19 @@ function blockId(project: string, start: number, end: number): string {
 
 export function toImportData(
   payload: AgentTimePayload,
-  options: { project: string | null; from: number | null; to: number | null; gapMinutes: number; includeLive: boolean }
+  options: {
+    project: string | null
+    from: number | null
+    to: number | null
+    gapMinutes: number
+    includeLive: boolean
+  }
 ): AgentTimeImportData {
   const gapSeconds = options.gapMinutes * 60
   const filtered = payload.intervals
-    .filter((interval) => !options.project || interval.project === options.project)
+    .filter(
+      (interval) => !options.project || interval.project === options.project
+    )
     .filter((interval) => options.includeLive || !interval.live)
     .filter((interval) => options.from === null || interval.end > options.from)
     .filter((interval) => options.to === null || interval.start < options.to)
@@ -194,14 +251,28 @@ export function toImportData(
     .filter((interval) => interval.end > interval.start)
     .sort((a, b) => a.project.localeCompare(b.project) || a.start - b.start)
 
-  const blocks: Array<{ project: string; start: number; end: number; intervals: AgentTimeInterval[] }> = []
+  const blocks: Array<{
+    project: string
+    start: number
+    end: number
+    intervals: AgentTimeInterval[]
+  }> = []
   for (const interval of filtered) {
     const current = blocks.at(-1)
-    if (current && current.project === interval.project && interval.start <= current.end + gapSeconds) {
+    if (
+      current &&
+      current.project === interval.project &&
+      interval.start <= current.end + gapSeconds
+    ) {
       current.end = Math.max(current.end, interval.end)
       current.intervals.push(interval)
     } else {
-      blocks.push({ project: interval.project, start: interval.start, end: interval.end, intervals: [interval] })
+      blocks.push({
+        project: interval.project,
+        start: interval.start,
+        end: interval.end,
+        intervals: [interval],
+      })
     }
   }
 
@@ -218,8 +289,12 @@ export function toImportData(
         end: new Date(block.end * 1000).toISOString(),
         durationSeconds: Math.round(block.end - block.start),
         activitySeconds: Math.round(unionSeconds(block.intervals)),
-        agents: [...new Set(block.intervals.map((interval) => interval.agent))].sort(),
-        sources: [...new Set(block.intervals.map((interval) => interval.source))].sort(),
+        agents: [
+          ...new Set(block.intervals.map((interval) => interval.agent)),
+        ].sort(),
+        sources: [
+          ...new Set(block.intervals.map((interval) => interval.source)),
+        ].sort(),
         sourceIntervals: block.intervals.map((interval) => ({
           start: new Date(interval.start * 1000).toISOString(),
           end: new Date(interval.end * 1000).toISOString(),
