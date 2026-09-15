@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const start = Date.parse(body.start)
     const end = Date.parse(body.end)
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 86400000 || !Array.isArray(body.sources) || body.sources.length > 100) {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !Array.isArray(body.sources) || body.sources.length > 100) {
       return NextResponse.json({ error: "Invalid activity interval." }, { status: 400 })
     }
     if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && body.sources.every((s: { conversationId?: string }) => s.conversationId?.startsWith("fixture-"))) return NextResponse.json({ title: "Review interval activity", source: "codex", configured: true })

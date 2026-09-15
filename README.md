@@ -15,7 +15,6 @@ A self-hosted time tracking, invoicing, and expense management app built with Ne
 - **Project Management** — Create projects under clients with custom hourly rates and status tracking
 - **Expense Tracking** — Log expenses by category with automatic invoice linking
 - **Invoicing** — Review automatic previews of unbilled time and expenses, create invoices, edit status/tax/notes, and preview or download PDFs
-- **Calendar View** — Monthly overview of earnings, expenses, and hours worked
 - **Calendar & Reports** — Monthly earnings, expenses, hours, and payment schedules with daily activity details
 - **Email Integration** — Send invoices via email using [Resend](https://resend.com)
 - **Payout Threshold** — Set minimum payout amounts with currency selection
@@ -50,7 +49,7 @@ A self-hosted time tracking, invoicing, and expense management app built with Ne
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-username/timetracker.git
+git clone https://github.com/AKolenda/timetracker.git
 cd timetracker
 ```
 
@@ -173,14 +172,6 @@ pnpm build
 pnpm start
 ```
 
-## License
-
-This project is licensed under the [GNU General Public License v3.0](LICENSE) — you're free to use, modify, and distribute this software as long as you:
-
-1. Give appropriate credit to the original author
-2. Make your modified source code available under the same license
-3. Include a copy of the license in any distribution
-
 ## How Agent Time connects to TimeTracker
 
 [Agent Time](https://github.com/AKolenda/agent-time) is the companion Python collector. Install it on every computer or VM where you code. TimeTracker is the web app that turns that activity into reviewed time entries, reports, and invoices.
@@ -237,3 +228,12 @@ Update Agent Time on each source machine too, then restart `systemctl --user res
 ### Reproducing the screenshots
 
 The screenshots use fictional clients and activity. Run `pnpm test:mobile:fixture`, then open any app page at port 3100 with `?fixture=demo` (for example `/tracker?fixture=demo`). Fixture data is available only in builds with `NEXT_PUBLIC_E2E_FIXTURES=true`; it is not a production data seed. The mobile verification fixture remains `/tracker?fixture=mobile`.
+
+## License
+
+This project is licensed under the [GNU General Public License v3.0](LICENSE) — you're free to use, modify, and distribute this software as long as you:
+
+1. Give appropriate credit to the original author
+2. Make your modified source code available under the same license
+3. Include a copy of the license in any distribution
+
