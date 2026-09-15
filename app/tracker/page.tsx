@@ -74,6 +74,7 @@ import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRange } from "@/lib/agent-time-overlap"
 import { groupConversationSources } from "@/lib/agent-time-chats"
+import { intervalIsSettled } from "@/lib/summary-jobs"
 import { splitAgentRange } from "@/lib/agent-time-intervals"
 import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
@@ -998,6 +999,7 @@ export default function TrackerPage() {
     void (async () => {
       for (const slice of agentImportPreview.slices) {
         if (cancelled) break
+        if (!intervalIsSettled(slice.end)) continue
         const key = summaryKey(slice)
         if (requestedSummaries.current.has(key)) continue
         const sources = groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end).filter((s) => s.conversationId)

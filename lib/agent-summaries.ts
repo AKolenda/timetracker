@@ -1,9 +1,10 @@
 import "server-only"
 import Anthropic from "@anthropic-ai/sdk"
 import { spawn } from "node:child_process"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile, rename } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
+import { createSummaryJobs } from "./summary-jobs"
 import { readTranscript } from "@/lib/agent-transcripts"
 
 export type SummaryProvider = "codex" | "claude" | "api"
@@ -87,7 +88,9 @@ function persistCache() {
   const snapshot = JSON.stringify(cache ?? {}, null, 1)
   cacheWrite = cacheWrite.then(async () => {
     await mkdir(CACHE_DIR, { recursive: true })
-    await writeFile(CACHE_FILE, snapshot)
+    const temporary = `${CACHE_FILE}.tmp`
+    await writeFile(temporary, snapshot)
+    await rename(temporary, CACHE_FILE)
   }).catch(() => {
     // A failed cache write only means the chat is summarized again next time.
   })
@@ -188,10 +191,19 @@ async function summarizeNow(source: string, conversationId: string, fallbackTitl
   return generateTitle(key, excerpt)
 }
 
-export function summarizeInterval(key: string, excerpt: string): Promise<SummaryResult> {
-  const job = queue.then(() => generateTitle(`interval-v1:${key}`, excerpt))
-  queue = job.catch(() => undefined)
-  return job
+const intervalJobs = createSummaryJobs<SummaryResult>()
+
+export function summarizeInterval(key: string, getExcerpt: () => Promise<string | null>): Promise<SummaryResult> {
+  return intervalJobs(key, async () => {
+    const cacheKey = `interval-v1:${key}`
+    const store = await loadCache()
+    if (store[cacheKey]) return { title: store[cacheKey], source: "cache" }
+    const excerpt = await getExcerpt()
+    if (!excerpt) return { title: null, source: "unavailable" }
+    const job = queue.then(() => generateTitle(cacheKey, excerpt))
+    queue = job.catch(() => undefined)
+    return job
+  })
 }
 
 async function generateTitle(key: string, excerpt: string): Promise<SummaryResult> {
