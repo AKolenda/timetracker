@@ -14,9 +14,9 @@ A self-hosted time tracking, invoicing, and expense management app built with Ne
 - **Client Management** — Store client contact info, assign colors, and set automated invoice schedules
 - **Project Management** — Create projects under clients with custom hourly rates and status tracking
 - **Expense Tracking** — Log expenses by category with automatic invoice linking
-- **Invoicing** — Generate invoices from tracked time and expenses, edit status/tax/notes, preview at PDF scale
+- **Invoicing** — Review automatic previews of unbilled time and expenses, create invoices, edit status/tax/notes, and preview or download PDFs
 - **Calendar View** — Monthly overview of earnings, expenses, and hours worked
-- **Reports** — Filterable financial summaries broken down by client or project
+- **Calendar & Reports** — Monthly earnings, expenses, hours, and payment schedules with daily activity details
 - **Email Integration** — Send invoices via email using [Resend](https://resend.com)
 - **Payout Threshold** — Set minimum payout amounts with currency selection
 - **Dark Mode** — Full dark/light theme support
@@ -132,7 +132,8 @@ To send invoices via email:
 | **Clients** — Contact info and project counts | **Projects** — Hourly rates and client assignment |
 | ![Expenses](docs/screenshots/expenses.png) | ![New Project](docs/screenshots/new-project.png) |
 | **Expenses** — Categorized expense tracking | **New Project** — Project creation dialog |
-| ![Calendar](docs/screenshots/calendar.png) | ![Reports](docs/screenshots/reports.png) |
+| ![Calendar](docs/screenshots/calendar.png) | ![Saved chat details](docs/screenshots/entry-chats.png) |
+| ![Invoices and unbilled previews](docs/screenshots/invoices.png) | ![Agent Time settings](docs/screenshots/agent-time-settings.png) |
 | **Calendar** — Monthly earnings view | **Reports** — Financial breakdowns |
 
 ## Project Structure

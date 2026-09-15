@@ -706,7 +706,8 @@ export default function TrackerPage() {
       const gap = Number.isFinite(requestedGap)
         ? Math.max(0, Math.min(240, Math.round(requestedGap)))
         : 15
-      const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
+      const demo = process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && new URLSearchParams(window.location.search).get("fixture") === "demo"
+      const fixture = mobileFixtureRequested() ? "&fixture=mobile" : demo ? "&fixture=demo" : ""
       const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}${fixture}`)
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse

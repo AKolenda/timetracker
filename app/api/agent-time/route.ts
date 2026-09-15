@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl
+    if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && searchParams.get("fixture") === "demo") return NextResponse.json({ projects: [], intervals: [] })
     if (
       process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
       searchParams.get("fixture") === "mobile"
