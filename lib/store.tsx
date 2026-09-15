@@ -19,6 +19,7 @@ import type {
   Settings,
   TimeEntry,
 } from "./types"
+import { demoFixture } from "./demo-fixture"
 import { defaultSettings } from "./types"
 import { getDataProvider } from "./db"
 import { localDateString } from "./datetime"
@@ -50,7 +51,7 @@ function mobileTestFixture(): AppData {
 }
 
 function mobileTestFixtureRequested() {
-  return typeof window !== "undefined" && process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && new URLSearchParams(window.location.search).get("fixture") === "mobile"
+  return typeof window !== "undefined" && process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && ["mobile", "demo"].includes(new URLSearchParams(window.location.search).get("fixture") || "")
 }
 
 interface StoreContext {
@@ -106,7 +107,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const loadAll = useCallback(async () => {
     if (mobileTestFixtureRequested()) {
-      setData(mobileTestFixture())
+      setData(new URLSearchParams(window.location.search).get("fixture") === "demo" ? demoFixture() : mobileTestFixture())
       setLoading(false)
       return
     }

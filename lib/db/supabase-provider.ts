@@ -98,6 +98,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
     displayCurrency: (row.display_currency as string) ?? "",
     agentTimeHosts: parseAgentTimeHosts(row.agent_time_hosts),
+    agentTimeMaxMinutes: typeof row.agent_time_max_minutes === "number" ? row.agent_time_max_minutes : null,
     agentTimeHostLabels: parseAgentTimeHostLabels(row.agent_time_host_labels),
   }
 }
@@ -419,6 +420,7 @@ export class SupabaseProvider implements DataProvider {
       row.default_invoice_due_days = updates.defaultInvoiceDueDays
     if (updates.displayCurrency !== undefined)
       row.display_currency = updates.displayCurrency
+    if (updates.agentTimeMaxMinutes !== undefined) row.agent_time_max_minutes = updates.agentTimeMaxMinutes
     if (updates.agentTimeHostLabels !== undefined)
       row.agent_time_host_labels = parseAgentTimeHostLabels(updates.agentTimeHostLabels)
     if (updates.agentTimeHosts !== undefined)

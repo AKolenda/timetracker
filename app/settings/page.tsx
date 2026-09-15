@@ -139,6 +139,7 @@ export default function SettingsPage() {
         displayCurrency:
           form.displayCurrency === "none" ? "" : form.displayCurrency,
         agentTimeHosts: form.agentTimeHosts || [],
+        agentTimeMaxMinutes: form.agentTimeMaxMinutes || null,
         agentTimeHostLabels: form.agentTimeHostLabels || {},
       })
       toast.success("Settings saved")
@@ -759,6 +760,9 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="grid gap-4">
               <div className="grid gap-2">
+                <Label htmlFor="agent-time-max">Maximum entry length (minutes)</Label>
+                <Input id="agent-time-max" type="number" min={1} max={1440} step={1} value={form.agentTimeMaxMinutes ?? ""} placeholder="No limit" className="[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" onChange={(e) => setForm({ ...form, agentTimeMaxMinutes: e.target.value ? Math.max(1, Math.min(1440, Math.round(Number(e.target.value)))) : null })} />
+                <p className="text-xs text-muted-foreground">Split new Agent Time imports into intervals with titles based on each interval’s activity. Leave blank for no limit. Saved entries are unchanged.</p>
                 <Label htmlFor="agent-time">Collector URLs (one per line)</Label>
                 <Textarea id="agent-time" value={(form.agentTimeHosts || []).join("\n")} onChange={(e) => setForm({ ...form, agentTimeHosts: e.target.value.split("\n") })} placeholder="http://your-machine:8080/api/data" />
                 <p className="text-xs text-muted-foreground">Add each machine running Agent Time. Overlapping activity is merged so time is not counted twice.</p>

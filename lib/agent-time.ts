@@ -23,6 +23,7 @@ type AgentTimeInterval = {
   live: boolean
   source: string
   model: string
+  canonical_conversation_id?: string
   conversation_id: string
   conversation_title: string
   conversation_summary: string
@@ -39,6 +40,7 @@ export type AgentTimeSourceInterval = {
   model: string
   conversationId: string
   conversationTitle: string
+  canonicalConversationId?: string
   conversationSummary?: string
   hostUrl?: string
   machineLabel?: string
@@ -308,6 +310,7 @@ export function toImportData(
           model: interval.model,
           conversationId: interval.conversation_id,
           conversationTitle: interval.conversation_title,
+          canonicalConversationId: interval.canonical_conversation_id,
           conversationSummary: interval.conversation_summary,
           hostUrl: interval.hostUrl,
           machineLabel: interval.machineLabel,

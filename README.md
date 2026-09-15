@@ -6,6 +6,10 @@ A self-hosted time tracking, invoicing, and expense management app built with Ne
 
 ## Features
 
+- **Agent Time imports** — Collect Claude, Codex, and T3 Code activity from multiple machines, map it to projects, and review imports before billing
+- **Interval titles** — Choose a maximum entry length and generate a title from the chat messages in each interval
+- **Machine and chat history** — Label computers and VMs, see each entry’s sources, and open dated transcripts from the description dropdown
+- **Overlap review** — Exclude time already tracked or reserved by active timers and review conflicts in searchable dialogs
 - **Time Tracking** — Start/stop timer or manually log hours with per-project billable rates
 - **Client Management** — Store client contact info, assign colors, and set automated invoice schedules
 - **Project Management** — Create projects under clients with custom hourly rates and status tracking
@@ -20,6 +24,10 @@ A self-hosted time tracking, invoicing, and expense management app built with Ne
 ![Tracker](docs/screenshots/tracker.png)
 
 ![Calendar](docs/screenshots/calendar.png)
+
+![Saved chats with machine and exact activity times](docs/screenshots/entry-chats.png)
+
+![Agent Time machine labels and interval settings](docs/screenshots/agent-time-settings.png)
 
 ## Tech Stack
 
@@ -172,8 +180,59 @@ This project is licensed under the [GNU General Public License v3.0](LICENSE) �
 2. Make your modified source code available under the same license
 3. Include a copy of the license in any distribution
 
-### Agent Time machines and saved chats
+## How Agent Time connects to TimeTracker
 
-Configure collector URLs and optional machine labels in Settings → Agent Time Integrations. No collector is contacted unless configured in Settings or `AGENT_TIME_REMOTE_URL`.
+[Agent Time](https://github.com/AKolenda/agent-time) is the companion Python collector. Install it on every computer or VM where you code. TimeTracker is the web app that turns that activity into reviewed time entries, reports, and invoices.
 
-Apply migration `009_agent_time_provenance.sql` when upgrading. Approved Agent Time entries retain their source machine, chat IDs, titles, and activity ranges. The description dropdown also attempts to match older entries against currently available logs; those matches are marked as reconstructed. Transcripts are read from the configured source collector, which must be online and allow the TimeTracker server's address. Update Agent Time on every collector to enable `/api/v1/transcript`.
+```mermaid
+flowchart LR
+  A[Workstation: Claude / Codex / T3 Code] --> B[Agent Time collector]
+  C[Development VM: Claude / Codex / T3 Code] --> D[Agent Time collector]
+  B --> E[TimeTracker import review]
+  D --> E
+  E --> F[Project mapping and overlap removal]
+  F --> G[Configured intervals and titles]
+  G --> H[Approved time entries in Supabase]
+  H --> I[Reports and invoices]
+```
+
+### Connect your machines
+
+1. Follow the [Agent Time installation guide](https://github.com/AKolenda/agent-time#readme) on each coding machine. Its example configuration binds to loopback; use that machine’s LAN address for remote imports.
+2. Add the **TimeTracker server’s IP** to each collector’s `AGENT_TIME_TRUSTED_CLIENTS`, then restart its user service. The web server must be able to reach the collectors.
+3. In **Settings → Agent Time Integrations**, add each collector URL, such as `http://workstation.example:8080/api/data`, and give it a label such as “Workstation” or “Development VM”. No machine is configured by default.
+4. On **Tracker**, open **Projects** to map discovered workspace names to your billing projects. Review import settings and excluded time, then approve the entries you want to track.
+
+Collector URLs may also be supplied through comma-separated `AGENT_TIME_REMOTE_URL` values on the TimeTracker server. URLs supplied to transcript requests must match configured collectors.
+
+### Activity, intervals, and titles
+
+Agent Time reads local provider logs and T3’s activity records. These are estimates of agent activity, so review them before billing. TimeTracker joins activity according to the import gap setting and removes periods already covered by saved entries or active timers for the same project.
+
+Set **Maximum entry length (minutes)** in Settings to split new imports. It defaults to no limit. With a 30-minute limit, a 45-minute block becomes a 30-minute entry and a 15-minute entry. Each interval gets a title based on user/assistant messages timestamped inside that interval. Titles can be the same when the work has not changed. When no messages are available, the saved chat title is the fallback.
+
+TimeTracker uses the Codex CLI on the **web server** for interval titles, defaulting to `gpt-5.6-terra` with low reasoning. Install and authenticate Codex under the user running TimeTracker and ensure `codex` is on that service’s `PATH`. `AGENT_SUMMARY_CODEX_MODEL` and `AGENT_SUMMARY_CODEX_EFFORT` override these choices. A generation failure leaves the draft available to retry. Agent Time’s own optional whole-chat summaries run separately under each collector’s user account.
+
+The locally installed CLI may send prompt excerpts to its model provider; it does not mean inference runs offline. The collector’s transcript endpoint exposes chat text only to configured trusted clients. Keep collectors on a trusted network or VPN, and do not expose their plain HTTP ports to the public internet.
+
+### Saved chats and machine attribution
+
+The **Machine** column shows where activity came from; narrow screens show this below the description. Open an entry’s description dropdown to search its contributing chats and see their agent/model, machine, exact date/time, and duration. Select a chat to load its paginated transcript from its source machine.
+
+T3 and native provider records merge only when the collector supplies their common `canonical_conversation_id` on the same machine. Their overlapping durations are counted once. Similar titles alone never cause chats to merge.
+
+New approvals save chat references and clipped activity ranges in Supabase. Older entries may reconstruct references from available logs, which the dropdown labels accordingly. The original collector must be online to read message contents. Changing the interval setting does not rewrite saved entries or invoices; historical backfills are separate deployment-specific operations.
+
+## Upgrading
+
+Back up your database, then apply pending files in `supabase/migrations/` in order using the Supabase CLI or SQL editor before deploying the corresponding app version. Fresh installations can use `supabase/setup.sql`, which includes the same schema additions. For an existing database created manually, reconcile the CLI migration history before using `supabase db push`.
+
+- `008_agent_time_hosts.sql`: multiple collector URLs.
+- `009_agent_time_provenance.sql`: editable machine labels and saved chat references.
+- `010_agent_time_intervals.sql`: optional maximum entry length.
+
+Update Agent Time on each source machine too, then restart `systemctl --user restart agent-time`. Older collectors can still supply activity, but need current transcript and canonical-session support for chat viewing and duplicate merging. No personal URLs, labels, interval preferences, or historical backfills are seeded by the migrations.
+
+### Reproducing the screenshots
+
+The screenshots use fictional clients and activity. Run `pnpm test:mobile:fixture`, then open any app page at port 3100 with `?fixture=demo` (for example `/tracker?fixture=demo`). Fixture data is available only in builds with `NEXT_PUBLIC_E2E_FIXTURES=true`; it is not a production data seed. The mobile verification fixture remains `/tracker?fixture=mobile`.

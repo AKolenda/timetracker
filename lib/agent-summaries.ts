@@ -185,6 +185,18 @@ async function summarizeNow(source: string, conversationId: string, fallbackTitl
     .map((message) => `${message.role === "user" ? "Client request" : "Work done"}: ${message.text.slice(0, MAX_CHARS_PER_MESSAGE)}`)
     .join("\n\n") || "(no messages available)"}`
 
+  return generateTitle(key, excerpt)
+}
+
+export function summarizeInterval(key: string, excerpt: string): Promise<SummaryResult> {
+  const job = queue.then(() => generateTitle(`interval-v1:${key}`, excerpt))
+  queue = job.catch(() => undefined)
+  return job
+}
+
+async function generateTitle(key: string, excerpt: string): Promise<SummaryResult> {
+  const store = await loadCache()
+  if (store[key]) return { title: store[key], source: "cache" }
   let lastError: unknown = null
   for (const provider of availableProviders()) {
     try {

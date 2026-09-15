@@ -73,6 +73,8 @@ import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRange } from "@/lib/agent-time-overlap"
+import { groupConversationSources } from "@/lib/agent-time-chats"
+import { splitAgentRange } from "@/lib/agent-time-intervals"
 import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
@@ -98,6 +100,7 @@ type AgentTimeSourceInterval = {
   model: string
   conversationId: string
   conversationTitle: string
+  canonicalConversationId?: string
   conversationSummary?: string
   hostUrl?: string
   machineLabel?: string
@@ -145,37 +148,6 @@ function sourceDescription(interval: AgentTimeSourceInterval) {
   return `${interval.source || interval.agent} directly`
 }
 
-function groupConversationSources(
-  intervals: AgentTimeSourceInterval[],
-  sliceStart: number,
-  sliceEnd: number
-) {
-  const conversations = new Map<string, AgentTimeSourceInterval & { spans: TimeRange[] }>()
-  for (const interval of intervals) {
-    const start = Math.max(new Date(interval.start).getTime(), sliceStart)
-    const end = Math.min(new Date(interval.end).getTime(), sliceEnd)
-    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
-    const key = `${interval.hostUrl || ""}:${interval.source}:${interval.conversationId || interval.conversationTitle || interval.model || interval.agent}`
-    const current = conversations.get(key)
-    if (current) current.spans.push({ start, end })
-    else conversations.set(key, { ...interval, spans: [{ start, end }] })
-  }
-
-  return [...conversations.values()].map((conversation) => {
-    const spans = [...conversation.spans].sort((a, b) => a.start - b.start)
-    const merged: TimeRange[] = []
-    for (const span of spans) {
-      const previous = merged.at(-1)
-      if (previous && span.start <= previous.end) previous.end = Math.max(previous.end, span.end)
-      else merged.push({ ...span })
-    }
-    return {
-      ...conversation,
-      spans: merged,
-      durationSeconds: merged.reduce((total, span) => total + Math.floor((span.end - span.start) / 1000), 0),
-    }
-  }).sort((a, b) => a.spans[0].start - b.spans[0].start)
-}
 
 type ConversationSource = ReturnType<typeof groupConversationSources>[number]
 
@@ -186,16 +158,14 @@ function primaryConversation(slice: AgentImportSlice) {
   return conversations.find((conversation) => conversation.conversationTitle.trim()) ?? conversations[0] ?? null
 }
 
-function summaryKey(source: ConversationSource) {
-  return source.conversationId ? `${source.source}:${source.conversationId}` : null
+function summaryKey(slice: AgentImportSlice) {
+  const sources = groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end)
+  return JSON.stringify([slice.start, slice.end, sources.map((s) => [s.hostUrl, s.source, s.conversationId]).sort()])
 }
 
 function draftDescription(slice: AgentImportSlice, summaries: Record<string, string> = {}) {
   const primary = primaryConversation(slice)
-  if (primary?.conversationSummary?.trim()) return primary.conversationSummary.trim()
-  const key = primary ? summaryKey(primary) : null
-  if (key && summaries[key]) return summaries[key]
-  return primary?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
+  return summaries[summaryKey(slice)] || primary?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
 }
 
 function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
@@ -262,7 +232,7 @@ function ChatTranscript({ source, onClose }: { source: ConversationSource; onClo
       {!loading && state?.transcript && state.transcript.messages.length > 0 && <div className="grid gap-3">
         {state.transcript.messages.map((message, index) => <div key={`${message.at ?? index}-${index}`} className={`flex min-w-0 flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
           <div className={`max-w-[92%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed sm:max-w-[85%] ${message.role === "user" ? "rounded-br-md bg-primary text-primary-foreground" : "rounded-bl-md bg-muted"}`}>{message.text}</div>
-          {message.at && <span className="mt-1 px-1 font-mono text-[0.65rem] text-muted-foreground">{format(new Date(message.at), "h:mm a")}</span>}
+          {message.at && <span className="mt-1 px-1 font-mono text-[0.65rem] text-muted-foreground">{format(new Date(message.at), "MMM d, yyyy HH:mm:ss OOO")}</span>}
         </div>)}
       </div>}
       {state?.transcript?.nextOffset != null && <Button className="mt-4 w-full" variant="outline" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading…" : `Load more messages (${state.transcript.messages.length} / ${state.transcript.totalMessages})`}</Button>}
@@ -294,11 +264,12 @@ function EntryChats({ description, sources, start, end, labels, inferred = false
         </div>
         <div className="max-h-[min(22rem,50vh)] overflow-y-auto p-1">
           {filtered.slice(currentPage * 5, currentPage * 5 + 5).map((source) => <button key={`${source.hostUrl}:${source.source}:${source.conversationId}`} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md p-2.5 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setChat({ ...source, machineLabel: machineName(source, labels) }); setOpen(false) }}>
-            <SourceLogo source={source.source} agent={source.agent} className="mt-0.5 size-5" />
+            <SourceLogo source={source.agent} agent={source.agent} className="mt-0.5 size-5" />
             <div className="min-w-0 flex-1">
               <p className="break-words text-sm font-medium">{source.conversationTitle || source.conversationSummary || "Untitled chat"}</p>
               {source.conversationSummary && source.conversationSummary !== source.conversationTitle && <p className="mt-1 break-words text-xs text-muted-foreground">{source.conversationSummary}</p>}
-              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="rounded-md bg-muted px-1.5 py-0.5 text-foreground">{machineName(source, labels)}</span><span>{source.source}</span><span className="font-mono">{formatDuration(source.durationSeconds)}</span></div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="rounded-md bg-muted px-1.5 py-0.5 text-foreground">{machineName(source, labels)}</span><span>{source.model || source.agent || source.source}</span><span className="font-mono">{formatDuration(source.durationSeconds)}</span></div>
+              <p className="mt-1 text-xs text-muted-foreground">{new Date(source.spans[0].start).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" })} – {new Date(source.spans.at(-1)!.end).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" })}</p>
             </div>
             <MessageSquareText className="mt-1 size-4 shrink-0 text-muted-foreground" />
           </button>)}
@@ -376,7 +347,8 @@ function buildAgentImportPlan(
   timeEntries: TimeEntry[],
   cutoff: number | null,
   ignoredRanges: IgnoredAgentRange[] = [],
-  activeTimers: ActiveTimer[] = []
+  activeTimers: ActiveTimer[] = [],
+  maxMinutes?: number | null
 ): AgentImportPlan {
   const occupiedByProject = new Map<string, TimeRange[]>()
   for (const projectId of new Set([...timeEntries, ...activeTimers].map((entry) => entry.projectId))) {
@@ -425,7 +397,7 @@ function buildAgentImportPlan(
     )
     ignoredSeconds += trackedUncoveredSeconds - finalUncoveredSeconds
 
-    for (const gap of gaps) {
+    for (const gap of gaps.flatMap((range) => splitAgentRange(range, maxMinutes))) {
       slices.push({
         id: `${interval.id}-${gap.start}-${gap.end}`,
         interval,
@@ -674,7 +646,13 @@ export default function TrackerPage() {
     const start = Date.parse(entry.startTime)
     const end = entry.endTime ? Date.parse(entry.endTime) : NaN
     if (!Number.isFinite(start) || !Number.isFinite(end)) return []
-    if (entry.agentTimeSources?.length) return clipAgentSources(entry.agentTimeSources, start, end)
+    if (entry.agentTimeSources?.length) {
+      const current = (agentTime?.intervals || []).flatMap((interval) => interval.sourceIntervals || [])
+      return clipAgentSources(entry.agentTimeSources.map((source) => {
+        const match = current.find((candidate) => candidate.hostUrl === source.hostUrl && candidate.source === source.source && candidate.conversationId === source.conversationId)
+        return { ...source, canonicalConversationId: match?.canonicalConversationId || source.canonicalConversationId }
+      }), start, end)
+    }
     const project = getProject(entry.projectId)
     const intervals = (agentTime?.intervals || []).filter((interval) =>
       projectMappings[interval.project] === entry.projectId || interval.project === project?.name ||
@@ -693,9 +671,10 @@ export default function TrackerPage() {
       data.timeEntries,
       agentTimeCutoff,
       ignoredAgentRanges,
-      data.activeTimers
+      data.activeTimers,
+      data.settings.agentTimeMaxMinutes
     ),
-    [agentTimeCutoff, availableAgentIntervals, data.timeEntries, data.activeTimers, ignoredAgentRanges, projectMappings]
+    [agentTimeCutoff, availableAgentIntervals, data.timeEntries, data.activeTimers, data.settings.agentTimeMaxMinutes, ignoredAgentRanges, projectMappings]
   )
   function saveOverlapReviews(kind: "agent" | "entry", keys: string[]) {
     if (kind === "agent") setReviewedAgentOverlaps(keys)
@@ -774,7 +753,7 @@ export default function TrackerPage() {
   const entryOverlapKeys = new Map([...overlapDetails].map(([id, details]) => [id, details.reviewKey]))
   const overlapIds = new Set([...entryOverlapKeys].filter(([, key]) => !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
 
-  async function importDraftEntries(entries: Omit<TimeEntry, "id">[]) {
+  async function importDraftEntries(entries: Omit<TimeEntry, "id">[], generateTitles = true) {
     if (importInFlight.current) return false
     importInFlight.current = true
     setImporting(true)
@@ -786,11 +765,20 @@ export default function TrackerPage() {
           { start: Date.parse(entry.startTime), end: Date.parse(entry.endTime!) },
           occupiedProjectRanges(entry.projectId, [...current.timeEntries, ...importedEntries.current], current.activeTimers)
         )
-        for (const gap of gaps) {
+        for (const gap of gaps.flatMap((range) => splitAgentRange(range, current.settings.agentTimeMaxMinutes))) {
           const duration = Math.floor((gap.end - gap.start) / 1000)
           if (duration <= 0) continue
+          let description = entry.description
+          const sources = groupConversationSources(entry.agentTimeSources || [], gap.start, gap.end).filter((source) => source.conversationId)
+          if (generateTitles && sources.length) {
+            const response = await fetch("/api/agent-time/summary", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ start: new Date(gap.start).toISOString(), end: new Date(gap.end).toISOString(), sources }) })
+            if (!response.ok) throw new Error("Interval title generation failed")
+            const result = await response.json() as { title?: string | null }
+            description = result.title || sources[0].conversationTitle || description
+          }
           const saved = await addTimeEntry({
             ...entry,
+            description,
             agentTimeSources: clipAgentSources(entry.agentTimeSources || [], gap.start, gap.end),
             startTime: new Date(gap.start).toISOString(),
             endTime: new Date(gap.end).toISOString(),
@@ -969,7 +957,7 @@ export default function TrackerPage() {
     }
 
     if (editDraft) {
-      if (!await importDraftEntries([{ ...values, agentTimeSources: clipAgentSources(editDraft.interval.sourceIntervals || [], startDt.getTime(), endDt.getTime()) }])) return
+      if (!await importDraftEntries([{ ...values, agentTimeSources: clipAgentSources(editDraft.interval.sourceIntervals || [], startDt.getTime(), endDt.getTime()) }], false)) return
     } else if (editEntry) {
       await updateTimeEntry(editEntry.id, values)
       toast.success("Entry updated")
@@ -1003,27 +991,22 @@ export default function TrackerPage() {
     return rows.sort((a, b) => b.sortKey.localeCompare(a.sortKey))
   }, [agentImportPreview.slices, data.settings.timezone, data.timeEntries])
 
-  // Ask for a client-facing description of each draft's main chat, once per chat.
+  // Generate a separate title from the messages within each interval.
   useEffect(() => {
-    const pending = agentImportPreview.slices
-      .map((slice) => primaryConversation(slice))
-      .filter((source): source is ConversationSource => !!source && !source.conversationSummary?.trim())
-      .filter((source) => { const key = summaryKey(source); return !!key && !requestedSummaries.current.has(key) })
-    if (pending.length === 0) return
     let cancelled = false
     void (async () => {
-      for (const source of pending) {
-        const key = summaryKey(source)
-        if (!key || requestedSummaries.current.has(key)) continue
+      for (const slice of agentImportPreview.slices) {
+        if (cancelled) break
+        const key = summaryKey(slice)
+        if (requestedSummaries.current.has(key)) continue
+        const sources = groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end).filter((s) => s.conversationId)
+        if (!sources.length) continue
         requestedSummaries.current.add(key)
         try {
-          const query = new URLSearchParams({ source: source.source, id: source.conversationId, title: source.conversationTitle })
-          const response = await fetch(`/api/agent-time/summary?${query.toString()}`)
+          const response = await fetch("/api/agent-time/summary", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ start: new Date(slice.start).toISOString(), end: new Date(slice.end).toISOString(), sources }) })
           if (!response.ok) { requestedSummaries.current.delete(key); continue }
-          const body = await response.json() as { title?: string | null; configured?: boolean }
-          if (cancelled) return
+          const body = await response.json() as { title?: string | null }
           if (body.title) setChatSummaries((current) => ({ ...current, [key]: body.title as string }))
-          if (body.configured === false) return
         } catch {
           requestedSummaries.current.delete(key)
         }

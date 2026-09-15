@@ -85,6 +85,7 @@ export interface Settings {
   timezone: string
   defaultInvoiceDueDays: number
   displayCurrency: string
+  agentTimeMaxMinutes?: number | null
   agentTimeHosts?: string[]
   agentTimeHostLabels?: Record<string, string>
 }

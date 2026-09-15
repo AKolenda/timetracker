@@ -134,3 +134,5 @@ create policy "Allow all" on invoice_line_items for all using (true) with check 
 -- Machine labels are user settings; chat provenance survives approval.
 alter table public.settings add column if not exists agent_time_host_labels jsonb not null default '{}'::jsonb;
 alter table public.time_entries add column if not exists agent_time_sources jsonb not null default '[]'::jsonb;
+
+alter table public.settings add column if not exists agent_time_max_minutes integer check (agent_time_max_minutes between 1 and 1440);
