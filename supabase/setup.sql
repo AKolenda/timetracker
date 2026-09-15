@@ -66,7 +66,8 @@ create table if not exists settings (
   next_invoice_number int not null default 1001,
   payout_currency text not null default 'USD',
   payout_min_amount numeric(12,2) not null default 50,
-  payout_notes text not null default ''
+  payout_notes text not null default '',
+  agent_time_hosts jsonb not null default '[]'::jsonb
 );
 
 create table if not exists invoices (

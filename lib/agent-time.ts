@@ -1,15 +1,10 @@
 import "server-only"
+import { agentTimeUrls } from "./agent-time-hosts"
 
 export const DEFAULT_AGENT_TIME_GAP_MINUTES = 15
 
 // The Agent Time desktop service is intentionally private to the local network.
 // Deployments may override this, but the VM can work without any cloud configuration.
-const AGENT_TIME_URLS = (
-  process.env.AGENT_TIME_REMOTE_URL || "http://10.40.40.10:8080/api/data"
-)
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean)
 const REQUEST_TIMEOUT_MS = 5_000
 const MAX_GAP_MINUTES = 24 * 60
 
@@ -123,10 +118,10 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
 
 /** Reads Agent Time's server-side local-network endpoint. The URL is deliberately not client-configurable. */
 export async function fetchAgentTime(dbHosts: string[] = []): Promise<AgentTimePayload> {
-  const allUrls = [...new Set([...AGENT_TIME_URLS, ...dbHosts])]
+  const allUrls = agentTimeUrls(process.env.AGENT_TIME_REMOTE_URL, dbHosts)
 
   const payloads = await Promise.all(
-    AGENT_TIME_URLS.map(async (url) => {
+    allUrls.map(async (url) => {
       try {
         const response = await fetch(url, {
           cache: "no-store",

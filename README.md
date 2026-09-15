@@ -33,7 +33,7 @@ A self-hosted time tracking, invoicing, and expense management app built with Ne
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org) 18+
+- [Node.js](https://nodejs.org) 22+
 - [pnpm](https://pnpm.io) (`npm install -g pnpm`)
 - A [Supabase](https://supabase.com) account (free tier works)
 

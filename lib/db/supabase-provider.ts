@@ -11,6 +11,7 @@ import type {
 } from "../types"
 import { defaultSettings } from "../types"
 import type { DataProvider } from "./provider"
+import { parseAgentTimeHosts } from "../agent-time-hosts"
 
 function rowToClient(row: Record<string, unknown>): Client {
   return {
@@ -95,6 +96,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     timezone: (row.timezone as string) ?? "",
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
     displayCurrency: (row.display_currency as string) ?? "",
+    agentTimeHosts: parseAgentTimeHosts(row.agent_time_hosts),
   }
 }
 
@@ -413,6 +415,8 @@ export class SupabaseProvider implements DataProvider {
       row.default_invoice_due_days = updates.defaultInvoiceDueDays
     if (updates.displayCurrency !== undefined)
       row.display_currency = updates.displayCurrency
+    if (updates.agentTimeHosts !== undefined)
+      row.agent_time_hosts = parseAgentTimeHosts(updates.agentTimeHosts)
     const { error } = await this.db
       .from("settings")
       .update(row)

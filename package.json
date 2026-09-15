@@ -10,7 +10,7 @@
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --test lib/*.test.ts",
+    "test:unit": "node --experimental-strip-types --test lib/*.test.ts",
     "test:mobile:fixture": "NEXT_DIST_DIR=.next-fixture NEXT_PUBLIC_E2E_FIXTURES=true NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_ANON_KEY=fixture next build && NEXT_DIST_DIR=.next-fixture NEXT_PUBLIC_E2E_FIXTURES=true NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_ANON_KEY=fixture next start --port 3100"
   },
   "dependencies": {

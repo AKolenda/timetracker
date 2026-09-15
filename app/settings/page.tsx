@@ -138,6 +138,7 @@ export default function SettingsPage() {
         defaultInvoiceDueDays: form.defaultInvoiceDueDays,
         displayCurrency:
           form.displayCurrency === "none" ? "" : form.displayCurrency,
+        agentTimeHosts: form.agentTimeHosts || [],
       })
       toast.success("Settings saved")
     } catch {
