@@ -171,3 +171,9 @@ This project is licensed under the [GNU General Public License v3.0](LICENSE) â€
 1. Give appropriate credit to the original author
 2. Make your modified source code available under the same license
 3. Include a copy of the license in any distribution
+
+### Agent Time machines and saved chats
+
+Configure collector URLs and optional machine labels in Settings â†’ Agent Time Integrations. No collector is contacted unless configured in Settings or `AGENT_TIME_REMOTE_URL`.
+
+Apply migration `009_agent_time_provenance.sql` when upgrading. Approved Agent Time entries retain their source machine, chat IDs, titles, and activity ranges. The description dropdown also attempts to match older entries against currently available logs; those matches are marked as reconstructed. Transcripts are read from the configured source collector, which must be online and allow the TimeTracker server's address. Update Agent Time on every collector to enable `/api/v1/transcript`.

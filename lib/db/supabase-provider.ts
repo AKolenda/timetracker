@@ -11,7 +11,7 @@ import type {
 } from "../types"
 import { defaultSettings } from "../types"
 import type { DataProvider } from "./provider"
-import { parseAgentTimeHosts } from "../agent-time-hosts"
+import { parseAgentTimeHosts, parseAgentTimeHostLabels } from "../agent-time-hosts"
 
 function rowToClient(row: Record<string, unknown>): Client {
   return {
@@ -46,6 +46,7 @@ function rowToProject(row: Record<string, unknown>): Project {
 
 function rowToTimeEntry(row: Record<string, unknown>): TimeEntry {
   return {
+    agentTimeSources: (Array.isArray(row.agent_time_sources) ? row.agent_time_sources : []) as TimeEntry["agentTimeSources"],
     id: row.id as string,
     projectId: row.project_id as string,
     description: row.description as string,
@@ -97,6 +98,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
     displayCurrency: (row.display_currency as string) ?? "",
     agentTimeHosts: parseAgentTimeHosts(row.agent_time_hosts),
+    agentTimeHostLabels: parseAgentTimeHostLabels(row.agent_time_host_labels),
   }
 }
 
@@ -283,6 +285,7 @@ export class SupabaseProvider implements DataProvider {
         duration: entry.duration,
         billable: entry.billable,
         date: entry.date,
+        agent_time_sources: entry.agentTimeSources ?? [],
       })
       .select()
       .single()
@@ -295,6 +298,7 @@ export class SupabaseProvider implements DataProvider {
     updates: Partial<TimeEntry>
   ): Promise<void> {
     const row: Record<string, unknown> = {}
+    if (updates.agentTimeSources !== undefined) row.agent_time_sources = updates.agentTimeSources
     if (updates.description !== undefined) row.description = updates.description
     if (updates.projectId !== undefined) row.project_id = updates.projectId
     if (updates.startTime !== undefined) row.start_time = updates.startTime
@@ -415,6 +419,8 @@ export class SupabaseProvider implements DataProvider {
       row.default_invoice_due_days = updates.defaultInvoiceDueDays
     if (updates.displayCurrency !== undefined)
       row.display_currency = updates.displayCurrency
+    if (updates.agentTimeHostLabels !== undefined)
+      row.agent_time_host_labels = parseAgentTimeHostLabels(updates.agentTimeHostLabels)
     if (updates.agentTimeHosts !== undefined)
       row.agent_time_hosts = parseAgentTimeHosts(updates.agentTimeHosts)
     const { error } = await this.db

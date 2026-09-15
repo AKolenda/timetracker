@@ -1,3 +1,5 @@
+import type { AgentTimeSourceInterval } from "./agent-time"
+
 export interface Client {
   id: string
   name: string
@@ -26,6 +28,7 @@ export interface Project {
 }
 
 export interface TimeEntry {
+  agentTimeSources?: AgentTimeSourceInterval[]
   id: string
   projectId: string
   description: string
@@ -83,6 +86,7 @@ export interface Settings {
   defaultInvoiceDueDays: number
   displayCurrency: string
   agentTimeHosts?: string[]
+  agentTimeHostLabels?: Record<string, string>
 }
 
 export interface Invoice {

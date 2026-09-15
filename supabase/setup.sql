@@ -130,3 +130,7 @@ create policy "Allow all" on expenses for all using (true) with check (true);
 create policy "Allow all" on settings for all using (true) with check (true);
 create policy "Allow all" on invoices for all using (true) with check (true);
 create policy "Allow all" on invoice_line_items for all using (true) with check (true);
+
+-- Machine labels are user settings; chat provenance survives approval.
+alter table public.settings add column if not exists agent_time_host_labels jsonb not null default '{}'::jsonb;
+alter table public.time_entries add column if not exists agent_time_sources jsonb not null default '[]'::jsonb;

@@ -26,6 +26,8 @@ type AgentTimeInterval = {
   conversation_id: string
   conversation_title: string
   conversation_summary: string
+  hostUrl?: string
+  machineLabel?: string
 }
 
 export type AgentTimeSourceInterval = {
@@ -37,7 +39,9 @@ export type AgentTimeSourceInterval = {
   model: string
   conversationId: string
   conversationTitle: string
-  conversationSummary: string
+  conversationSummary?: string
+  hostUrl?: string
+  machineLabel?: string
 }
 
 export type AgentTimeBlock = {
@@ -117,11 +121,13 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
 }
 
 /** Reads Agent Time's server-side local-network endpoint. The URL is deliberately not client-configurable. */
-export async function fetchAgentTime(dbHosts: string[] = []): Promise<AgentTimePayload> {
+export async function fetchAgentTime(dbHosts: string[] = [], labels: Record<string, string> = {}): Promise<AgentTimePayload> {
   const allUrls = agentTimeUrls(process.env.AGENT_TIME_REMOTE_URL, dbHosts)
 
+  if (!allUrls.length) throw new Error("Add an Agent Time machine in Settings to see its activity.")
+
   const payloads = await Promise.all(
-    allUrls.map(async (url) => {
+    allUrls.map(async (url): Promise<AgentTimePayload | null> => {
       try {
         const response = await fetch(url, {
           cache: "no-store",
@@ -131,7 +137,8 @@ export async function fetchAgentTime(dbHosts: string[] = []): Promise<AgentTimeP
             : undefined,
         })
         if (response.ok) {
-          return payloadFromUnknown(await response.json())
+          const payload = payloadFromUnknown(await response.json())
+          return { ...payload, intervals: payload.intervals.map((interval) => ({ ...interval, hostUrl: url, machineLabel: labels[url] || new URL(url).hostname })) }
         }
       } catch {
         // Ignore errors for individual URLs to remain resilient if one VM goes offline
@@ -302,6 +309,8 @@ export function toImportData(
           conversationId: interval.conversation_id,
           conversationTitle: interval.conversation_title,
           conversationSummary: interval.conversation_summary,
+          hostUrl: interval.hostUrl,
+          machineLabel: interval.machineLabel,
         })),
         live: block.intervals.some((interval) => interval.live),
       }))

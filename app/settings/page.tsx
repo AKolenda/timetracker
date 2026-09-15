@@ -139,6 +139,7 @@ export default function SettingsPage() {
         displayCurrency:
           form.displayCurrency === "none" ? "" : form.displayCurrency,
         agentTimeHosts: form.agentTimeHosts || [],
+        agentTimeHostLabels: form.agentTimeHostLabels || {},
       })
       toast.success("Settings saved")
     } catch {
@@ -758,27 +759,16 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="grid gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="agent-time">API Nodes (one per line)</Label>
-                <Textarea
-                  id="agent-time"
-                  placeholder="http://10.40.40.10:8080/api/data"
-                  value={(form.agentTimeHosts || []).join("\n")}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      agentTimeHosts: e.target.value
-                        .split("\n")
-                        .map((s) => s.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  className="min-h-[100px]"
-                />
-                <p className="text-sm text-muted-foreground">
-                  TimeTracker will merge overlapping imports if you provide URLs
-                  for multiple Agent Time network endpoints running on different
-                  workstations or VMs.
-                </p>
+                <Label htmlFor="agent-time">Collector URLs (one per line)</Label>
+                <Textarea id="agent-time" value={(form.agentTimeHosts || []).join("\n")} onChange={(e) => setForm({ ...form, agentTimeHosts: e.target.value.split("\n") })} placeholder="http://your-machine:8080/api/data" />
+                <p className="text-xs text-muted-foreground">Add each machine running Agent Time. Overlapping activity is merged so time is not counted twice.</p>
+                <div className="grid gap-3">
+                  {(form.agentTimeHosts || []).filter((url) => url.trim()).map((url, index) => <div key={index} className="grid gap-1.5 rounded-md border p-3">
+                    <Label htmlFor={`machine-label-${index}`}>Machine label</Label>
+                    <Input id={`machine-label-${index}`} value={form.agentTimeHostLabels?.[url.trim()] || ""} placeholder="e.g. Work laptop or Coding VM" onChange={(e) => setForm({ ...form, agentTimeHostLabels: { ...form.agentTimeHostLabels, [url.trim()]: e.target.value } })} />
+                    <p className="break-all text-xs text-muted-foreground">{url.trim()}</p>
+                  </div>)}
+                </div>
               </div>
             </CardContent>
           </Card>

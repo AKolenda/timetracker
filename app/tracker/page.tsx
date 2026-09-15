@@ -2,6 +2,8 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import Image from "next/image"
+import { machineName } from "@/lib/agent-time-hosts"
+import { clipAgentSources } from "@/lib/agent-time-provenance"
 import {
   ArrowUpRight,
   Play,
@@ -97,6 +99,8 @@ type AgentTimeSourceInterval = {
   conversationId: string
   conversationTitle: string
   conversationSummary?: string
+  hostUrl?: string
+  machineLabel?: string
 }
 
 type AgentTimeResponse = {
@@ -151,7 +155,7 @@ function groupConversationSources(
     const start = Math.max(new Date(interval.start).getTime(), sliceStart)
     const end = Math.min(new Date(interval.end).getTime(), sliceEnd)
     if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
-    const key = `${interval.source}:${interval.conversationId || interval.conversationTitle || interval.model || interval.agent}`
+    const key = `${interval.hostUrl || ""}:${interval.source}:${interval.conversationId || interval.conversationTitle || interval.model || interval.agent}`
     const current = conversations.get(key)
     if (current) current.spans.push({ start, end })
     else conversations.set(key, { ...interval, spans: [{ start, end }] })
@@ -171,17 +175,6 @@ function groupConversationSources(
       durationSeconds: merged.reduce((total, span) => total + Math.floor((span.end - span.start) / 1000), 0),
     }
   }).sort((a, b) => a.spans[0].start - b.spans[0].start)
-}
-
-function unionRangeSeconds(ranges: TimeRange[]) {
-  const sorted = [...ranges].sort((a, b) => a.start - b.start)
-  const merged: TimeRange[] = []
-  for (const range of sorted) {
-    const previous = merged.at(-1)
-    if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end)
-    else merged.push({ ...range })
-  }
-  return merged.reduce((total, range) => total + Math.floor((range.end - range.start) / 1000), 0)
 }
 
 type ConversationSource = ReturnType<typeof groupConversationSources>[number]
@@ -215,23 +208,16 @@ function SourceLogo({ source, agent, className = "size-6" }: { source: string; a
   return <span className={`grid shrink-0 place-items-center rounded-md bg-emerald-600 text-white shadow-sm ${className}`} aria-label="ChatGPT logo"><svg viewBox="0 0 24 24" className="size-[76%]" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M11.217 19.384A3.501 3.501 0 0 0 18 18.167V13l-6-3.35" /><path d="M5.214 15.014A3.501 3.501 0 0 0 9.66 20.28L14 17.746V10.8" /><path d="M6 7.63c-1.391-.236-2.787.395-3.534 1.689a3.474 3.474 0 0 0 1.271 4.745L8 16.578l6-3.348" /><path d="M12.783 4.616A3.501 3.501 0 0 0 6 5.833V10.9l6 3.45" /><path d="M18.786 8.986A3.501 3.501 0 0 0 14.34 3.72L10 6.254V13.2" /><path d="M18 16.302c1.391.236 2.787-.395 3.534-1.689a3.474 3.474 0 0 0-1.271-4.745l-4.308-2.514L10 10.774" /></svg></span>
 }
 
-function timelineSourceKey(source: ConversationSource) {
-  if (source.source === "T3 Code") return "t3"
-  if (source.source === "Claude" || source.agent === "Claude" || source.agent === "Fable") return "claude"
-  return "codex"
-}
-
-type TimelineTarget = { key: string; leftPx: number; laneBottomPx: number; width: number; height: number }
 type TranscriptMessage = { role: "user" | "assistant"; text: string; at: string | null }
-type Transcript = { source: string; conversationId: string; title: string; messages: TranscriptMessage[] }
+type Transcript = { source: string; conversationId: string; title: string; messages: TranscriptMessage[]; nextOffset?: number | null; totalMessages?: number }
 
 function ChatTranscript({ source, onClose }: { source: ConversationSource; onClose: () => void }) {
   const [state, setState] = useState<{ key: string; transcript?: Transcript; error?: string } | null>(null)
-  const key = `${source.source}:${source.conversationId}`
+  const key = `${source.hostUrl || ""}:${source.source}:${source.conversationId}`
 
   useEffect(() => {
     let cancelled = false
-    const query = new URLSearchParams({ source: source.source, id: source.conversationId })
+    const query = new URLSearchParams({ source: source.source, id: source.conversationId, host: source.hostUrl || "" })
     fetch(`/api/agent-time/transcript?${query.toString()}`)
       .then(async (response) => {
         const body = await response.json().catch(() => ({})) as { transcript?: Transcript; error?: string }
@@ -243,6 +229,20 @@ function ChatTranscript({ source, onClose }: { source: ConversationSource; onClo
     return () => { cancelled = true }
   }, [source, key])
 
+  const [loadingMore, setLoadingMore] = useState(false)
+  async function loadMore() {
+    if (state?.transcript?.nextOffset == null || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const query = new URLSearchParams({ source: source.source, id: source.conversationId, host: source.hostUrl || "", offset: String(state.transcript.nextOffset) })
+      const response = await fetch(`/api/agent-time/transcript?${query}`)
+      const body = await response.json() as { transcript?: Transcript; error?: string }
+      if (!response.ok || !body.transcript) throw new Error(body.error || "Unable to load more messages")
+      const next = body.transcript
+      setState((current) => current?.key === key && current.transcript ? { ...current, transcript: { ...next, messages: [...current.transcript.messages, ...next.messages] } } : current)
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Unable to load more messages") }
+    finally { setLoadingMore(false) }
+  }
   const title = state?.transcript?.title || source.conversationTitle || `${source.agent} conversation`
   const loading = !state || state.key !== key
 
@@ -251,11 +251,11 @@ function ChatTranscript({ source, onClose }: { source: ConversationSource; onClo
       <SourceLogo source={source.source} agent={source.agent} className="size-7" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium leading-snug break-words">{title}</p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">{sourceDescription(source)}{source.model ? ` · ${source.model}` : ""} · {formatDuration(source.durationSeconds)}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{machineName(source)} · {sourceDescription(source)}{source.model ? ` · ${source.model}` : ""} · {formatDuration(source.durationSeconds)}</p>
       </div>
       <Button type="button" variant="ghost" size="icon-xs" aria-label="Close chat" onClick={onClose}><X className="size-3.5" /></Button>
     </div>
-    <div className="max-h-[28rem] min-w-0 overflow-y-auto overscroll-contain px-3 py-3">
+    <div className="max-h-[65dvh] min-w-0 overflow-y-auto overscroll-contain px-3 py-3">
       {loading && <div className="grid gap-3"><Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" /><Skeleton className="h-16 w-4/5 rounded-2xl" /><Skeleton className="ml-auto h-8 w-1/2 rounded-2xl" /></div>}
       {!loading && state?.error && <p className="py-6 text-center text-sm text-muted-foreground">{state.error}</p>}
       {!loading && state?.transcript && state.transcript.messages.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">This chat has no messages yet.</p>}
@@ -265,142 +265,50 @@ function ChatTranscript({ source, onClose }: { source: ConversationSource; onClo
           {message.at && <span className="mt-1 px-1 font-mono text-[0.65rem] text-muted-foreground">{format(new Date(message.at), "h:mm a")}</span>}
         </div>)}
       </div>}
+      {state?.transcript?.nextOffset != null && <Button className="mt-4 w-full" variant="outline" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading…" : `Load more messages (${state.transcript.messages.length} / ${state.transcript.totalMessages})`}</Button>}
     </div>
   </div>
 }
 
-function TimelinePreview({ sources, start, end, onOpenChat }: { sources: ConversationSource[]; start: number; end: number; onOpenChat: (source: ConversationSource) => void }) {
-  const duration = Math.max(1, end - start)
-  const [hover, setHover] = useState<TimelineTarget | null>(null)
-  const [pinned, setPinned] = useState<TimelineTarget | null>(null)
-  const [selectedRun, setSelectedRun] = useState<number | null>(null)
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const active = pinned ?? hover
-  const sourceMeta = {
-    claude: { label: "Claude", bar: "bg-[#d97757]" },
-    codex: { label: "Codex / ChatGPT", bar: "bg-emerald-500" },
-    t3: { label: "T3 Code", bar: "bg-violet-500" },
-  } as const
-  const lanes = (["claude", "codex", "t3"] as const).map((key) => ({
-    key,
-    ...sourceMeta[key],
-    conversations: sources.filter((source) => timelineSourceKey(source) === key),
-  })).filter((lane) => lane.conversations.length > 0)
-  const activeRanges = sources.flatMap((source) => source.spans)
-  const gaps = subtractRanges({ start, end }, activeRanges)
-  const conversationKey = (source: ConversationSource, index: number) => `${source.source}-${source.conversationId || index}`
-  const activeSource = active ? sources.find((source, index) => conversationKey(source, index) === active.key) ?? null : null
-
-  function cancelClose() {
-    if (closeTimer.current) clearTimeout(closeTimer.current)
-    closeTimer.current = null
-  }
-  function scheduleClose() {
-    cancelClose()
-    closeTimer.current = setTimeout(() => setHover(null), 160)
-  }
-  function targetFor(key: string, element: HTMLElement): TimelineTarget {
-    const container = containerRef.current?.getBoundingClientRect()
-    const bar = element.getBoundingClientRect()
-    const lane = element.parentElement?.getBoundingClientRect() ?? bar
-    return {
-      key,
-      leftPx: container ? bar.left - container.left : 0,
-      laneBottomPx: container ? container.bottom - lane.top : 0,
-      width: container?.width ?? 0,
-      height: container?.height ?? 0,
-    }
-  }
-  useEffect(() => cancelClose, [])
-  useEffect(() => {
-    if (!pinned) return
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") { setPinned(null); setSelectedRun(null) }
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [pinned])
-
-  const cardWidth = active ? Math.min(300, Math.max(0, active.width - 8)) : 0
-  const cardLeft = active ? Math.max(0, Math.min(active.leftPx, active.width - cardWidth)) : 0
-
-  return <div className="min-w-0" data-testid="agent-timeline-preview" onMouseLeave={scheduleClose}>
-    <div className="relative grid min-w-0 gap-1.5" ref={containerRef}>
-      {lanes.map((lane) => <div key={lane.key} className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
-        <SourceLogo source={lane.key === "t3" ? "T3 Code" : lane.key === "claude" ? "Claude" : "Codex"} agent={lane.key === "claude" ? "Claude" : "Codex"} className="size-6" />
-        <div className="relative h-6 min-w-0 overflow-hidden rounded-md bg-muted/40" aria-label={`${lane.label} activity lane`}>
-          {lane.conversations.flatMap((conversation) => {
-            const key = conversationKey(conversation, sources.indexOf(conversation))
-            const isActive = active?.key === key
-            return conversation.spans.map((span, spanIndex) => {
-              const left = ((span.start - start) / duration) * 100
-              const width = ((span.end - span.start) / duration) * 100
-              const isSelectedRun = isActive && pinned && selectedRun === spanIndex
-              return <button
-                type="button"
-                key={`${key}-${span.start}-${spanIndex}`}
-                className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-md transition-[opacity,box-shadow] ${lane.bar} ${isSelectedRun ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : isActive ? "z-10 ring-1 ring-foreground/70 ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""} ${isActive && pinned && selectedRun !== null && !isSelectedRun ? "opacity-50" : ""}`}
-                style={{ left: `${left}%`, width: `${width}%` }}
-                aria-label={`Show ${conversation.conversationTitle || lane.label}`}
-                aria-pressed={pinned?.key === key}
-                onMouseEnter={(event) => { cancelClose(); if (!pinned) setHover(targetFor(key, event.currentTarget)) }}
-                onMouseLeave={scheduleClose}
-                onFocus={(event) => { cancelClose(); if (!pinned) setHover(targetFor(key, event.currentTarget)) }}
-                onBlur={scheduleClose}
-                onClick={(event) => {
-                  const target = targetFor(key, event.currentTarget)
-                  if (pinned?.key === key) { setPinned(null); setSelectedRun(null); setHover(target); return }
-                  setPinned(target)
-                  setSelectedRun(conversation.spans.length > 1 ? spanIndex : null)
-                }}
-              />
-            })
-          })}
+function EntryChats({ description, sources, start, end, labels, inferred = false }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const [page, setPage] = useState(0)
+  const [chat, setChat] = useState<ConversationSource | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const conversations = groupConversationSources(sources, start, end)
+  const needle = query.trim().toLowerCase()
+  const filtered = conversations.filter((source) => `${source.conversationTitle} ${source.conversationSummary || ""} ${machineName(source, labels)} ${source.source}`.toLowerCase().includes(needle))
+  const pages = Math.max(1, Math.ceil(filtered.length / 5))
+  const currentPage = Math.min(page, pages - 1)
+  return <>
+    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (value) { setPage(0); setQuery("") } }}>
+      <PopoverTrigger asChild><button ref={triggerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`}>
+        <span className="min-w-0 flex-1 break-words">{description || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+      </button></PopoverTrigger>
+      <PopoverContent onCloseAutoFocus={(event) => { if (chat) event.preventDefault() }} align="start" collisionPadding={16} className="w-[min(28rem,calc(100vw-2rem))] gap-0 rounded-md p-0" data-testid="entry-chats-dropdown">
+        <div className="border-b p-3">
+          <p className="font-semibold">Chats in this entry <span className="font-normal text-muted-foreground">({conversations.length})</span></p>
+          <p className="mt-1 text-xs text-muted-foreground">{inferred ? "Matched from available activity logs. Older entries did not save chat references." : "Activity contributing to this time entry."}</p>
+          <Input className="mt-3 h-8 rounded-md" aria-label="Search entry chats" placeholder="Search chats or machines…" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} />
         </div>
-      </div>)}
-      {gaps.length > 0 && <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
-        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-[0.5rem] font-bold text-muted-foreground" aria-label="Joined gap">GAP</span>
-        <div className="relative h-6 min-w-0 overflow-hidden rounded-md bg-muted/20" aria-label="Joined gap filler lane">
-          {gaps.map((gap, gapIndex) => <span key={`${gap.start}-${gap.end}-${gapIndex}`} className="absolute inset-y-1 min-w-[3px] cursor-help rounded-md" style={{ left: `${((gap.start - start) / duration) * 100}%`, width: `${((gap.end - gap.start) / duration) * 100}%`, backgroundImage: "repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in oklab, var(--muted-foreground) 35%, transparent) 4px 6px)" }} title={`Joined gap · ${format(new Date(gap.start), "h:mm:ss a")}–${format(new Date(gap.end), "h:mm:ss a")} · ${formatDuration(Math.floor((gap.end - gap.start) / 1000))}`} />)}
+        <div className="max-h-[min(22rem,50vh)] overflow-y-auto p-1">
+          {filtered.slice(currentPage * 5, currentPage * 5 + 5).map((source) => <button key={`${source.hostUrl}:${source.source}:${source.conversationId}`} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md p-2.5 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setChat({ ...source, machineLabel: machineName(source, labels) }); setOpen(false) }}>
+            <SourceLogo source={source.source} agent={source.agent} className="mt-0.5 size-5" />
+            <div className="min-w-0 flex-1">
+              <p className="break-words text-sm font-medium">{source.conversationTitle || source.conversationSummary || "Untitled chat"}</p>
+              {source.conversationSummary && source.conversationSummary !== source.conversationTitle && <p className="mt-1 break-words text-xs text-muted-foreground">{source.conversationSummary}</p>}
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="rounded-md bg-muted px-1.5 py-0.5 text-foreground">{machineName(source, labels)}</span><span>{source.source}</span><span className="font-mono">{formatDuration(source.durationSeconds)}</span></div>
+            </div>
+            <MessageSquareText className="mt-1 size-4 shrink-0 text-muted-foreground" />
+          </button>)}
+          {filtered.length === 0 && <p className="p-4 text-sm text-muted-foreground">{query ? "No chats match this search." : "No chat references are available for this entry. Check that its source machine is connected."}</p>}
         </div>
-      </div>}
-      <div className="flex min-w-0 justify-between pl-8 font-mono text-[0.65rem] text-muted-foreground"><span>{format(new Date(start), "h:mm a")}</span><span>{format(new Date(end), "h:mm a")}</span></div>
-      {activeSource && active && <div
-        className="absolute z-20 grid gap-2 rounded-xl border bg-popover p-2.5 text-popover-foreground shadow-xl before:absolute before:inset-x-0 before:top-full before:h-3 before:content-['']"
-        style={{ left: cardLeft, width: cardWidth, bottom: active.laneBottomPx + 6 }}
-        onMouseEnter={cancelClose}
-        onMouseLeave={scheduleClose}
-        data-testid="agent-timeline-card"
-      >
-        <button
-          type="button"
-          className="-m-1 flex min-w-0 cursor-pointer items-start gap-2.5 rounded-lg p-1 text-left transition-colors hover:bg-muted/60"
-          onClick={() => onOpenChat(activeSource)}
-          aria-label={`Open chat ${activeSource.conversationTitle || activeSource.agent}`}
-        >
-          <SourceLogo source={activeSource.source} agent={activeSource.agent} className="size-7" />
-          <div className="min-w-0 flex-1">
-            <p className="line-clamp-2 text-sm font-medium leading-snug break-words">{activeSource.conversationTitle || `${activeSource.agent} conversation`}</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{activeSource.model || sourceDescription(activeSource)} · {formatDuration(activeSource.durationSeconds)}</p>
-          </div>
-          <MessageSquareText className="mt-1 size-4 shrink-0 text-muted-foreground" />
-        </button>
-        {activeSource.spans.length > 1 && <div className="flex min-w-0 flex-wrap gap-1">
-          {activeSource.spans.map((span, spanIndex) => {
-            const isSelected = pinned && selectedRun === spanIndex
-            return <button
-              key={`${span.start}-${span.end}-${spanIndex}`}
-              type="button"
-              className={`cursor-pointer rounded-md px-1.5 py-0.5 text-[0.7rem] transition-colors ${isSelected ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:text-foreground"}`}
-              aria-pressed={!!isSelected}
-              onClick={() => { if (!pinned) setPinned(active); setSelectedRun(isSelected ? null : spanIndex) }}
-            >Run {spanIndex + 1} · <span className="font-mono">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span></button>
-          })}
-        </div>}
-      </div>}
-    </div>
-  </div>
+        {pages > 1 && <div className="flex items-center justify-between border-t px-3 py-2 text-xs"><Button size="sm" variant="ghost" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><span>{currentPage + 1} / {pages}</span><Button size="sm" variant="ghost" disabled={currentPage >= pages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button></div>}
+      </PopoverContent>
+    </Popover>
+    <Dialog open={!!chat} onOpenChange={(value) => { if (!value) setChat(null) }}><DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); triggerRef.current?.focus() }} aria-describedby={undefined} showCloseButton={false} className="max-h-[90dvh] w-[calc(100vw-2rem)] min-w-0 overflow-hidden rounded-md p-0 sm:max-w-3xl"><DialogHeader className="sr-only"><DialogTitle>Chat transcript</DialogTitle></DialogHeader>{chat && <ChatTranscript source={chat} onClose={() => setChat(null)} />}</DialogContent></Dialog>
+  </>
 }
 
 function mobileFixtureRequested() {
@@ -665,7 +573,6 @@ export default function TrackerPage() {
   })
   const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
   const [agentTimeLoading, setAgentTimeLoading] = useState(false)
-  const [expandedAgentSlice, setExpandedAgentSlice] = useState<string | null>(null)
   const [gapMinutes, setGapMinutes] = useState("15")
   const [appliedGapMinutes, setAppliedGapMinutes] = useState("15")
   const [ignoredAgentRanges, setIgnoredAgentRanges] = useState<IgnoredAgentRange[]>([])
@@ -682,7 +589,6 @@ export default function TrackerPage() {
   const [reviewAgentOverlapsOpen, setReviewAgentOverlapsOpen] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [importSettingsOpen, setImportSettingsOpen] = useState(false)
-  const [draftChat, setDraftChat] = useState<{ sliceId: string; source: ConversationSource } | null>(null)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
   const requestedSummaries = useRef(new Set<string>())
   const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
@@ -764,6 +670,22 @@ export default function TrackerPage() {
     [agentTime, agentTimeCutoff]
   )
 
+  function sourcesForEntry(entry: TimeEntry): AgentTimeSourceInterval[] {
+    const start = Date.parse(entry.startTime)
+    const end = entry.endTime ? Date.parse(entry.endTime) : NaN
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return []
+    if (entry.agentTimeSources?.length) return clipAgentSources(entry.agentTimeSources, start, end)
+    const project = getProject(entry.projectId)
+    const intervals = (agentTime?.intervals || []).filter((interval) =>
+      projectMappings[interval.project] === entry.projectId || interval.project === project?.name ||
+      interval.sourceIntervals?.some((source) => (source.conversationSummary || source.conversationTitle) === entry.description)
+    )
+    return clipAgentSources(intervals.flatMap((interval) => interval.sourceIntervals || []), start, end)
+  }
+  function machineNames(sources: AgentTimeSourceInterval[]) {
+    return [...new Set(sources.map((source) => machineName(source, data.settings.agentTimeHostLabels)))].join(", ") || "—"
+  }
+
   const agentImportPreview = useMemo(
     () => buildAgentImportPlan(
       availableAgentIntervals,
@@ -810,7 +732,6 @@ export default function TrackerPage() {
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse
       setAgentTime(payload)
-      setExpandedAgentSlice(null)
     } catch (error) {
       if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
     } finally {
@@ -870,6 +791,7 @@ export default function TrackerPage() {
           if (duration <= 0) continue
           const saved = await addTimeEntry({
             ...entry,
+            agentTimeSources: clipAgentSources(entry.agentTimeSources || [], gap.start, gap.end),
             startTime: new Date(gap.start).toISOString(),
             endTime: new Date(gap.end).toISOString(),
             duration,
@@ -895,6 +817,7 @@ export default function TrackerPage() {
     return {
       projectId: slice.projectId,
       description: draftDescription(slice, chatSummaries),
+      agentTimeSources: clipAgentSources(slice.interval.sourceIntervals || [], slice.start, slice.end),
       startTime: new Date(slice.start).toISOString(),
       endTime: new Date(slice.end).toISOString(),
       duration: slice.durationSeconds,
@@ -905,14 +828,10 @@ export default function TrackerPage() {
 
   async function approveDraft(slice: AgentImportSlice) {
     if (!await importDraftEntries([draftEntry(slice)])) return
-    if (expandedAgentSlice === slice.id) setExpandedAgentSlice(null)
-    if (draftChat?.sliceId === slice.id) setDraftChat(null)
   }
 
   async function approveAllDrafts() {
     if (!await importDraftEntries(agentImportPreview.slices.map(draftEntry))) return
-    setExpandedAgentSlice(null)
-    setDraftChat(null)
   }
 
   async function saveHoursOnly() {
@@ -1050,9 +969,7 @@ export default function TrackerPage() {
     }
 
     if (editDraft) {
-      if (!await importDraftEntries([values])) return
-      if (expandedAgentSlice === editDraft.id) setExpandedAgentSlice(null)
-      if (draftChat?.sliceId === editDraft.id) setDraftChat(null)
+      if (!await importDraftEntries([{ ...values, agentTimeSources: clipAgentSources(editDraft.interval.sourceIntervals || [], startDt.getTime(), endDt.getTime()) }])) return
     } else if (editEntry) {
       await updateTimeEntry(editEntry.id, values)
       toast.success("Entry updated")
@@ -1142,8 +1059,6 @@ export default function TrackerPage() {
       persistIgnoredAgentRanges(next)
       return next
     })
-    if (expandedAgentSlice === slice.id) setExpandedAgentSlice(null)
-    if (draftChat?.sliceId === slice.id) setDraftChat(null)
     toast("Skipped", {
       description: `${format(new Date(slice.start), "MMM d, h:mm a")} – ${format(new Date(slice.end), "h:mm a")}`,
     })
@@ -1282,6 +1197,7 @@ export default function TrackerPage() {
             <TableHeader>
               <TableRow>
                 <TableHead className="sm:w-[30%]">Description</TableHead>
+                <TableHead className="hidden sm:table-cell">Machine</TableHead>
                 <TableHead className="hidden w-[18%] sm:table-cell">Project</TableHead>
                 <TableHead className="hidden w-[12%] sm:table-cell">Date</TableHead>
                 <TableHead className="hidden min-w-28 sm:table-cell">Start / End</TableHead>
@@ -1291,32 +1207,25 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={7} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {logRows.map((row, index) => {
                 const isNewDay = index === 0 || row.date !== logRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
-                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={7} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
                   const amount = project ? (slice.durationSeconds / 3600) * project.rate : 0
-                  const expanded = expandedAgentSlice === slice.id
-                  const sourceConversations = expanded ? groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end) : []
-                  const laneKeys = [...new Set(groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end).map(timelineSourceKey))]
-                  const sourceActiveSeconds = unionRangeSeconds(sourceConversations.flatMap((source) => source.spans))
-                  const joinedGapSeconds = Math.max(0, slice.durationSeconds - sourceActiveSeconds)
                   return <Fragment key={slice.id}>
                     {dayHeader}
                     <TableRow data-testid="agent-draft-row" className="bg-amber-500/[0.07] hover:bg-amber-500/[0.11]">
                       <TableCell className="font-medium whitespace-normal break-words">
-                        <button type="button" className="flex min-w-0 max-w-full cursor-pointer items-center gap-2 text-left" aria-expanded={expanded} onClick={() => setExpandedAgentSlice(expanded ? null : slice.id)}>
-                          <span className="flex shrink-0 -space-x-1.5">{(laneKeys.length > 0 ? laneKeys : ["codex"]).map((key) => <SourceLogo key={key} source={key === "t3" ? "T3 Code" : key === "claude" ? "Claude" : "Codex"} agent={key === "claude" ? "Claude" : "Codex"} className="size-5 ring-2 ring-background" />)}</span>
-                          <span className="min-w-0 flex-1 whitespace-normal break-words">{draftDescription(slice, chatSummaries)}</span>
-                          <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
-                        </button>
+                        <EntryChats description={draftDescription(slice, chatSummaries)} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} />
+                        <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{machineNames(clipAgentSources(slice.interval.sourceIntervals || [], slice.start, slice.end))}</p>
                         <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span> · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                       </TableCell>
+                      <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{machineNames(clipAgentSources(slice.interval.sourceIntervals || [], slice.start, slice.end))}</TableCell>
                       <TableCell className="hidden whitespace-normal sm:table-cell"><span className="block text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}</TableCell>
                       <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</TableCell>
@@ -1328,35 +1237,6 @@ export default function TrackerPage() {
                         <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
                       </div></TableCell>
                     </TableRow>
-                    {expanded && <TableRow className="bg-amber-500/[0.04] hover:bg-amber-500/[0.04]"><TableCell colSpan={7} className="min-w-0 p-3 whitespace-normal">
-                      <div className="grid w-0 min-w-full gap-3" data-testid="agent-source-details">
-                        {sourceConversations.length > 0 ? <>
-                          <TimelinePreview sources={sourceConversations} start={slice.start} end={slice.end} onOpenChat={(source) => setDraftChat({ sliceId: slice.id, source })} />
-                          <div className="flex min-w-0 flex-wrap gap-1.5 text-[0.7rem]">
-                            <span className="rounded-md bg-muted px-2 py-0.5">Active <span className="font-mono text-foreground">{formatDuration(sourceActiveSeconds)}</span></span>
-                            {joinedGapSeconds > 0 && <span className="rounded-md bg-muted px-2 py-0.5">Gaps <span className="font-mono text-foreground">{formatDuration(joinedGapSeconds)}</span></span>}
-                          </div>
-                          <div className="grid min-w-0 gap-1">
-                            {sourceConversations.map((source, sourceIndex) => {
-                              const selected = draftChat?.sliceId === slice.id && draftChat.source === source
-                              return <button
-                                key={`${source.source}-${source.conversationId || sourceIndex}`}
-                                type="button"
-                                className={`flex min-w-0 cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors ${selected ? "bg-muted" : "hover:bg-muted/60"}`}
-                                aria-pressed={selected}
-                                onClick={() => setDraftChat(selected ? null : { sliceId: slice.id, source })}
-                              >
-                                <SourceLogo source={source.source} agent={source.agent} className="size-5" />
-                                <span className="min-w-0 flex-1 truncate text-sm">{source.conversationTitle || `${source.agent} conversation`}</span>
-                                <span className="shrink-0 font-mono text-xs text-muted-foreground">{formatDuration(source.durationSeconds)}</span>
-                                <MessageSquareText className="size-3.5 shrink-0 text-muted-foreground" />
-                              </button>
-                            })}
-                          </div>
-                          {draftChat?.sliceId === slice.id && <ChatTranscript source={draftChat.source} onClose={() => setDraftChat(null)} />}
-                        </> : <p className="text-xs text-muted-foreground">No chat details for this block. Refresh Agent Time.</p>}
-                      </div>
-                    </TableCell></TableRow>}
                   </Fragment>
                 }
                 const entry = row.entry
@@ -1366,11 +1246,13 @@ export default function TrackerPage() {
                   {dayHeader}
                   <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} aria-label={entry.description || "Untitled time entry"} className={highlightedEntry === entry.id ? "bg-amber-500/15 outline-2 -outline-offset-2 outline-amber-500" : overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
                   <TableCell className="font-medium whitespace-normal break-words">
-                    <span className="block">{entry.description || "Untitled"}</span>
+                    <EntryChats description={entry.description} sources={sourcesForEntry(entry)} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} />
+                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{machineNames(sourcesForEntry(entry))}</p>
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
                     {overlapIds.has(entry.id) && <button type="button" className="mt-1 block cursor-pointer text-xs text-red-700 underline underline-offset-4 dark:text-red-300" onClick={() => setReviewEntryOverlapsOpen(true)}>Review overlap</button>}
                     <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span> · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                   </TableCell>
+                  <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{machineNames(sourcesForEntry(entry))}</TableCell>
                   <TableCell className="hidden whitespace-normal sm:table-cell">
                     <button className="inline-flex max-w-full items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
                       <span>{project?.name ?? "—"}</span><Pencil className="size-3 shrink-0" />

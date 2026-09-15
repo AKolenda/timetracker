@@ -59,6 +59,8 @@ export async function GET(request: NextRequest) {
                 agent: "Codex",
                 source: "Codex",
                 model: "gpt-5.6-sol",
+                hostUrl: "http://workstation.example:8080/api/data",
+                machineLabel: "Workstation",
                 conversationId: "fixture-codex-chat",
                 conversationTitle: "Fix the mobile Agent Time import review",
               },
@@ -79,6 +81,8 @@ export async function GET(request: NextRequest) {
                 agent: "Codex",
                 source: "T3 Code",
                 model: "Codex",
+                hostUrl: "http://vm.example:8080/api/data",
+                machineLabel: "Development VM",
                 conversationId: "fixture-t3-chat",
                 conversationTitle: "Funding tracker mobile polish",
               },
@@ -89,6 +93,8 @@ export async function GET(request: NextRequest) {
                 agent: "Codex",
                 source: "Codex",
                 model: "gpt-5.6-sol",
+                hostUrl: "http://workstation.example:8080/api/data",
+                machineLabel: "Workstation",
                 conversationId: "fixture-codex-chat",
                 conversationTitle: "Fix the mobile Agent Time import review",
               },
@@ -112,7 +118,7 @@ export async function GET(request: NextRequest) {
 
     const settings = await getDataProvider().getSettings()
     const data = toImportData(
-      await fetchAgentTime(settings.agentTimeHosts || []),
+      await fetchAgentTime(settings.agentTimeHosts || [], settings.agentTimeHostLabels || {}),
       {
         project,
         from,
