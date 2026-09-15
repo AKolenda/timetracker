@@ -28,6 +28,7 @@ export interface Project {
 }
 
 export interface TimeEntry {
+  agentTimeTitleStatus?: "pending" | "failed" | null
   agentTimeSources?: AgentTimeSourceInterval[]
   id: string
   projectId: string

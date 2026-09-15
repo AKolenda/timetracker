@@ -45,7 +45,7 @@ function mobileTestFixture(): AppData {
   return {
     clients: [{ id: "fixture-client", name: "FundingTracker", email: "", phone: "", address: "", color: "", invoiceEmail: "", invoiceScheduleWeeks: null, invoiceScheduleAnchor: null, invoiceScheduleEnabled: false, invoiceScheduleAutoSend: false, lastInvoiceSent: null, createdAt: now.toISOString() }],
     projects: [{ id: "fixture-project", clientId: "fixture-client", name: "Funding tracker.app - readjust processing", rate: 100, currency: "USD", status: "active", color: "", createdAt: now.toISOString() }],
-    timeEntries: [{ id: "fixture-entry", projectId: "fixture-project", description: "Existing tracked hour", agentTimeSources: Array.from({ length: 7 }, (_, index) => ({ start: new Date(trackedStart.getTime() + index * 5 * 60_000).toISOString(), end: new Date(trackedStart.getTime() + (index + 1) * 5 * 60_000).toISOString(), durationSeconds: 300, agent: "Codex", source: "T3 Code", model: "Codex", conversationId: `fixture-saved-chat-${index}`, conversationTitle: `Saved chat ${index + 1}: review the search and navigation experience`, conversationSummary: "Improve search and navigation", hostUrl: index % 2 ? "http://vm.example:8080/api/data" : "http://workstation.example:8080/api/data", machineLabel: index % 2 ? "Development VM" : "Workstation" })), startTime: trackedStart.toISOString(), endTime: trackedEnd.toISOString(), duration: 3600, billable: true, date: localDateString(trackedStart, Intl.DateTimeFormat().resolvedOptions().timeZone) }], expenses: [], invoices: [], settings: { ...defaultSettings, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    timeEntries: [{ id: "fixture-entry", projectId: "fixture-project", description: "Existing tracked hour", agentTimeSources: Array.from({ length: 7 }, (_, index) => ({ start: new Date(trackedStart.getTime() + index * 5 * 60_000).toISOString(), end: new Date(trackedStart.getTime() + (index + 1) * 5 * 60_000).toISOString(), durationSeconds: 300, agent: "Codex", source: "T3 Code", model: "Codex", conversationId: `fixture-saved-chat-${index}`, conversationTitle: `Saved chat ${index + 1}: review the search and navigation experience`, conversationSummary: "Improve search and navigation", hostUrl: index % 2 ? "http://vm.example:8080/api/data" : "http://workstation.example:8080/api/data", machineLabel: index % 2 ? "Development VM" : "Workstation" })), startTime: trackedStart.toISOString(), endTime: trackedEnd.toISOString(), duration: 3600, billable: true, date: localDateString(trackedStart, Intl.DateTimeFormat().resolvedOptions().timeZone) }], expenses: [], invoices: [], settings: { ...defaultSettings, agentTimeMaxMinutes: 30, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
     activeTimers: [{ id: "fixture-timer", projectId: "fixture-project", description: "Mobile timer fixture", startTime: new Date(now.getTime() - 65 * 60 * 1000).toISOString(), billable: true, accumulatedPause: 0, pausedAt: null }],
   }
 }
@@ -69,6 +69,7 @@ interface StoreContext {
 
   addTimeEntry: (entry: Omit<TimeEntry, "id">) => Promise<TimeEntry>
   updateTimeEntry: (id: string, updates: Partial<TimeEntry>) => Promise<void>
+  syncAgentTimeTitles: (entries: Pick<TimeEntry, "id" | "description" | "agentTimeTitleStatus">[]) => void
   deleteTimeEntry: (id: string) => Promise<void>
 
   addExpense: (expense: Omit<Expense, "id">) => Promise<Expense>
@@ -309,8 +310,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     []
   )
 
+  const syncAgentTimeTitles = useCallback((entries: Pick<TimeEntry, "id" | "description" | "agentTimeTitleStatus">[]) => {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]))
+    setData((current) => ({ ...current, timeEntries: current.timeEntries.map((entry) => entry.agentTimeTitleStatus === "pending" && byId.has(entry.id) ? { ...entry, ...byId.get(entry.id) } : entry) }))
+  }, [])
+
   const updateTimeEntry = useCallback(
     async (id: string, updates: Partial<TimeEntry>) => {
+      if (updates.description !== undefined || updates.startTime !== undefined || updates.endTime !== undefined) updates = { ...updates, agentTimeTitleStatus: null }
       const db = getDataProvider()
       await db.updateTimeEntry(id, updates)
       setData((d) => ({
@@ -562,6 +569,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         deleteProject,
         addTimeEntry,
         updateTimeEntry,
+        syncAgentTimeTitles,
         deleteTimeEntry,
         addExpense,
         updateExpense,

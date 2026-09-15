@@ -201,7 +201,7 @@ Collector URLs may also be supplied through comma-separated `AGENT_TIME_REMOTE_U
 
 Agent Time reads local provider logs and T3’s activity records. These are estimates of agent activity, so review them before billing. TimeTracker joins activity according to the import gap setting and removes periods already covered by saved entries or active timers for the same project.
 
-Set **Maximum entry length (minutes)** in Settings to split new imports. It defaults to no limit. With a 30-minute limit, a 45-minute block becomes a 30-minute entry and a 15-minute entry. Each interval gets a title based on user/assistant messages timestamped inside that interval. Titles can be the same when the work has not changed. Completed interval titles are cached on the TimeTracker server across refreshes and restarts. Concurrent requests share one job; growing intervals wait until their end is at least two minutes old before generating a title. Failed jobs have a one-minute retry cooldown. When no messages are available, the saved chat title is the fallback.
+Set **Maximum entry length (minutes)** in Settings to split new imports. It defaults to no limit. With a 30-minute limit, a 45-minute block becomes a 30-minute entry and a 15-minute entry. Approval saves each interval immediately with its chat-name fallback. A **Naming…** indicator stays visible while the server generates the title in the background from user/assistant messages timestamped inside that interval. Pending jobs survive page refreshes and resume when the tracker checks their status after a server restart. Failed jobs offer a retry button. Manual edits and invoice-linked entries are protected from late naming results. Titles can be the same when the work has not changed. Completed interval titles are cached on the TimeTracker server across refreshes and restarts. Concurrent requests share one job; growing intervals wait until their end is at least two minutes old before generating a title. Failed jobs have a one-minute retry cooldown. When no messages are available, the saved chat title is the fallback.
 
 TimeTracker uses the Codex CLI on the **web server** for interval titles, defaulting to `gpt-5.6-terra` with low reasoning. Install and authenticate Codex under the user running TimeTracker and ensure `codex` is on that service’s `PATH`. `AGENT_SUMMARY_CODEX_MODEL` and `AGENT_SUMMARY_CODEX_EFFORT` override these choices. A generation failure leaves the draft available to retry. Agent Time’s own optional whole-chat summaries run separately under each collector’s user account.
 
@@ -222,6 +222,7 @@ Back up your database, then apply pending files in `supabase/migrations/` in ord
 - `008_agent_time_hosts.sql`: multiple collector URLs.
 - `009_agent_time_provenance.sql`: editable machine labels and saved chat references.
 - `010_agent_time_intervals.sql`: optional maximum entry length.
+- `011_agent_time_title_jobs.sql`: persistent background naming status and guarded title updates.
 
 Update Agent Time on each source machine too, then restart `systemctl --user restart agent-time`. Older collectors can still supply activity, but need current transcript and canonical-session support for chat viewing and duplicate merging. No personal URLs, labels, interval preferences, or historical backfills are seeded by the migrations.
 

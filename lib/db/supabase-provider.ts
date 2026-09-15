@@ -44,8 +44,9 @@ function rowToProject(row: Record<string, unknown>): Project {
   }
 }
 
-function rowToTimeEntry(row: Record<string, unknown>): TimeEntry {
+export function rowToTimeEntry(row: Record<string, unknown>): TimeEntry {
   return {
+    agentTimeTitleStatus: row.agent_time_title_status === "pending" || row.agent_time_title_status === "failed" ? row.agent_time_title_status : null,
     agentTimeSources: (Array.isArray(row.agent_time_sources) ? row.agent_time_sources : []) as TimeEntry["agentTimeSources"],
     id: row.id as string,
     projectId: row.project_id as string,
@@ -287,6 +288,7 @@ export class SupabaseProvider implements DataProvider {
         billable: entry.billable,
         date: entry.date,
         agent_time_sources: entry.agentTimeSources ?? [],
+        agent_time_title_status: entry.agentTimeTitleStatus ?? null,
       })
       .select()
       .single()
@@ -299,6 +301,8 @@ export class SupabaseProvider implements DataProvider {
     updates: Partial<TimeEntry>
   ): Promise<void> {
     const row: Record<string, unknown> = {}
+    if (updates.agentTimeTitleStatus !== undefined) row.agent_time_title_status = updates.agentTimeTitleStatus
+    if (updates.description !== undefined || updates.startTime !== undefined || updates.endTime !== undefined) row.agent_time_title_status = null
     if (updates.agentTimeSources !== undefined) row.agent_time_sources = updates.agentTimeSources
     if (updates.description !== undefined) row.description = updates.description
     if (updates.projectId !== undefined) row.project_id = updates.projectId

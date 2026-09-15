@@ -511,6 +511,7 @@ export default function TrackerPage() {
     resumeTimer,
     clearTimer,
     updateTimeEntry,
+    syncAgentTimeTitles,
     deleteTimeEntry,
     addTimeEntry,
     updateProject,
@@ -770,17 +771,10 @@ export default function TrackerPage() {
         for (const gap of gaps.flatMap((range) => splitAgentRange(range, current.settings.agentTimeMaxMinutes))) {
           const duration = Math.floor((gap.end - gap.start) / 1000)
           if (duration <= 0) continue
-          let description = entry.description
           const sources = groupConversationSources(entry.agentTimeSources || [], gap.start, gap.end).filter((source) => source.conversationId)
-          if (generateTitles && sources.length) {
-            const response = await fetch("/api/agent-time/summary", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ start: new Date(gap.start).toISOString(), end: new Date(gap.end).toISOString(), sources }) })
-            if (!response.ok) throw new Error("Interval title generation failed")
-            const result = await response.json() as { title?: string | null }
-            description = result.title || sources[0].conversationTitle || description
-          }
           const saved = await addTimeEntry({
             ...entry,
-            description,
+            agentTimeTitleStatus: generateTitles && sources.length ? "pending" : null,
             agentTimeSources: clipAgentSources(entry.agentTimeSources || [], gap.start, gap.end),
             startTime: new Date(gap.start).toISOString(),
             endTime: new Date(gap.end).toISOString(),
@@ -802,6 +796,27 @@ export default function TrackerPage() {
       setImporting(false)
     }
   }
+
+  const pendingTitleIds = JSON.stringify(data.timeEntries.filter((entry) => entry.agentTimeTitleStatus === "pending").map((entry) => entry.id).sort().slice(0, 100))
+  useEffect(() => {
+    const ids = JSON.parse(pendingTitleIds) as string[]
+    if (!ids.length) return
+    let stopped = false
+    let running = false
+    async function poll() {
+      if (running) return
+      running = true
+      try {
+        const response = await fetch("/api/agent-time/title-jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) })
+        if (!response.ok) return
+        const result = await response.json() as { entries: Pick<TimeEntry, "id" | "description" | "agentTimeTitleStatus">[] }
+        if (!stopped) syncAgentTimeTitles(result.entries)
+      } finally { running = false }
+    }
+    void poll().catch(() => undefined)
+    const timer = setInterval(() => { void poll().catch(() => undefined) }, 5000)
+    return () => { stopped = true; clearInterval(timer) }
+  }, [pendingTitleIds, syncAgentTimeTitles])
 
   function draftEntry(slice: AgentImportSlice): Omit<TimeEntry, "id"> {
     return {
@@ -1233,6 +1248,9 @@ export default function TrackerPage() {
                   <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} aria-label={entry.description || "Untitled time entry"} className={highlightedEntry === entry.id ? "bg-amber-500/15 outline-2 -outline-offset-2 outline-amber-500" : overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
                   <TableCell className="font-medium whitespace-normal break-words">
                     <EntryChats description={entry.description} sources={sourcesForEntry(entry)} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} />
+                    {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
+                    {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
+
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{machineNames(sourcesForEntry(entry))}</p>
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
                     {overlapIds.has(entry.id) && <button type="button" className="mt-1 block cursor-pointer text-xs text-red-700 underline underline-offset-4 dark:text-red-300" onClick={() => setReviewEntryOverlapsOpen(true)}>Review overlap</button>}
