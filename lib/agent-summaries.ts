@@ -17,19 +17,39 @@ const CLI_TIMEOUT_MS = 90_000
 
 // Provider order and models follow the machine's own agent logins, the same way
 // T3 Code drives the Codex and Claude Code CLIs. Override with env vars.
-const PROVIDER_ORDER = (process.env.AGENT_SUMMARY_PROVIDERS || "codex,claude,api")
+const PROVIDER_ORDER = (process.env.AGENT_SUMMARY_PROVIDERS || "codex")
   .split(",").map((value) => value.trim()).filter((value): value is SummaryProvider => value === "codex" || value === "claude" || value === "api")
-const CODEX_MODEL = process.env.AGENT_SUMMARY_CODEX_MODEL || "gpt-5.6-luna"
+const CODEX_MODEL = process.env.AGENT_SUMMARY_CODEX_MODEL || "gpt-5.6-terra"
 const CODEX_EFFORT = process.env.AGENT_SUMMARY_CODEX_EFFORT || "low"
 const CLAUDE_CLI_MODEL = process.env.AGENT_SUMMARY_CLAUDE_MODEL || "claude-sonnet-5"
 const API_MODEL = process.env.AGENT_SUMMARY_API_MODEL || "claude-opus-5"
 
-const INSTRUCTIONS = `You write one-line descriptions for time entries on a client invoice.
-- Provide a high-level, client-friendly summary of the value delivered (e.g. "Improve user experience" or "Clean up final stages").
-- Avoid overly technical details, file names, subagents, tools, or specific component names like 'pipeline editor' or 'input styling'.
-- Ignore incidental artifacts: never name meeting transcripts or Google Meet codes.
-- Do not copy raw user messages.
-- Use 3 to 8 words in sentence case with no trailing period.`
+// Shared editorial rules from T3 Code TextGenerationPrompts.ts.
+const INSTRUCTIONS = `Generate a title that will help the user recognize this T3 Code thread weeks later.
+Return JSON with exactly one key: title.
+
+Before answering, silently reduce the request to:
+- Subject: What system, feature, or problem is this really about?
+- Outcome: What does the user ultimately want to understand or change?
+- Incidental instructions: What only describes how the agent should do the work?
+
+Title the subject and outcome. Discard incidental instructions.
+
+Editorial rules:
+- 3-8 words, fewer than 40 characters.
+- Use a compact noun phrase or clear action phrase.
+- Capture the umbrella goal when the request lists several symptoms or steps.
+- Name the product change, not the mock, plan, report, branch, or PR used to produce it.
+- Models, subagents, tools, output formats, and monitoring instructions do not belong in the title unless they are themselves the topic.
+- For reviews, name what is being reviewed and the relevant concern. Avoid generic titles such as "Review PR 123" when linked or attached context reveals the subject.
+- For research, name the question domain rather than the requested research process.
+- Do not claim the work is complete.
+- Do not copy and truncate the user's message.
+- Avoid project names already visible in the UI, quotes, labels, filler, and trailing punctuation.
+- Use attached images as primary context for UI issues.
+- When a URL or attachment is the only source of the subject, use available tools to inspect it directly.
+- Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
+- If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.`
 
 /** Runs a CLI with stdin closed; Codex otherwise waits for more input from the pipe. */
 function run(command: string, args: string[]) {
@@ -75,6 +95,13 @@ function persistCache() {
 }
 
 function cleanTitle(text: string) {
+  try {
+    const parsed = JSON.parse(text.trim()) as { title?: unknown }
+    if (typeof parsed.title !== "string") return ""
+    text = parsed.title
+  } catch {
+    return ""
+  }
   return text
     .trim()
     .split("\n")
