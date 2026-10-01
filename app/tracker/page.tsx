@@ -73,7 +73,9 @@ import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRange } from "@/lib/agent-time-overlap"
-import { groupConversationSources } from "@/lib/agent-time-chats"
+import { conversationKey, groupConversationSources } from "@/lib/agent-time-chats"
+import { BILL_FACTOR_PRESETS, billedSeconds, formatBillFactor, normalizeBillFactor, sourcesBillFactor } from "@/lib/billing"
+import { invoicedSourceIds } from "@/lib/invoice-estimates"
 import { intervalIsSettled } from "@/lib/summary-jobs"
 import { splitAgentRange } from "@/lib/agent-time-intervals"
 import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
@@ -241,7 +243,20 @@ function ChatTranscript({ source, onClose }: { source: ConversationSource; onClo
   </div>
 }
 
-function EntryChats({ description, sources, start, end, labels, inferred = false }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean }) {
+function ChatBillFactor({ factor, onChange }: { factor: number; onChange: (factor: number) => void }) {
+  const [custom, setCustom] = useState("")
+  const isPreset = BILL_FACTOR_PRESETS.some((option) => Math.abs(option.value - factor) < 0.0001)
+  return <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-[1.875rem] text-xs" data-testid="chat-bill-factor">
+    <span className="mr-1 text-muted-foreground">Bill</span>
+    {BILL_FACTOR_PRESETS.map((option) => <Button key={option.label} type="button" size="xs" variant={Math.abs(option.value - factor) < 0.0001 ? "default" : "outline"} className="h-6 rounded-md px-2" aria-pressed={Math.abs(option.value - factor) < 0.0001} onClick={() => onChange(option.value)}>{option.label}</Button>)}
+    <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
+      <Input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-6 w-14 rounded-md px-1.5 text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${isPreset ? "" : "border-primary"}`} />
+      <span className="text-muted-foreground">%</span>
+    </form>
+  </div>
+}
+
+function EntryChats({ description, sources, start, end, labels, inferred = false, chatFactors, onSetChatFactor }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean; chatFactors?: Record<string, number>; onSetChatFactor?: (chat: ConversationSource, factor: number) => void }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(0)
@@ -260,11 +275,11 @@ function EntryChats({ description, sources, start, end, labels, inferred = false
       <PopoverContent onCloseAutoFocus={(event) => { if (chat) event.preventDefault() }} align="start" collisionPadding={16} className="w-[min(28rem,calc(100vw-2rem))] gap-0 rounded-md p-0" data-testid="entry-chats-dropdown">
         <div className="border-b p-3">
           <p className="font-semibold">Chats in this entry <span className="font-normal text-muted-foreground">({conversations.length})</span></p>
-          <p className="mt-1 text-xs text-muted-foreground">{inferred ? "Matched from available activity logs. Older entries did not save chat references." : "Activity contributing to this time entry."}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{inferred ? "Matched from available activity logs. Older entries did not save chat references." : "Activity contributing to this time entry. Set how much of each chat to bill; it applies to every interval from that chat."}</p>
           <Input className="mt-3 h-8 rounded-md" aria-label="Search entry chats" placeholder="Search chats or machines…" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} />
         </div>
         <div className="max-h-[min(22rem,50vh)] overflow-y-auto p-1">
-          {filtered.slice(currentPage * 5, currentPage * 5 + 5).map((source) => <button key={`${source.hostUrl}:${source.source}:${source.conversationId}`} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md p-2.5 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setChat({ ...source, machineLabel: machineName(source, labels) }); setOpen(false) }}>
+          {filtered.slice(currentPage * 5, currentPage * 5 + 5).map((source) => <div key={`${source.hostUrl}:${source.source}:${source.conversationId}`} className="rounded-md p-2.5 hover:bg-muted"><button type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setChat({ ...source, machineLabel: machineName(source, labels) }); setOpen(false) }}>
             <SourceLogo source={source.agent} agent={source.agent} className="mt-0.5 size-5" />
             <div className="min-w-0 flex-1">
               <p className="break-words text-sm font-medium">{source.conversationTitle || source.conversationSummary || "Untitled chat"}</p>
@@ -273,7 +288,7 @@ function EntryChats({ description, sources, start, end, labels, inferred = false
               <p className="mt-1 text-xs text-muted-foreground">{new Date(source.spans[0].start).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" })} – {new Date(source.spans.at(-1)!.end).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" })}</p>
             </div>
             <MessageSquareText className="mt-1 size-4 shrink-0 text-muted-foreground" />
-          </button>)}
+          </button>{onSetChatFactor && <ChatBillFactor factor={normalizeBillFactor(chatFactors?.[conversationKey(source)] ?? 1)} onChange={(factor) => onSetChatFactor(source, factor)} />}</div>)}
           {filtered.length === 0 && <p className="p-4 text-sm text-muted-foreground">{query ? "No chats match this search." : "No chat references are available for this entry. Check that its source machine is connected."}</p>}
         </div>
         {pages > 1 && <div className="flex items-center justify-between border-t px-3 py-2 text-xs"><Button size="sm" variant="ghost" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><span>{currentPage + 1} / {pages}</span><Button size="sm" variant="ghost" disabled={currentPage >= pages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button></div>}
@@ -494,6 +509,10 @@ function TodayTotal({
   )
 }
 
+function BilledTime({ seconds, factor, block = false }: { seconds: number; factor: number; block?: boolean }) {
+  return <span data-testid="billed-time" title={`Billed at ${formatBillFactor(factor)} of the tracked time`} className={`font-mono text-[0.7rem] font-normal text-muted-foreground ${block ? "mt-0.5 block" : ""}`}>{block ? "" : " "}bill {formatDuration(seconds)} · {formatBillFactor(factor)}</span>
+}
+
 function ImportProjectPicker({ value, onChange, choices }: { value: string; onChange: (value: string) => void; choices: { value: string; label: string }[] }) {
   const [open, setOpen] = useState(false)
   return <Popover open={open} onOpenChange={setOpen}>
@@ -511,6 +530,7 @@ export default function TrackerPage() {
     resumeTimer,
     clearTimer,
     updateTimeEntry,
+    updateSettings,
     syncAgentTimeTitles,
     deleteTimeEntry,
     addTimeEntry,
@@ -584,6 +604,7 @@ export default function TrackerPage() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
 
   const activeTimers = data.activeTimers
+  const chatFactors = data.settings.agentTimeChatBillFactors || {}
 
   // Load a quiet status snapshot on arrival so forgotten Agent Time is visible
   // without making the user open the import flow first.
@@ -776,6 +797,7 @@ export default function TrackerPage() {
             ...entry,
             agentTimeTitleStatus: generateTitles && sources.length ? "pending" : null,
             agentTimeSources: clipAgentSources(entry.agentTimeSources || [], gap.start, gap.end),
+            billFactor: sourcesBillFactor(entry.agentTimeSources || [], gap.start, gap.end, current.settings.agentTimeChatBillFactors),
             startTime: new Date(gap.start).toISOString(),
             endTime: new Date(gap.end).toISOString(),
             duration,
@@ -817,6 +839,29 @@ export default function TrackerPage() {
     const timer = setInterval(() => { void poll().catch(() => undefined) }, 5000)
     return () => { stopped = true; clearInterval(timer) }
   }, [pendingTitleIds, syncAgentTimeTitles])
+
+  async function setChatBillFactor(chat: ConversationSource, factor: number) {
+    const key = conversationKey(chat)
+    const next = { ...chatFactors }
+    if (normalizeBillFactor(factor) === 1) delete next[key]
+    else next[key] = normalizeBillFactor(factor)
+    try {
+      await updateSettings({ agentTimeChatBillFactors: next })
+      // Invoiced entries keep the amount they were billed at.
+      const invoiced = invoicedSourceIds(data.invoices, "time")
+      const updates = data.timeEntries.flatMap((entry) => {
+        if (!entry.agentTimeSources?.length || !entry.endTime || invoiced.has(entry.id)) return []
+        const sources = sourcesForEntry(entry)
+        if (!sources.some((source) => conversationKey(source) === key)) return []
+        const billFactor = sourcesBillFactor(sources, Date.parse(entry.startTime), Date.parse(entry.endTime), next)
+        return billFactor === normalizeBillFactor(entry.billFactor ?? 1) ? [] : [updateTimeEntry(entry.id, { billFactor })]
+      })
+      await Promise.all(updates)
+      toast.success(`Billing ${formatBillFactor(normalizeBillFactor(factor))} of “${chat.conversationTitle || "this chat"}”${updates.length ? ` · ${updates.length} saved ${updates.length === 1 ? "entry" : "entries"} updated` : ""}`)
+    } catch {
+      toast.error("Could not save the billing rate for this chat")
+    }
+  }
 
   function draftEntry(slice: AgentImportSlice): Omit<TimeEntry, "id"> {
     return {
@@ -1217,20 +1262,21 @@ export default function TrackerPage() {
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
-                  const amount = project ? (slice.durationSeconds / 3600) * project.rate : 0
+                  const billFactor = sourcesBillFactor(slice.interval.sourceIntervals || [], slice.start, slice.end, chatFactors)
+                  const amount = project ? (billedSeconds({ duration: slice.durationSeconds, billFactor }) / 3600) * project.rate : 0
                   return <Fragment key={slice.id}>
                     {dayHeader}
                     <TableRow data-testid="agent-draft-row" className="bg-amber-500/[0.07] hover:bg-amber-500/[0.11]">
                       <TableCell className="font-medium whitespace-normal break-words">
-                        <EntryChats description={draftDescription(slice, chatSummaries)} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} />
+                        <EntryChats description={draftDescription(slice, chatSummaries)} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />
                         <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{machineNames(clipAgentSources(slice.interval.sourceIntervals || [], slice.start, slice.end))}</p>
-                        <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span> · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
+                        <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />} · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                       </TableCell>
                       <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{machineNames(clipAgentSources(slice.interval.sourceIntervals || [], slice.start, slice.end))}</TableCell>
                       <TableCell className="hidden whitespace-normal sm:table-cell"><span className="block text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}</TableCell>
                       <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</TableCell>
-                      <TableCell className="hidden font-mono text-xs text-amber-700 sm:table-cell dark:text-amber-300">{formatDuration(slice.durationSeconds)}</TableCell>
+                      <TableCell className="hidden font-mono text-xs text-amber-700 sm:table-cell dark:text-amber-300">{formatDuration(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                       <TableCell><div className="flex items-center gap-0.5">
                         <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
@@ -1242,19 +1288,20 @@ export default function TrackerPage() {
                 }
                 const entry = row.entry
                 const project = getProject(entry.projectId)
-                const amount = entry.billable && project ? (entry.duration / 3600) * project.rate : 0
+                const billFactor = normalizeBillFactor(entry.billFactor ?? 1)
+                const amount = entry.billable && project ? (billedSeconds(entry) / 3600) * project.rate : 0
                 return <Fragment key={entry.id}>
                   {dayHeader}
                   <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} aria-label={entry.description || "Untitled time entry"} className={highlightedEntry === entry.id ? "bg-amber-500/15 outline-2 -outline-offset-2 outline-amber-500" : overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
                   <TableCell className="font-medium whitespace-normal break-words">
-                    <EntryChats description={entry.description} sources={sourcesForEntry(entry)} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} />
+                    <EntryChats description={entry.description} sources={sourcesForEntry(entry)} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} />
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
                     {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
 
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{machineNames(sourcesForEntry(entry))}</p>
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
                     {overlapIds.has(entry.id) && <button type="button" className="mt-1 block cursor-pointer text-xs text-red-700 underline underline-offset-4 dark:text-red-300" onClick={() => setReviewEntryOverlapsOpen(true)}>Review overlap</button>}
-                    <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span> · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
+                    <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />} · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                   </TableCell>
                   <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{machineNames(sourcesForEntry(entry))}</TableCell>
                   <TableCell className="hidden whitespace-normal sm:table-cell">
@@ -1264,7 +1311,7 @@ export default function TrackerPage() {
                   </TableCell>
                   <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(parseLocalDate(entry.date), "MMM d, yyyy")}</TableCell>
                   <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</TableCell>
-                  <TableCell className="hidden font-mono text-xs sm:table-cell">{formatDuration(entry.duration)}</TableCell>
+                  <TableCell className="hidden font-mono text-xs sm:table-cell">{formatDuration(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
                   <TableCell className="hidden font-mono text-xs sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                   <TableCell><div className="flex items-center gap-0.5">
                     <Button variant="ghost" size="icon-xs" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>

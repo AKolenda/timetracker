@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatHours } from "@/lib/format"
+import { billedSeconds } from "@/lib/billing"
 import { Badge } from "@/components/ui/badge"
 import { useExchangeRate } from "@/lib/use-exchange-rate"
 
@@ -27,7 +28,7 @@ export default function DashboardPage() {
   const totalRevenue = billableEntries.reduce((sum, entry) => {
     const project = getProject(entry.projectId)
     if (!project) return sum
-    return sum + (entry.duration / 3600) * project.rate
+    return sum + (billedSeconds(entry) / 3600) * project.rate
   }, 0)
 
   const totalExpenses = data.expenses.reduce((sum, e) => sum + e.amount, 0)

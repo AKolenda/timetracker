@@ -1,4 +1,5 @@
 import type { AppData } from "./types.ts"
+import { billedSeconds } from "./billing.ts"
 
 export type EstimateItem = { id: string; projectName: string; description: string; date: string; hours: number | null; rate: number; amount: number }
 export type InvoiceEstimate = { id: string; clientId: string; clientName: string; currency: string; items: EstimateItem[]; hours: number; expenses: number; subtotal: number }
@@ -20,8 +21,8 @@ export function buildInvoiceEstimates(data: Pick<AppData, "clients" | "projects"
     const id = JSON.stringify([client.id, currency])
     const estimate = estimates.get(id) ?? { id, clientId: client.id, clientName: client.name, currency, items: [], hours: 0, expenses: 0, subtotal: 0 }
     for (const entry of data.timeEntries) {
-      if (entry.projectId !== project.id || !entry.billable || entry.duration <= 0 || billedTime.has(entry.id)) continue
-      const hours = entry.duration / 3600
+      if (entry.projectId !== project.id || !entry.billable || billedSeconds(entry) <= 0 || billedTime.has(entry.id)) continue
+      const hours = billedSeconds(entry) / 3600
       const amount = Number((hours * project.rate).toFixed(2))
       estimate.items.push({ id: `time:${entry.id}`, projectName: project.name, description: entry.description || "Time entry", date: entry.date, hours, rate: project.rate, amount })
       estimate.hours += hours

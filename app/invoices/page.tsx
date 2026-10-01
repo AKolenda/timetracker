@@ -68,6 +68,7 @@ import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import { InvoiceEstimateRow, InvoiceEstimatePreview } from "@/components/invoice-estimates"
 import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
+import { billedSeconds } from "@/lib/billing"
 import { PageHeader } from "@/components/page-header"
 import { applyEmailTemplateVariables } from "@/lib/email-template"
 import { useStore } from "@/lib/store"
@@ -334,7 +335,7 @@ export default function InvoicesPage() {
     const items: Omit<InvoiceLineItem, "id" | "invoiceId">[] = []
     for (const entry of unbilledEntries) {
       if (!selectedEntries.has(entry.id)) continue
-      const hours = entry.duration / 3600
+      const hours = billedSeconds(entry) / 3600
       items.push({
         description: `${entry.projectName}: ${entry.description || "Time entry"} (${format(new Date(entry.date), "MMM d")})`,
         quantity: parseFloat(hours.toFixed(2)),
@@ -919,11 +920,11 @@ export default function InvoicesPage() {
                             {entry.description || "Untitled"}
                           </span>
                           <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                            {formatHours(entry.duration)}h
+                            {formatHours(billedSeconds(entry))}h
                           </span>
                           <span className="shrink-0 font-mono text-xs font-medium">
                             {formatCurrency(
-                              (entry.duration / 3600) * entry.rate
+                              (billedSeconds(entry) / 3600) * entry.rate
                             )}
                           </span>
                         </label>

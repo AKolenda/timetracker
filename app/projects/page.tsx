@@ -48,6 +48,7 @@ import {
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatHours } from "@/lib/format"
+import { billedSeconds } from "@/lib/billing"
 import type { Project } from "@/lib/types"
 
 const emptyForm = {
@@ -206,7 +207,7 @@ export default function ProjectsPage() {
                 )
                 const billableSecs = entries
                   .filter((e) => e.billable)
-                  .reduce((s, e) => s + e.duration, 0)
+                  .reduce((s, e) => s + billedSeconds(e), 0)
                 const revenue = (billableSecs / 3600) * project.rate
 
                 return (

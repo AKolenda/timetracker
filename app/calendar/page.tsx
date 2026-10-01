@@ -24,6 +24,7 @@ import { Separator } from "@/components/ui/separator"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatHours } from "@/lib/format"
+import { billedSeconds } from "@/lib/billing"
 import { cn } from "@/lib/utils"
 
 interface DayData {
@@ -73,7 +74,7 @@ export default function CalendarPage() {
       if (entry.billable) {
         const project = getProject(entry.projectId)
         if (project) {
-          existing.earnings += (entry.duration / 3600) * project.rate
+          existing.earnings += (billedSeconds(entry) / 3600) * project.rate
         }
       }
       map.set(key, existing)

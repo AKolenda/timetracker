@@ -37,6 +37,8 @@ export interface TimeEntry {
   endTime: string | null
   duration: number
   billable: boolean
+  /** Share of the duration charged; 1 when unset. */
+  billFactor?: number
   date: string
 }
 
@@ -89,6 +91,8 @@ export interface Settings {
   agentTimeMaxMinutes?: number | null
   agentTimeHosts?: string[]
   agentTimeHostLabels?: Record<string, string>
+  /** Billing factor per chat, keyed by conversationKey. */
+  agentTimeChatBillFactors?: Record<string, number>
 }
 
 export interface Invoice {

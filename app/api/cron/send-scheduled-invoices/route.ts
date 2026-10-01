@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
+import { normalizeBillFactor } from "@/lib/billing"
 import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
 
 const ONE_DAY = 86_400_000
@@ -155,7 +156,7 @@ export async function POST(request: Request) {
       if (sinceMs && created <= sinceMs) continue
       const proj = projectMap.get(e.project_id as string)
       if (!proj) continue
-      const hours = Number(e.duration) / 3600
+      const hours = (Number(e.duration) * normalizeBillFactor(e.bill_factor ?? 1)) / 3600
       const amount = parseFloat((hours * proj.rate).toFixed(2))
       items.push({
         description: `${proj.name}: ${e.description || "Time entry"} (${(e.date as string).slice(5)})`,

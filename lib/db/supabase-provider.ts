@@ -12,6 +12,7 @@ import type {
 import { defaultSettings } from "../types"
 import type { DataProvider } from "./provider"
 import { parseAgentTimeHosts, parseAgentTimeHostLabels } from "../agent-time-hosts"
+import { normalizeBillFactor } from "../billing"
 
 function rowToClient(row: Record<string, unknown>): Client {
   return {
@@ -55,6 +56,7 @@ export function rowToTimeEntry(row: Record<string, unknown>): TimeEntry {
     endTime: row.end_time as string | null,
     duration: Number(row.duration),
     billable: row.billable as boolean,
+    billFactor: row.bill_factor == null ? 1 : normalizeBillFactor(Number(row.bill_factor)),
     date: row.date as string,
   }
 }
@@ -70,6 +72,11 @@ function rowToExpense(row: Record<string, unknown>): Expense {
     notes: row.notes as string,
     invoiced: (row.invoiced as boolean) ?? false,
   }
+}
+
+function parseChatBillFactors(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).filter(([, factor]) => typeof factor === "number" && Number.isFinite(factor)).map(([key, factor]) => [key, normalizeBillFactor(factor)]))
 }
 
 function rowToSettings(row: Record<string, unknown>): Settings {
@@ -101,6 +108,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     agentTimeHosts: parseAgentTimeHosts(row.agent_time_hosts),
     agentTimeMaxMinutes: typeof row.agent_time_max_minutes === "number" ? row.agent_time_max_minutes : null,
     agentTimeHostLabels: parseAgentTimeHostLabels(row.agent_time_host_labels),
+    agentTimeChatBillFactors: parseChatBillFactors(row.agent_time_chat_bill_factors),
   }
 }
 
@@ -286,6 +294,7 @@ export class SupabaseProvider implements DataProvider {
         end_time: entry.endTime,
         duration: entry.duration,
         billable: entry.billable,
+        bill_factor: normalizeBillFactor(entry.billFactor ?? 1),
         date: entry.date,
         agent_time_sources: entry.agentTimeSources ?? [],
         agent_time_title_status: entry.agentTimeTitleStatus ?? null,
@@ -310,6 +319,7 @@ export class SupabaseProvider implements DataProvider {
     if (updates.endTime !== undefined) row.end_time = updates.endTime
     if (updates.duration !== undefined) row.duration = updates.duration
     if (updates.billable !== undefined) row.billable = updates.billable
+    if (updates.billFactor !== undefined) row.bill_factor = normalizeBillFactor(updates.billFactor)
     if (updates.date !== undefined) row.date = updates.date
     const { error } = await this.db
       .from("time_entries")
@@ -425,6 +435,8 @@ export class SupabaseProvider implements DataProvider {
     if (updates.displayCurrency !== undefined)
       row.display_currency = updates.displayCurrency
     if (updates.agentTimeMaxMinutes !== undefined) row.agent_time_max_minutes = updates.agentTimeMaxMinutes
+    if (updates.agentTimeChatBillFactors !== undefined)
+      row.agent_time_chat_bill_factors = parseChatBillFactors(updates.agentTimeChatBillFactors)
     if (updates.agentTimeHostLabels !== undefined)
       row.agent_time_host_labels = parseAgentTimeHostLabels(updates.agentTimeHostLabels)
     if (updates.agentTimeHosts !== undefined)

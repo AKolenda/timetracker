@@ -1,6 +1,11 @@
 import type { AgentTimeSourceInterval } from "./agent-time"
 import type { TimeRange } from "./agent-time-overlap"
 
+/** Identifies one chat across machines and linked T3/native sessions. */
+export function conversationKey(interval: AgentTimeSourceInterval) {
+  return `${interval.hostUrl || ""}:${interval.canonicalConversationId ? `chat:${interval.canonicalConversationId}` : `${interval.source}:${interval.conversationId || interval.conversationTitle || interval.model || interval.agent}`}`
+}
+
 export function groupConversationSources(
   intervals: AgentTimeSourceInterval[],
   sliceStart: number,
@@ -11,7 +16,7 @@ export function groupConversationSources(
     const start = Math.max(new Date(interval.start).getTime(), sliceStart)
     const end = Math.min(new Date(interval.end).getTime(), sliceEnd)
     if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue
-    const key = `${interval.hostUrl || ""}:${interval.canonicalConversationId ? `chat:${interval.canonicalConversationId}` : `${interval.source}:${interval.conversationId || interval.conversationTitle || interval.model || interval.agent}`}`
+    const key = conversationKey(interval)
     const current = conversations.get(key)
     if (current) {
       current.spans.push({ start, end })
