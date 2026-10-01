@@ -90,7 +90,7 @@ async function readClaude(conversationId: string): Promise<Transcript | null> {
   if (!file) return null
   const messages: TranscriptMessage[] = []
   let title = ""
-  for (const row of parseLines(await readFile(file, "utf8"))) {
+  for (const row of parseLines(await readFile(/*turbopackIgnore: true*/ file, "utf8"))) {
     if (row.type === "ai-title" && typeof row.title === "string") title = row.title
     if (row.isSidechain === true) continue
     if (row.type !== "user" && row.type !== "assistant") continue
@@ -111,7 +111,7 @@ async function readCodex(conversationId: string): Promise<Transcript | null> {
   const file = await findFile(path.join(homedir(), ".codex", "sessions"), (name) => name.endsWith(`-${conversationId}.jsonl`), 3)
   if (!file) return null
   const messages: TranscriptMessage[] = []
-  for (const row of parseLines(await readFile(file, "utf8"))) {
+  for (const row of parseLines(await readFile(/*turbopackIgnore: true*/ file, "utf8"))) {
     if (row.type !== "response_item" || !isRecord(row.payload) || row.payload.type !== "message") continue
     const role = row.payload.role
     if (role !== "user" && role !== "assistant") continue
