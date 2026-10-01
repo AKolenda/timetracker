@@ -76,6 +76,7 @@ import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRa
 import { groupConversationSources } from "@/lib/agent-time-chats"
 import { intervalIsSettled } from "@/lib/summary-jobs"
 import { splitAgentRange } from "@/lib/agent-time-intervals"
+import { draftApprovalKey, reserveDraftEntries } from "@/lib/agent-draft-approvals"
 import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
@@ -743,7 +744,8 @@ export default function TrackerPage() {
     void loadAgentTime(false, normalizedGap)
   }
 
-  const importInFlight = useRef(false)
+  const pendingImports = useRef(new Map<string, TimeEntry[]>())
+  const [importingKeys, setImportingKeys] = useState<Set<string>>(new Set())
   const importedEntries = useRef<TimeEntry[]>([])
   const latestData = useRef(data)
   latestData.current = data
@@ -751,39 +753,40 @@ export default function TrackerPage() {
     const savedIds = new Set(data.timeEntries.map((entry) => entry.id))
     importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
   }, [data.timeEntries])
-  const [importing, setImporting] = useState(false)
+  const importing = importingKeys.size > 0
   const overlapDetails = entryOverlapDetails(data.timeEntries, data.activeTimers)
   const entryOverlapKeys = new Map([...overlapDetails].map(([id, details]) => [id, details.reviewKey]))
   const overlapIds = new Set([...entryOverlapKeys].filter(([, key]) => !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
 
   async function importDraftEntries(entries: Omit<TimeEntry, "id">[], generateTitles = true) {
-    if (importInFlight.current) return false
-    importInFlight.current = true
-    setImporting(true)
+    const requested = entries.filter((entry) => !pendingImports.current.has(draftApprovalKey(entry)))
+    if (!requested.length) return false
+    const current = latestData.current
+    // Reservations are synchronous, so rapid clicks and bulk approval cannot save the same time twice.
+    const occupied = [...current.timeEntries, ...importedEntries.current, ...[...pendingImports.current.values()].flat()]
+    const reservations: TimeEntry[] = []
+    for (const entry of requested) {
+      const reserved = reserveDraftEntries([entry], [...occupied, ...reservations], current.activeTimers, current.settings.agentTimeMaxMinutes)
+      pendingImports.current.set(draftApprovalKey(entry), reserved)
+      reservations.push(...reserved)
+    }
+    setImportingKeys(new Set(pendingImports.current.keys()))
     let seconds = 0
     try {
-      for (const entry of entries) {
-        const current = latestData.current
-        const gaps = subtractRanges(
-          { start: Date.parse(entry.startTime), end: Date.parse(entry.endTime!) },
-          occupiedProjectRanges(entry.projectId, [...current.timeEntries, ...importedEntries.current], current.activeTimers)
-        )
-        for (const gap of gaps.flatMap((range) => splitAgentRange(range, current.settings.agentTimeMaxMinutes))) {
-          const duration = Math.floor((gap.end - gap.start) / 1000)
-          if (duration <= 0) continue
-          const sources = groupConversationSources(entry.agentTimeSources || [], gap.start, gap.end).filter((source) => source.conversationId)
-          const saved = await addTimeEntry({
-            ...entry,
-            agentTimeTitleStatus: generateTitles && sources.length ? "pending" : null,
-            agentTimeSources: clipAgentSources(entry.agentTimeSources || [], gap.start, gap.end),
-            startTime: new Date(gap.start).toISOString(),
-            endTime: new Date(gap.end).toISOString(),
-            duration,
-            date: localDateString(new Date(gap.start), current.settings.timezone),
-          })
-          importedEntries.current.push(saved)
-          seconds += duration
-        }
+      for (const reserved of reservations) {
+        const { id: reservationId, ...entry } = reserved
+        void reservationId
+        const start = Date.parse(entry.startTime)
+        const end = Date.parse(entry.endTime!)
+        const sources = groupConversationSources(entry.agentTimeSources || [], start, end).filter((source) => source.conversationId)
+        const saved = await addTimeEntry({
+          ...entry,
+          agentTimeTitleStatus: generateTitles && sources.length ? "pending" : null,
+          agentTimeSources: clipAgentSources(entry.agentTimeSources || [], start, end),
+          date: localDateString(new Date(start), current.settings.timezone),
+        })
+        importedEntries.current.push(saved)
+        seconds += entry.duration
       }
       if (seconds) toast.success(`Approved ${formatDuration(seconds)}. Overlapping time excluded.`)
       else toast.error("No time imported: this time is already tracked or reserved by an active timer.")
@@ -792,8 +795,8 @@ export default function TrackerPage() {
       toast.error("Import could not finish. Any entries already saved are protected from re-import; retry the remaining drafts.")
       return false
     } finally {
-      importInFlight.current = false
-      setImporting(false)
+      for (const entry of requested) pendingImports.current.delete(draftApprovalKey(entry))
+      setImportingKeys(new Set(pendingImports.current.keys()))
     }
   }
 
@@ -1216,6 +1219,7 @@ export default function TrackerPage() {
                 const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
+                  const approving = importingKeys.has(draftApprovalKey(draftEntry(slice)))
                   const project = getProject(slice.projectId)
                   const amount = project ? (slice.durationSeconds / 3600) * project.rate : 0
                   return <Fragment key={slice.id}>
@@ -1233,9 +1237,9 @@ export default function TrackerPage() {
                       <TableCell className="hidden font-mono text-xs text-amber-700 sm:table-cell dark:text-amber-300">{formatDuration(slice.durationSeconds)}</TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{amount ? formatCurrency(amount, project?.currency) : "—"}</TableCell>
                       <TableCell><div className="flex items-center gap-0.5">
-                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={approving} aria-busy={approving} aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}>{approving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}</Button>
+                        <Button variant="ghost" size="icon-xs" disabled={approving} aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" disabled={approving} aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
                       </div></TableCell>
                     </TableRow>
                   </Fragment>
