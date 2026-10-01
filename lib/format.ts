@@ -10,12 +10,20 @@ export function formatHours(seconds: number): string {
   return h.toFixed(1)
 }
 
+// Creating a formatter is far slower than using one, and lists format hundreds of amounts per render.
+const currencyFormatters = new Map<string, Intl.NumberFormat>()
+
 export function formatCurrency(amount: number, currency = "USD"): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-  }).format(amount)
+  let formatter = currencyFormatters.get(currency)
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+    })
+    currencyFormatters.set(currency, formatter)
+  }
+  return formatter.format(amount)
 }
 
 export function formatDate(dateStr: string): string {

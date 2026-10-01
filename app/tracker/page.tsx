@@ -143,6 +143,7 @@ type IgnoredAgentRange = {
   end: number
 }
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
+const LOG_PAGE_SIZE = 100
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
 const IGNORED_AGENT_RANGES_KEY = "timetracker-agent-time-ignored-ranges"
 
@@ -262,7 +263,7 @@ function EntryChats({ description, sources, start, end, labels, inferred = false
   const [page, setPage] = useState(0)
   const [chat, setChat] = useState<ConversationSource | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const conversations = groupConversationSources(sources, start, end)
+  const conversations = useMemo(() => open ? groupConversationSources(sources, start, end) : [], [open, sources, start, end])
   const needle = query.trim().toLowerCase()
   const filtered = conversations.filter((source) => `${source.conversationTitle} ${source.conversationSummary || ""} ${machineName(source, labels)} ${source.source}`.toLowerCase().includes(needle))
   const pages = Math.max(1, Math.ceil(filtered.length / 5))
@@ -604,7 +605,8 @@ export default function TrackerPage() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
 
   const activeTimers = data.activeTimers
-  const chatFactors = data.settings.agentTimeChatBillFactors || {}
+  const savedChatFactors = data.settings.agentTimeChatBillFactors
+  const chatFactors = useMemo(() => savedChatFactors || {}, [savedChatFactors])
 
   // Load a quiet status snapshot on arrival so forgotten Agent Time is visible
   // without making the user open the import flow first.
@@ -665,23 +667,39 @@ export default function TrackerPage() {
     [agentTime, agentTimeCutoff]
   )
 
-  function sourcesForEntry(entry: TimeEntry): AgentTimeSourceInterval[] {
-    const start = Date.parse(entry.startTime)
-    const end = entry.endTime ? Date.parse(entry.endTime) : NaN
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return []
-    if (entry.agentTimeSources?.length) {
-      const current = (agentTime?.intervals || []).flatMap((interval) => interval.sourceIntervals || [])
-      return clipAgentSources(entry.agentTimeSources.map((source) => {
-        const match = current.find((candidate) => candidate.hostUrl === source.hostUrl && candidate.source === source.source && candidate.conversationId === source.conversationId)
-        return { ...source, canonicalConversationId: match?.canonicalConversationId || source.canonicalConversationId }
-      }), start, end)
+  // Every render of the log needs each entry's chats; match them once per data change, not per row render.
+  const entrySources = useMemo(() => {
+    const intervals = agentTime?.intervals || []
+    const canonicalIds = new Map<string, string>()
+    for (const source of intervals.flatMap((interval) => interval.sourceIntervals || [])) {
+      const key = `${source.hostUrl}|${source.source}|${source.conversationId}`
+      if (source.canonicalConversationId && !canonicalIds.has(key)) canonicalIds.set(key, source.canonicalConversationId)
     }
-    const project = getProject(entry.projectId)
-    const intervals = (agentTime?.intervals || []).filter((interval) =>
-      projectMappings[interval.project] === entry.projectId || interval.project === project?.name ||
-      interval.sourceIntervals?.some((source) => (source.conversationSummary || source.conversationTitle) === entry.description)
-    )
-    return clipAgentSources(intervals.flatMap((interval) => interval.sourceIntervals || []), start, end)
+    const projectNames = new Map(data.projects.map((project) => [project.id, project.name]))
+    const result = new Map<string, AgentTimeSourceInterval[]>()
+    for (const entry of data.timeEntries) {
+      const start = Date.parse(entry.startTime)
+      const end = entry.endTime ? Date.parse(entry.endTime) : NaN
+      if (!Number.isFinite(start) || !Number.isFinite(end)) { result.set(entry.id, []); continue }
+      if (entry.agentTimeSources?.length) {
+        result.set(entry.id, clipAgentSources(entry.agentTimeSources.map((source) => ({
+          ...source,
+          canonicalConversationId: canonicalIds.get(`${source.hostUrl}|${source.source}|${source.conversationId}`) || source.canonicalConversationId,
+        })), start, end))
+        continue
+      }
+      const projectName = projectNames.get(entry.projectId)
+      const matching = intervals.filter((interval) =>
+        Date.parse(interval.end) > start && Date.parse(interval.start) < end && (
+          projectMappings[interval.project] === entry.projectId || interval.project === projectName ||
+          interval.sourceIntervals?.some((source) => (source.conversationSummary || source.conversationTitle) === entry.description))
+      )
+      result.set(entry.id, clipAgentSources(matching.flatMap((interval) => interval.sourceIntervals || []), start, end))
+    }
+    return result
+  }, [agentTime, data.projects, data.timeEntries, projectMappings])
+  function sourcesForEntry(entry: TimeEntry): AgentTimeSourceInterval[] {
+    return entrySources.get(entry.id) ?? []
   }
   function machineNames(sources: AgentTimeSourceInterval[]) {
     return [...new Set(sources.map((source) => machineName(source, data.settings.agentTimeHostLabels)))].join(", ") || "—"
@@ -773,7 +791,7 @@ export default function TrackerPage() {
     importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
   }, [data.timeEntries])
   const [importing, setImporting] = useState(false)
-  const overlapDetails = entryOverlapDetails(data.timeEntries, data.activeTimers)
+  const overlapDetails = useMemo(() => entryOverlapDetails(data.timeEntries, data.activeTimers), [data.timeEntries, data.activeTimers])
   const entryOverlapKeys = new Map([...overlapDetails].map(([id, details]) => [id, details.reviewKey]))
   const overlapIds = new Set([...entryOverlapKeys].filter(([, key]) => !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
 
@@ -1053,6 +1071,24 @@ export default function TrackerPage() {
     return rows.sort((a, b) => b.sortKey.localeCompare(a.sortKey))
   }, [agentImportPreview.slices, data.settings.timezone, data.timeEntries])
 
+  // Every mounted row adds to the style work dialogs and popovers trigger, so older history renders on request.
+  const [visibleRowCount, setVisibleRowCount] = useState(LOG_PAGE_SIZE)
+  const visibleRows = logRows.slice(0, visibleRowCount)
+  function revealEntry(id: string) {
+    const index = logRows.findIndex((row) => row.kind === "entry" && row.entry.id === id)
+    if (index >= visibleRowCount) setVisibleRowCount(Math.ceil((index + 1) / LOG_PAGE_SIZE) * LOG_PAGE_SIZE)
+  }
+
+  const hostLabels = data.settings.agentTimeHostLabels
+  const draftDetails = useMemo(() => new Map(agentImportPreview.slices.map((slice) => {
+    const sources = slice.interval.sourceIntervals || []
+    return [slice.id, {
+      description: draftDescription(slice, chatSummaries),
+      machines: [...new Set(clipAgentSources(sources, slice.start, slice.end).map((source) => machineName(source, hostLabels)))].join(", ") || "—",
+      billFactor: sourcesBillFactor(sources, slice.start, slice.end, chatFactors),
+    }]
+  })), [agentImportPreview.slices, chatSummaries, chatFactors, hostLabels])
+
   // Generate a separate title from the messages within each interval.
   useEffect(() => {
     let cancelled = false
@@ -1254,25 +1290,25 @@ export default function TrackerPage() {
             </TableHeader>
             <TableBody>
               {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
-              {logRows.map((row, index) => {
-                const isNewDay = index === 0 || row.date !== logRows[index - 1]?.date
+              {visibleRows.map((row, index) => {
+                const isNewDay = index === 0 || row.date !== visibleRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
                 const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
-                  const billFactor = sourcesBillFactor(slice.interval.sourceIntervals || [], slice.start, slice.end, chatFactors)
+                  const { description: draftTitle, machines: draftMachines, billFactor } = draftDetails.get(slice.id)!
                   const amount = project ? (billedSeconds({ duration: slice.durationSeconds, billFactor }) / 3600) * project.rate : 0
                   return <Fragment key={slice.id}>
                     {dayHeader}
                     <TableRow data-testid="agent-draft-row" className="bg-amber-500/[0.07] hover:bg-amber-500/[0.11]">
                       <TableCell className="font-medium whitespace-normal break-words">
-                        <EntryChats description={draftDescription(slice, chatSummaries)} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />
-                        <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{machineNames(clipAgentSources(slice.interval.sourceIntervals || [], slice.start, slice.end))}</p>
+                        <EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />
+                        <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{draftMachines}</p>
                         <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />} · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                       </TableCell>
-                      <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{machineNames(clipAgentSources(slice.interval.sourceIntervals || [], slice.start, slice.end))}</TableCell>
+                      <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{draftMachines}</TableCell>
                       <TableCell className="hidden whitespace-normal sm:table-cell"><span className="block text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
                       <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}</TableCell>
                       <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</TableCell>
@@ -1289,21 +1325,23 @@ export default function TrackerPage() {
                 const entry = row.entry
                 const project = getProject(entry.projectId)
                 const billFactor = normalizeBillFactor(entry.billFactor ?? 1)
+                const entryChatSources = sourcesForEntry(entry)
+                const entryMachines = machineNames(entryChatSources)
                 const amount = entry.billable && project ? (billedSeconds(entry) / 3600) * project.rate : 0
                 return <Fragment key={entry.id}>
                   {dayHeader}
                   <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} aria-label={entry.description || "Untitled time entry"} className={highlightedEntry === entry.id ? "bg-amber-500/15 outline-2 -outline-offset-2 outline-amber-500" : overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
                   <TableCell className="font-medium whitespace-normal break-words">
-                    <EntryChats description={entry.description} sources={sourcesForEntry(entry)} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} />
+                    <EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} />
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
                     {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
 
-                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{machineNames(sourcesForEntry(entry))}</p>
+                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entryMachines}</p>
                     <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
                     {overlapIds.has(entry.id) && <button type="button" className="mt-1 block cursor-pointer text-xs text-red-700 underline underline-offset-4 dark:text-red-300" onClick={() => setReviewEntryOverlapsOpen(true)}>Review overlap</button>}
                     <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />} · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${formatCurrency(amount, project?.currency)}` : ""}</p>
                   </TableCell>
-                  <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{machineNames(sourcesForEntry(entry))}</TableCell>
+                  <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{entryMachines}</TableCell>
                   <TableCell className="hidden whitespace-normal sm:table-cell">
                     <button className="inline-flex max-w-full items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
                       <span>{project?.name ?? "—"}</span><Pencil className="size-3 shrink-0" />
@@ -1325,6 +1363,7 @@ export default function TrackerPage() {
               </Table>
             </div>
           )}
+          {logRows.length > visibleRowCount && <Button type="button" variant="outline" size="sm" data-testid="show-older-entries" className="mt-3 w-full" onClick={() => setVisibleRowCount((count) => count + LOG_PAGE_SIZE)}>Show older entries ({logRows.length - visibleRowCount} more)</Button>}
         </CardContent>
       </Card>
 
@@ -1347,7 +1386,7 @@ export default function TrackerPage() {
           return { id: entry.id, searchText: `${entry.description} ${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="saved-overlap-review-item">
             <div className="flex items-start justify-between gap-3">
               <p className="min-w-0 break-words font-medium">{entry.description || "Untitled"}</p>
-              <Button type="button" variant="ghost" size="icon-sm" data-testid="find-conflict-in-log" aria-label="Find entry in time log" title="Find in time log" onClick={() => { jumpToEntry.current = entry.id; setHighlightedEntry(entry.id); setReviewEntryOverlapsOpen(false) }}><ArrowUpRight className="size-4" /></Button>
+              <Button type="button" variant="ghost" size="icon-sm" data-testid="find-conflict-in-log" aria-label="Find entry in time log" title="Find in time log" onClick={() => { jumpToEntry.current = entry.id; revealEntry(entry.id); setHighlightedEntry(entry.id); setReviewEntryOverlapsOpen(false) }}><ArrowUpRight className="size-4" /></Button>
             </div>
             <p data-testid="overlap-minutes" className="mb-1 text-sm font-medium tabular-nums text-red-700 dark:text-red-300">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format((overlapDetails.get(entry.id)?.overlapMilliseconds ?? 0) / 60_000)} min overlapping</p>
             <p className="break-words text-xs text-muted-foreground">{client?.name} / {project?.name ?? "Unknown project"}</p>
