@@ -415,6 +415,9 @@ function buildAgentImportPlan(
     ignoredSeconds += trackedUncoveredSeconds - finalUncoveredSeconds
 
     for (const gap of gaps.flatMap((range) => splitAgentRange(range, maxMinutes))) {
+      const durationSeconds = Math.floor((gap.end - gap.start) / 1000)
+      // Sub-second slivers left beside tracked entries would approve as nothing, so they are not drafts.
+      if (durationSeconds <= 0) continue
       slices.push({
         id: `${interval.id}-${gap.start}-${gap.end}`,
         interval,
@@ -423,7 +426,7 @@ function buildAgentImportPlan(
         end: gap.end,
         sourceStart,
         sourceEnd,
-        durationSeconds: Math.floor((gap.end - gap.start) / 1000),
+        durationSeconds,
       })
       occupied.push(gap)
     }
