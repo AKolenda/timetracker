@@ -18,11 +18,11 @@ const CLI_TIMEOUT_MS = 90_000
 
 // Provider order and models follow the machine's own agent logins, the same way
 // T3 Code drives the Codex and Claude Code CLIs. Override with env vars.
-const PROVIDER_ORDER = (process.env.AGENT_SUMMARY_PROVIDERS || "codex")
+const PROVIDER_ORDER = (process.env.AGENT_SUMMARY_PROVIDERS || "codex,claude")
   .split(",").map((value) => value.trim()).filter((value): value is SummaryProvider => value === "codex" || value === "claude" || value === "api")
 const CODEX_MODEL = process.env.AGENT_SUMMARY_CODEX_MODEL || "gpt-5.6-terra"
 const CODEX_EFFORT = process.env.AGENT_SUMMARY_CODEX_EFFORT || "low"
-const CLAUDE_CLI_MODEL = process.env.AGENT_SUMMARY_CLAUDE_MODEL || "claude-sonnet-5"
+const CLAUDE_CLI_MODEL = process.env.AGENT_SUMMARY_CLAUDE_MODEL || "claude-haiku-5-5"
 const API_MODEL = process.env.AGENT_SUMMARY_API_MODEL || "claude-opus-5"
 
 // Shared editorial rules from T3 Code TextGenerationPrompts.ts.
