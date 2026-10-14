@@ -1175,7 +1175,6 @@ export default function AgenticCodingPage() {
     <>
       <PageHeader
         title="Agentic Coding"
-        description="Master activity across Claude, Codex, T3 Code, and every connected coding agent"
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm">

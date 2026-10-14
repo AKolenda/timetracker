@@ -42,7 +42,7 @@ export default function RootLayout({
               <SidebarProvider>
                 <AppSidebar />
                 <SidebarInset className="min-w-0">
-                  <div className="p-6">{children}</div>
+                  <div className="px-4 pb-8 sm:px-6">{children}</div>
                 </SidebarInset>
               </SidebarProvider>
               <Toaster />

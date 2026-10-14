@@ -51,7 +51,6 @@ export default function DashboardPage() {
     <>
       <PageHeader
         title="Dashboard"
-        description="Overview of your time tracking activity"
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

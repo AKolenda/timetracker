@@ -11,12 +11,12 @@ export function ThemeToggle() {
     <Button
       variant="ghost"
       size="sm"
-      className="w-full justify-start gap-2"
+      className="h-7 w-full justify-start gap-2.5 px-2 font-medium text-sidebar-foreground [&_svg]:size-3.5"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
     >
-      <Sun className="size-4 dark:hidden" />
-      <Moon className="hidden size-4 dark:block" />
-      <span className="text-xs">
+      <Sun className="dark:hidden" />
+      <Moon className="hidden dark:block" />
+      <span className="text-sm">
         {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
       </span>
     </Button>

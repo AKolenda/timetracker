@@ -1025,7 +1025,6 @@ export default function TrackerPage() {
     <>
       <PageHeader
         title="Time Tracker"
-        description="Track each work session as its own entry"
       />
 
       <Card className="mb-6">
@@ -1083,7 +1082,7 @@ export default function TrackerPage() {
                 <Button
                   data-testid="timer-start"
                   onClick={handleStart}
-                  className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 sm:w-auto"
+                  className="w-full sm:w-auto"
                 >
                   <Play className="size-3.5" data-icon="inline-start" />
                   Start timer
@@ -1099,8 +1098,8 @@ export default function TrackerPage() {
                   {timer.pausedAt && <Badge variant="secondary" className="animate-pulse text-xs">Paused</Badge>}
                   <div className="ml-auto flex gap-2">
                     <Button variant="outline" onClick={() => handleDiscard(timer.id)}>Discard</Button>
-                    {timer.pausedAt ? <Button onClick={() => resumeTimer(timer.id)} className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
-                    <Button onClick={() => handleStop(timer.id)} className="bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"><Square className="size-3.5" data-icon="inline-start" />Stop</Button>
+                    {timer.pausedAt ? <Button onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
+                    <Button variant="destructive" onClick={() => handleStop(timer.id)}><Square className="size-3.5" data-icon="inline-start" />Stop</Button>
                   </div>
                 </div>
               })}</div>}
