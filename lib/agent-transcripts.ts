@@ -49,7 +49,8 @@ function pushMessage(messages: TranscriptMessage[], role: "user" | "assistant", 
   const cleaned = cleanText(text)
   if (!cleaned || cleaned.startsWith("Base directory for this skill:")) return
   const previous = messages.at(-1)
-  if (previous && previous.role === role && role === "assistant") {
+  // Only merge assistant text written at the same moment, so each message keeps an accurate time.
+  if (previous && previous.role === role && role === "assistant" && previous.at === at) {
     previous.text = `${previous.text}\n\n${cleaned}`.slice(0, MAX_MESSAGE_CHARS)
     return
   }
