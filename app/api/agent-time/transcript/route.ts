@@ -18,17 +18,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "A chat id is required." }, { status: 400 })
   }
   if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && id.startsWith("fixture-")) {
-    return NextResponse.json({
-      transcript: {
-        source,
-        conversationId: id,
-        title: "Fixture chat",
-        messages: [
-          { role: "user", text: "Tighten the mobile import review so the timeline fits at 390px.", at: null },
-          { role: "assistant", text: "Done. The lanes now wrap under the logos and the stats sit on one row.", at: null },
-        ],
-      },
-    })
+    // Timed around the mobile fixture entry (today 13:40-15:35) so the audit view shows messages on both sides of it.
+    const at = (hours: number, minutes: number) => { const time = new Date(); time.setHours(hours, minutes, 0, 0); return time.toISOString() }
+    const messages = [
+      { role: "user", text: "Before we start: summarize where the import review stands.", at: at(13, 22) },
+      { role: "assistant", text: "The review lists drafts per day; the timeline overflows at 390px.", at: at(13, 25) },
+      { role: "user", text: "Tighten the mobile import review so the timeline fits at 390px.", at: at(13, 41) },
+      { role: "assistant", text: `Done. The lanes now wrap under the logos and the stats sit on one row.\n\n${"Checked each lane at 390px, 768px and 1280px; no horizontal overflow remains. ".repeat(24)}`, at: at(13, 49) },
+      { role: "user", text: "Now check the Claude review notes and apply the ones about spacing.", at: at(14, 3) },
+      { role: "assistant", text: "Applied the spacing notes and left the colour suggestion for you to decide.", at: at(14, 11) },
+      { role: "user", text: "Run the full tracker suite and report anything flaky.", at: at(14, 20) },
+      { role: "assistant", text: "All tracker tests pass. One screenshot test was slow but stable across three runs.", at: at(15, 30) },
+      { role: "user", text: "Thanks — tomorrow, draft the PR description.", at: at(15, 52) },
+      { role: "assistant", text: "Noted. I will draft it from the commit log.", at: at(15, 53) },
+    ]
+    return NextResponse.json({ transcript: { source, conversationId: id, title: "Fixture chat", messages, totalMessages: messages.length, nextOffset: null } })
   }
   try {
     const settings = await getDataProvider().getSettings()

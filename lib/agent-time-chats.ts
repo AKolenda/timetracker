@@ -47,3 +47,14 @@ export function groupConversationSources(
   }).sort((a, b) => a.spans[0].start - b.spans[0].start)
 }
 
+
+export type MessagePlacement = "before" | "inside" | "after" | "unknown"
+
+/** Where a chat message falls relative to an entry's start and end, for auditing what was billed. */
+export function messagePlacement(at: string | null, windowStart: number, windowEnd: number): MessagePlacement {
+  const time = at ? Date.parse(at) : NaN
+  if (Number.isNaN(time)) return "unknown"
+  if (time < windowStart) return "before"
+  if (Number.isFinite(windowEnd) && time > windowEnd) return "after"
+  return "inside"
+}
