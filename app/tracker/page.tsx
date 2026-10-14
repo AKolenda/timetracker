@@ -1,7 +1,6 @@
 "use client"
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import Image from "next/image"
 import { machineName } from "@/lib/agent-time-hosts"
 import { clipAgentSources } from "@/lib/agent-time-provenance"
 import {
@@ -16,9 +15,7 @@ import {
   Plus,
   LoaderCircle,
   ChevronsUpDown,
-  ChevronDown,
   Check,
-  MessageSquareText,
   X,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -63,18 +60,18 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { TrackerReviewDialog } from "@/components/tracker-review-dialog"
+import { EntryChats, type ConversationSource } from "@/components/entry-chat-audit"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatDuration, formatHours } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRange } from "@/lib/agent-time-overlap"
 import { conversationKey, groupConversationSources } from "@/lib/agent-time-chats"
-import { BILL_FACTOR_PRESETS, billedSeconds, formatBillFactor, normalizeBillFactor, sourcesBillFactor } from "@/lib/billing"
+import { billedSeconds, formatBillFactor, normalizeBillFactor, sourcesBillFactor } from "@/lib/billing"
 import { invoicedSourceIds } from "@/lib/invoice-estimates"
 import { intervalIsSettled } from "@/lib/summary-jobs"
 import { splitAgentRange } from "@/lib/agent-time-intervals"
@@ -147,14 +144,6 @@ const LOG_PAGE_SIZE = 100
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
 const IGNORED_AGENT_RANGES_KEY = "timetracker-agent-time-ignored-ranges"
 
-function sourceDescription(interval: AgentTimeSourceInterval) {
-  if (interval.source === "T3 Code") return `T3 Code using ${interval.agent}`
-  return `${interval.source || interval.agent} directly`
-}
-
-
-type ConversationSource = ReturnType<typeof groupConversationSources>[number]
-
 /** The chat that best represents a draft: the longest one with a title, else the longest overall. */
 function primaryConversation(slice: AgentImportSlice) {
   const conversations = groupConversationSources(slice.interval.sourceIntervals ?? [], slice.start, slice.end)
@@ -170,133 +159,6 @@ function summaryKey(slice: AgentImportSlice) {
 function draftDescription(slice: AgentImportSlice, summaries: Record<string, string> = {}) {
   const primary = primaryConversation(slice)
   return summaries[summaryKey(slice)] || primary?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
-}
-
-function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
-  if (source === "T3 Code") {
-    return <Image src="/t3-code-logo.svg" alt="T3 Code" width={32} height={32} className={`shrink-0 rounded-md shadow-sm ${className}`} />
-  }
-  if (source === "Claude" || agent === "Claude" || agent === "Fable") {
-    return <span className={`grid shrink-0 place-items-center rounded-md bg-[#f0eee6] shadow-sm ${className}`} aria-label="Claude logo"><Image src="/claude-logo.svg" alt="" width={32} height={32} className="size-[72%]" /></span>
-  }
-  return <span className={`grid shrink-0 place-items-center rounded-md bg-emerald-600 text-white shadow-sm ${className}`} aria-label="ChatGPT logo"><svg viewBox="0 0 24 24" className="size-[76%]" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M11.217 19.384A3.501 3.501 0 0 0 18 18.167V13l-6-3.35" /><path d="M5.214 15.014A3.501 3.501 0 0 0 9.66 20.28L14 17.746V10.8" /><path d="M6 7.63c-1.391-.236-2.787.395-3.534 1.689a3.474 3.474 0 0 0 1.271 4.745L8 16.578l6-3.348" /><path d="M12.783 4.616A3.501 3.501 0 0 0 6 5.833V10.9l6 3.45" /><path d="M18.786 8.986A3.501 3.501 0 0 0 14.34 3.72L10 6.254V13.2" /><path d="M18 16.302c1.391.236 2.787-.395 3.534-1.689a3.474 3.474 0 0 0-1.271-4.745l-4.308-2.514L10 10.774" /></svg></span>
-}
-
-type TranscriptMessage = { role: "user" | "assistant"; text: string; at: string | null }
-type Transcript = { source: string; conversationId: string; title: string; messages: TranscriptMessage[]; nextOffset?: number | null; totalMessages?: number }
-
-function ChatTranscript({ source, onClose }: { source: ConversationSource; onClose: () => void }) {
-  const [state, setState] = useState<{ key: string; transcript?: Transcript; error?: string } | null>(null)
-  const key = `${source.hostUrl || ""}:${source.source}:${source.conversationId}`
-
-  useEffect(() => {
-    let cancelled = false
-    const query = new URLSearchParams({ source: source.source, id: source.conversationId, host: source.hostUrl || "" })
-    fetch(`/api/agent-time/transcript?${query.toString()}`)
-      .then(async (response) => {
-        const body = await response.json().catch(() => ({})) as { transcript?: Transcript; error?: string }
-        if (cancelled) return
-        if (!response.ok || !body.transcript) setState({ key, error: body.error || "Unable to read the chat." })
-        else setState({ key, transcript: body.transcript })
-      })
-      .catch(() => { if (!cancelled) setState({ key, error: "Unable to read the chat." }) })
-    return () => { cancelled = true }
-  }, [source, key])
-
-  const [loadingMore, setLoadingMore] = useState(false)
-  async function loadMore() {
-    if (state?.transcript?.nextOffset == null || loadingMore) return
-    setLoadingMore(true)
-    try {
-      const query = new URLSearchParams({ source: source.source, id: source.conversationId, host: source.hostUrl || "", offset: String(state.transcript.nextOffset) })
-      const response = await fetch(`/api/agent-time/transcript?${query}`)
-      const body = await response.json() as { transcript?: Transcript; error?: string }
-      if (!response.ok || !body.transcript) throw new Error(body.error || "Unable to load more messages")
-      const next = body.transcript
-      setState((current) => current?.key === key && current.transcript ? { ...current, transcript: { ...next, messages: [...current.transcript.messages, ...next.messages] } } : current)
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Unable to load more messages") }
-    finally { setLoadingMore(false) }
-  }
-  const title = state?.transcript?.title || source.conversationTitle || `${source.agent} conversation`
-  const loading = !state || state.key !== key
-
-  return <div className="min-w-0 overflow-hidden rounded-xl border bg-background" data-testid="agent-chat-panel">
-    <div className="flex min-w-0 items-start gap-2.5 border-b px-3 py-2.5">
-      <SourceLogo source={source.source} agent={source.agent} className="size-7" />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium leading-snug break-words">{title}</p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">{machineName(source)} · {sourceDescription(source)}{source.model ? ` · ${source.model}` : ""} · {formatDuration(source.durationSeconds)}</p>
-      </div>
-      <Button type="button" variant="ghost" size="icon-xs" aria-label="Close chat" onClick={onClose}><X className="size-3.5" /></Button>
-    </div>
-    <div className="max-h-[65dvh] min-w-0 overflow-y-auto overscroll-contain px-3 py-3">
-      {loading && <div className="grid gap-3"><Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" /><Skeleton className="h-16 w-4/5 rounded-2xl" /><Skeleton className="ml-auto h-8 w-1/2 rounded-2xl" /></div>}
-      {!loading && state?.error && <p className="py-6 text-center text-sm text-muted-foreground">{state.error}</p>}
-      {!loading && state?.transcript && state.transcript.messages.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">This chat has no messages yet.</p>}
-      {!loading && state?.transcript && state.transcript.messages.length > 0 && <div className="grid gap-3">
-        {state.transcript.messages.map((message, index) => <div key={`${message.at ?? index}-${index}`} className={`flex min-w-0 flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
-          <div className={`max-w-[92%] whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm leading-relaxed sm:max-w-[85%] ${message.role === "user" ? "rounded-br-md bg-primary text-primary-foreground" : "rounded-bl-md bg-muted"}`}>{message.text}</div>
-          {message.at && <span className="mt-1 px-1 font-mono text-[0.65rem] text-muted-foreground">{format(new Date(message.at), "MMM d, yyyy HH:mm:ss OOO")}</span>}
-        </div>)}
-      </div>}
-      {state?.transcript?.nextOffset != null && <Button className="mt-4 w-full" variant="outline" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading…" : `Load more messages (${state.transcript.messages.length} / ${state.transcript.totalMessages})`}</Button>}
-    </div>
-  </div>
-}
-
-function ChatBillFactor({ factor, onChange }: { factor: number; onChange: (factor: number) => void }) {
-  const [custom, setCustom] = useState("")
-  const isPreset = BILL_FACTOR_PRESETS.some((option) => Math.abs(option.value - factor) < 0.0001)
-  return <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-[1.875rem] text-xs" data-testid="chat-bill-factor">
-    <span className="mr-1 text-muted-foreground">Bill</span>
-    {BILL_FACTOR_PRESETS.map((option) => <Button key={option.label} type="button" size="xs" variant={Math.abs(option.value - factor) < 0.0001 ? "default" : "outline"} className="h-6 rounded-md px-2" aria-pressed={Math.abs(option.value - factor) < 0.0001} onClick={() => onChange(option.value)}>{option.label}</Button>)}
-    <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
-      <Input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-6 w-14 rounded-md px-1.5 text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${isPreset ? "" : "border-primary"}`} />
-      <span className="text-muted-foreground">%</span>
-    </form>
-  </div>
-}
-
-function EntryChats({ description, sources, start, end, labels, inferred = false, chatFactors, onSetChatFactor }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean; chatFactors?: Record<string, number>; onSetChatFactor?: (chat: ConversationSource, factor: number) => void }) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState("")
-  const [page, setPage] = useState(0)
-  const [chat, setChat] = useState<ConversationSource | null>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const conversations = useMemo(() => open ? groupConversationSources(sources, start, end) : [], [open, sources, start, end])
-  const needle = query.trim().toLowerCase()
-  const filtered = conversations.filter((source) => `${source.conversationTitle} ${source.conversationSummary || ""} ${machineName(source, labels)} ${source.source}`.toLowerCase().includes(needle))
-  const pages = Math.max(1, Math.ceil(filtered.length / 5))
-  const currentPage = Math.min(page, pages - 1)
-  return <>
-    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (value) { setPage(0); setQuery("") } }}>
-      <PopoverTrigger asChild><button ref={triggerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`}>
-        <span className="min-w-0 flex-1 break-words">{description || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
-      </button></PopoverTrigger>
-      <PopoverContent onCloseAutoFocus={(event) => { if (chat) event.preventDefault() }} align="start" collisionPadding={16} className="w-[min(28rem,calc(100vw-2rem))] gap-0 rounded-md p-0" data-testid="entry-chats-dropdown">
-        <div className="border-b p-3">
-          <p className="font-semibold">Chats in this entry <span className="font-normal text-muted-foreground">({conversations.length})</span></p>
-          <p className="mt-1 text-xs text-muted-foreground">{inferred ? "Matched from available activity logs. Older entries did not save chat references." : "Activity contributing to this time entry. Set how much of each chat to bill; it applies to every interval from that chat."}</p>
-          <Input className="mt-3 h-8 rounded-md" aria-label="Search entry chats" placeholder="Search chats or machines…" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} />
-        </div>
-        <div className="max-h-[min(22rem,50vh)] overflow-y-auto p-1">
-          {filtered.slice(currentPage * 5, currentPage * 5 + 5).map((source) => <div key={`${source.hostUrl}:${source.source}:${source.conversationId}`} className="rounded-md p-2.5 hover:bg-muted"><button type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setChat({ ...source, machineLabel: machineName(source, labels) }); setOpen(false) }}>
-            <SourceLogo source={source.agent} agent={source.agent} className="mt-0.5 size-5" />
-            <div className="min-w-0 flex-1">
-              <p className="break-words text-sm font-medium">{source.conversationTitle || source.conversationSummary || "Untitled chat"}</p>
-              {source.conversationSummary && source.conversationSummary !== source.conversationTitle && <p className="mt-1 break-words text-xs text-muted-foreground">{source.conversationSummary}</p>}
-              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="rounded-md bg-muted px-1.5 py-0.5 text-foreground">{machineName(source, labels)}</span><span>{source.model || source.agent || source.source}</span><span className="font-mono">{formatDuration(source.durationSeconds)}</span></div>
-              <p className="mt-1 text-xs text-muted-foreground">{new Date(source.spans[0].start).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" })} – {new Date(source.spans.at(-1)!.end).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "long" })}</p>
-            </div>
-            <MessageSquareText className="mt-1 size-4 shrink-0 text-muted-foreground" />
-          </button>{onSetChatFactor && <ChatBillFactor factor={normalizeBillFactor(chatFactors?.[conversationKey(source)] ?? 1)} onChange={(factor) => onSetChatFactor(source, factor)} />}</div>)}
-          {filtered.length === 0 && <p className="p-4 text-sm text-muted-foreground">{query ? "No chats match this search." : "No chat references are available for this entry. Check that its source machine is connected."}</p>}
-        </div>
-        {pages > 1 && <div className="flex items-center justify-between border-t px-3 py-2 text-xs"><Button size="sm" variant="ghost" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><span>{currentPage + 1} / {pages}</span><Button size="sm" variant="ghost" disabled={currentPage >= pages - 1} onClick={() => setPage(currentPage + 1)}>Next</Button></div>}
-      </PopoverContent>
-    </Popover>
-    <Dialog open={!!chat} onOpenChange={(value) => { if (!value) setChat(null) }}><DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); triggerRef.current?.focus() }} aria-describedby={undefined} showCloseButton={false} className="max-h-[90dvh] w-[calc(100vw-2rem)] min-w-0 overflow-hidden rounded-md p-0 sm:max-w-3xl"><DialogHeader className="sr-only"><DialogTitle>Chat transcript</DialogTitle></DialogHeader>{chat && <ChatTranscript source={chat} onClose={() => setChat(null)} />}</DialogContent></Dialog>
-  </>
 }
 
 function mobileFixtureRequested() {
