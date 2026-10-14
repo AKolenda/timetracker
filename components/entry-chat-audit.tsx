@@ -47,7 +47,7 @@ function ChatBillFactor({ factor, onChange }: { factor: number; onChange: (facto
     <div className="flex items-center rounded-md border p-0.5">
       {BILL_FACTOR_PRESETS.map((option) => { const active = Math.abs(option.value - factor) < 0.0001; return <button key={option.label} type="button" className={`h-5 cursor-pointer rounded-[4px] px-1.5 font-medium focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={active} onClick={() => onChange(option.value)}>{option.label}</button> })}
       <form className="flex items-center" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
-        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-11 rounded-[4px] bg-transparent px-1.5 text-center font-medium outline-none [appearance:textfield] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
+        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-12 rounded-[4px] bg-transparent px-1.5 text-center text-[16px] leading-none font-medium sm:w-11 sm:text-xs outline-none [appearance:textfield] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
       </form>
     </div>
   </div>
@@ -165,7 +165,8 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
   const loading = !state || state.key !== key
   const total = transcript?.totalMessages ?? messages.length
   // Boundaries mark where the entry starts and ends among the visible messages, even when no message falls on one side.
-  const complete = transcript?.nextOffset == null && !state?.loadingMore
+  // The entry window is fully read once the chat ends or a loaded message falls after the entry.
+  const complete = (transcript?.nextOffset == null && !state?.loadingMore) || messages.some((item) => item.placement === "after")
   const hasEnd = Number.isFinite(entryEnd)
   const startLabel = `Entry started ${clock(entryStart, multiDay)}`
   const endLabel = hasEnd ? `Entry ended ${clock(entryEnd, multiDay)}` : ""
