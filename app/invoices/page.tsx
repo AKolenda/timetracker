@@ -536,7 +536,6 @@ export default function InvoicesPage() {
     <>
       <PageHeader
         title="Invoices"
-        description="Generate and manage client invoices"
       />
 
       <Card data-testid="invoice-section">

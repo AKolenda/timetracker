@@ -153,7 +153,6 @@ export default function ExpensesPage() {
     <>
       <PageHeader
         title="Expenses"
-        description="Track project expenses and costs"
         actions={
           <Button
             size="sm"

@@ -122,7 +122,6 @@ export default function ClientsPage() {
     <>
       <PageHeader
         title="Clients"
-        description="Manage your client relationships"
         actions={
           <Button size="sm" onClick={openCreate}>
             <Plus className="size-4" data-icon="inline-start" />

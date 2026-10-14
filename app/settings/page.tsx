@@ -208,7 +208,6 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="Configure your profile and invoice settings"
         actions={
           <Button size="sm" onClick={handleSave} disabled={saving}>
             {saving ? "Saving..." : "Save Changes"}

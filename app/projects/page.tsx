@@ -146,7 +146,6 @@ export default function ProjectsPage() {
     <>
       <PageHeader
         title="Projects"
-        description="Track projects and hourly rates"
         actions={
           <Button
             size="sm"
