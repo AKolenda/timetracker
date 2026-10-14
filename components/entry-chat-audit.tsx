@@ -209,7 +209,7 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
         <MessageRow message={message} placement={placement} source={source} withDate={multiDay} needle={needle} />
       </Fragment>)}
       {startAt === visible.length && visible.length > 0 && <Boundary label={startLabel} />}
-      {endAt === visible.length && visible.length > 0 && <Boundary label={endLabel} />}
+      {endAt === visible.length && <Boundary label={endLabel} />}
       {state?.loadingMore && <p className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" />Reading messages… {messages.length} / {total}</p>}
       {!state?.loadingMore && transcript?.nextOffset != null && <Button className="my-3 w-full" variant="ghost" size="sm" onClick={() => void loadMore()}>Load more messages ({messages.length} / {total})</Button>}
     </div>
