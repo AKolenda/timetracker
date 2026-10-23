@@ -3,12 +3,13 @@
 import { useMemo, useState } from "react"
 import {
   Plus,
+  Pencil,
   Trash2,
   Receipt,
   CalendarIcon,
 } from "lucide-react"
 import { toast } from "sonner"
-import { format } from "date-fns"
+import { format, parseISO } from "date-fns"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -95,17 +96,36 @@ const categoryColors: Record<string, string> = {
 }
 
 export default function ExpensesPage() {
-  const { data, addExpense, deleteExpense, getProject, getClient } = useStore()
+  const { data, addExpense, updateExpense, deleteExpense, getProject, getClient } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
+  const [editTarget, setEditTarget] = useState<Expense | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null)
 
   function openCreate() {
+    setEditTarget(null)
     setForm({
       ...emptyForm,
       projectId: data.projects[0]?.id ?? "",
     })
     setDialogOpen(true)
+  }
+
+  function openEdit(expense: Expense) {
+    setEditTarget(expense)
+    setForm({
+      projectId: expense.projectId,
+      description: expense.description,
+      amount: String(expense.amount),
+      category: expense.category,
+      date: parseISO(expense.date),
+      notes: expense.notes,
+    })
+    setDialogOpen(true)
+  }
+
+  function invoiceNumberFor(expense: Expense) {
+    return data.invoices.find((invoice) => invoice.lineItems.some((item) => item.type === "expense" && item.sourceId === expense.id))?.invoiceNumber
   }
 
   async function handleSave() {
@@ -122,17 +142,23 @@ export default function ExpensesPage() {
       toast.error("Enter a valid amount")
       return
     }
-    await addExpense({
+    const values = {
       projectId: form.projectId,
       description: form.description.trim(),
       amount,
       category: form.category,
       date: format(form.date, "yyyy-MM-dd"),
       notes: form.notes.trim(),
-      invoiced: false,
-    })
-    toast.success("Expense added")
+    }
+    if (editTarget) {
+      await updateExpense(editTarget.id, values)
+      toast.success("Expense updated")
+    } else {
+      await addExpense({ ...values, invoiced: false })
+      toast.success("Expense added")
+    }
     setDialogOpen(false)
+    setEditTarget(null)
   }
 
   const sortedExpenses = useMemo(
@@ -235,12 +261,12 @@ export default function ExpensesPage() {
               <TableRow>
                 <TableHead>Description</TableHead>
                 <TableHead>Project</TableHead>
-                <TableHead>Category</TableHead>
                 <TableHead>Invoice</TableHead>
                 <TableHead>Invoiced</TableHead>
+                <TableHead>Category</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="w-10" />
+                <TableHead className="w-16" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -262,7 +288,7 @@ export default function ExpensesPage() {
                       <span className="text-xs text-muted-foreground">{project?.name ?? "—"}</span>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
-                      {data.invoices.find((invoice) => invoice.lineItems.some((item) => item.type === "expense" && item.sourceId === expense.id))?.invoiceNumber ?? "—"}
+                      {invoiceNumberFor(expense) ?? "—"}
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary" className={expense.invoiced ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" : ""}>
@@ -280,19 +306,32 @@ export default function ExpensesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(new Date(expense.date), "MMM d, yyyy")}
+                      {format(parseISO(expense.date), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs font-medium">
                       {formatCurrency(expense.amount)}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => setDeleteTarget(expense)}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => openEdit(expense)}
+                          aria-label={`Edit ${expense.description}`}
+                          title="Edit"
+                        >
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => setDeleteTarget(expense)}
+                          aria-label={`Delete ${expense.description}`}
+                          title="Delete"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 )
@@ -305,9 +344,15 @@ export default function ExpensesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New Expense</DialogTitle>
+            <DialogTitle>{editTarget ? "Edit Expense" : "New Expense"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {editTarget && invoiceNumberFor(editTarget) && (
+              <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                This expense is on {invoiceNumberFor(editTarget)}. Saving
+                changes here does not update that invoice.
+              </p>
+            )}
             <div className="grid gap-2">
               <Label>Project</Label>
               <Select
@@ -399,6 +444,7 @@ export default function ExpensesPage() {
                   <Calendar
                     mode="single"
                     selected={form.date}
+                    defaultMonth={form.date}
                     onSelect={(d) => d && setForm({ ...form, date: d })}
                     initialFocus
                   />
@@ -422,7 +468,9 @@ export default function ExpensesPage() {
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={handleSave}>Add Expense</Button>
+            <Button onClick={handleSave}>
+              {editTarget ? "Save Changes" : "Add Expense"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

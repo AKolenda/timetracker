@@ -362,6 +362,7 @@ export class SupabaseProvider implements DataProvider {
 
   async updateExpense(id: string, updates: Partial<Expense>): Promise<void> {
     const row: Record<string, unknown> = {}
+    if (updates.projectId !== undefined) row.project_id = updates.projectId
     if (updates.description !== undefined) row.description = updates.description
     if (updates.amount !== undefined) row.amount = updates.amount
     if (updates.category !== undefined) row.category = updates.category
