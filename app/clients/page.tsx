@@ -1,7 +1,14 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, MoreHorizontal, Pencil, Trash2, FolderKanban } from "lucide-react"
+import { formatCurrency, formatDate } from "@/lib/format"
+import {
+  Plus,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  FolderKanban,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -54,15 +61,87 @@ const emptyForm = {
 }
 
 export default function ClientsPage() {
-  const { data, addClient, updateClient, deleteClient, getProjectsByClient } =
-    useStore()
+  const {
+    data,
+    loading,
+    addClient,
+    updateClient,
+    deleteClient,
+    getProjectsByClient,
+  } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState(emptyForm)
 
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  const [invoicesOpen, setInvoicesOpen] = useState(false)
+  const [invoiceSearch, setInvoiceSearch] = useState("")
+  const [invoicePage, setInvoicePage] = useState(0)
+  const selectedClient =
+    data.clients.find((client) => client.id === selectedClientId) ??
+    data.clients[0]
+  const issuedInvoices = data.invoices.filter(
+    (invoice) => invoice.status !== "draft"
+  )
+  const clientInvoices = issuedInvoices
+    .filter((invoice) => invoice.clientId === selectedClient?.id)
+    .sort(
+      (a, b) =>
+        b.issueDate.localeCompare(a.issueDate) ||
+        b.createdAt.localeCompare(a.createdAt)
+    )
+  const lifetime = clientInvoices.reduce(
+    (sum, invoice) => sum + invoice.total,
+    0
+  )
+  const paid = clientInvoices
+    .filter((invoice) => invoice.status === "paid")
+    .reduce((sum, invoice) => sum + invoice.total, 0)
+  const filteredInvoices = clientInvoices.filter((invoice) =>
+    `${invoice.invoiceNumber} ${invoice.status} ${invoice.issueDate}`
+      .toLowerCase()
+      .includes(invoiceSearch.trim().toLowerCase())
+  )
+  const lastInvoicePage = Math.max(
+    0,
+    Math.ceil(filteredInvoices.length / 10) - 1
+  )
+  const currentInvoicePage = Math.min(invoicePage, lastInvoicePage)
+
+  function invoiceRows(invoices: typeof clientInvoices) {
+    return invoices.map((invoice) => (
+      <div
+        key={invoice.id}
+        className="flex items-center justify-between gap-3 border-b py-3 last:border-0"
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-medium break-words">
+            {invoice.invoiceNumber}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {formatDate(invoice.issueDate)}
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-sm tabular-nums">
+            {formatCurrency(invoice.total)}
+          </p>
+          <p
+            className={`text-xs capitalize ${invoice.status === "paid" ? "text-emerald-600 dark:text-emerald-400" : invoice.status === "overdue" ? "text-destructive" : "text-muted-foreground"}`}
+          >
+            {invoice.status}
+          </p>
+        </div>
+      </div>
+    ))
+  }
+
   function openCreate() {
     setEditing(null)
-    setForm({ ...emptyForm, color: CLIENT_COLORS[Math.floor(Math.random() * CLIENT_COLORS.length)] })
+    setForm({
+      ...emptyForm,
+      color: CLIENT_COLORS[Math.floor(Math.random() * CLIENT_COLORS.length)],
+    })
     setDialogOpen(true)
   }
 
@@ -130,91 +209,242 @@ export default function ClientsPage() {
         }
       />
 
-      {data.clients.length === 0 ? (
+      {loading ? (
+        <p className="py-12 text-center text-sm text-muted-foreground">
+          Loading clients…
+        </p>
+      ) : data.clients.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-              <FolderKanban className="size-5 text-muted-foreground" />
-            </div>
+            <FolderKanban className="mb-4 size-6 text-muted-foreground" />
             <p className="text-sm font-medium">No clients yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Create your first client to get started
             </p>
             <Button size="sm" className="mt-4" onClick={openCreate}>
-              <Plus className="size-4" data-icon="inline-start" />
+              <Plus className="size-4" />
               New Client
             </Button>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {data.clients.map((client) => {
-            const projects = getProjectsByClient(client.id)
-            return (
-              <Card key={client.id} className="relative">
-                <CardContent className="pt-5">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="size-9 shrink-0 rounded-lg"
-                        style={{ backgroundColor: client.color }}
+      ) : selectedClient ? (
+        <>
+          <div className="mb-4 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+            <span>
+              {data.clients.length}{" "}
+              {data.clients.length === 1 ? "client" : "clients"} · Select a
+              client to see billing
+            </span>
+            <span>All time · USD · Drafts excluded</span>
+          </div>
+          <div className="grid min-w-0 overflow-hidden rounded-lg border bg-card lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+            <div className="min-w-0" aria-label="Clients">
+              {data.clients.map((client) => {
+                const total = issuedInvoices
+                  .filter((invoice) => invoice.clientId === client.id)
+                  .reduce((sum, invoice) => sum + invoice.total, 0)
+                const selected = client.id === selectedClient.id
+                return (
+                  <button
+                    key={client.id}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setSelectedClientId(client.id)}
+                    className={`flex w-full items-center justify-between gap-3 border-b border-l-2 px-3 py-5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5 ${selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-muted/50"}`}
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span
+                        className="size-8 shrink-0 rounded-md"
+                        style={{
+                          backgroundColor: client.color || CLIENT_COLORS[0],
+                        }}
                       />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold">
                           {client.name}
-                        </p>
+                        </span>
                         {client.email && (
-                          <p className="truncate text-xs text-muted-foreground">
+                          <span className="block truncate text-xs text-muted-foreground">
                             {client.email}
-                          </p>
+                          </span>
                         )}
-                      </div>
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-xs">
-                          <MoreHorizontal className="size-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => openEdit(client)}>
-                          <Pencil className="size-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDelete(client)}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="size-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                  <div className="mt-4 flex items-center gap-4 border-t pt-3 font-mono text-xs text-muted-foreground">
-                    <span>{projects.length} projects</span>
-                    {client.phone && <span>{client.phone}</span>}
-                  </div>
-                  {client.invoiceScheduleEnabled && client.invoiceScheduleWeeks ? (
-                    <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                      <span className="size-1.5 rounded-full bg-emerald-500" />
-                      Auto-invoice every {client.invoiceScheduleWeeks}w
-                      {!client.invoiceScheduleAutoSend && " (draft only)"}
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      )}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="block text-sm font-semibold tabular-nums">
+                        {formatCurrency(total)}
+                      </span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        Lifetime invoiced
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <section
+              aria-label="Client billing detail"
+              className="min-w-0 border-t p-4 sm:p-6 lg:border-t-0 lg:border-l"
+            >
+              <div className="mb-6 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold break-words">
+                    {selectedClient.name}
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {getProjectsByClient(selectedClient.id).length}{" "}
+                    {getProjectsByClient(selectedClient.id).length === 1
+                      ? "project"
+                      : "projects"}
+                  </p>
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Actions for ${selectedClient.name}`}
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => openEdit(selectedClient)}>
+                      <Pencil className="size-4" />
+                      Edit
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => handleDelete(selectedClient)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <p className="text-xs text-muted-foreground">Lifetime invoiced</p>
+              <p className="mt-1 text-3xl font-semibold tracking-tight break-words tabular-nums sm:text-4xl">
+                {formatCurrency(lifetime)}
+              </p>
+              <div className="mt-6 grid grid-cols-2 gap-4 border-b pb-6">
+                <div>
+                  <p className="text-xs text-muted-foreground">Paid</p>
+                  <p className="mt-1 text-lg font-medium break-words tabular-nums">
+                    {formatCurrency(paid)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Outstanding</p>
+                  <p className="mt-1 text-lg font-medium break-words text-amber-700 tabular-nums dark:text-amber-300">
+                    {formatCurrency(lifetime - paid)}
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2 border-b py-4 text-xs text-muted-foreground">
+                {selectedClient.email && (
+                  <p className="break-all">{selectedClient.email}</p>
+                )}
+                {selectedClient.phone && <p>{selectedClient.phone}</p>}
+                {selectedClient.invoiceScheduleEnabled &&
+                selectedClient.invoiceScheduleWeeks ? (
+                  <span className="inline-flex rounded-md bg-emerald-500/10 px-2 py-1 text-emerald-600 dark:text-emerald-400">
+                    Auto-invoice every {selectedClient.invoiceScheduleWeeks}w
+                    {!selectedClient.invoiceScheduleAutoSend && " (draft only)"}
+                  </span>
+                ) : (
+                  <p>Manual invoicing</p>
+                )}
+              </div>
+              <h3 className="mt-5 text-xs text-muted-foreground">
+                Recent invoices · {clientInvoices.length} total
+              </h3>
+              {clientInvoices.length ? (
+                invoiceRows(clientInvoices.slice(0, 5))
+              ) : (
+                <p className="py-6 text-sm text-muted-foreground">
+                  No issued invoices yet. Drafts appear on the Invoices page.
+                </p>
+              )}
+              {clientInvoices.length > 0 && (
+                <Button
+                  variant="link"
+                  className="mt-2 px-0"
+                  onClick={() => {
+                    setInvoiceSearch("")
+                    setInvoicePage(0)
+                    setInvoicesOpen(true)
+                  }}
+                >
+                  View all invoices
+                </Button>
+              )}
+            </section>
+          </div>
+        </>
+      ) : null}
+
+      <Dialog open={invoicesOpen} onOpenChange={setInvoicesOpen}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="break-words">
+              {selectedClient?.name} invoices
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            All time · USD · Drafts excluded
+          </p>
+          <Input
+            aria-label="Search invoices"
+            placeholder="Search number, status, or date…"
+            value={invoiceSearch}
+            onChange={(event) => {
+              setInvoiceSearch(event.target.value)
+              setInvoicePage(0)
+            }}
+          />
+          <div>
+            {filteredInvoices.length ? (
+              invoiceRows(
+                filteredInvoices.slice(
+                  currentInvoicePage * 10,
+                  (currentInvoicePage + 1) * 10
+                )
+              )
+            ) : (
+              <p className="py-6 text-sm text-muted-foreground">
+                No invoices match your search.
+              </p>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={currentInvoicePage === 0}
+              onClick={() => setInvoicePage(currentInvoicePage - 1)}
+            >
+              Previous
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {currentInvoicePage + 1} / {lastInvoicePage + 1}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={currentInvoicePage >= lastInvoicePage}
+              onClick={() => setInvoicePage(currentInvoicePage + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {editing ? "Edit Client" : "New Client"}
-            </DialogTitle>
+            <DialogTitle>{editing ? "Edit Client" : "New Client"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -277,11 +507,15 @@ export default function ClientsPage() {
                   className="mt-0.5"
                 />
                 <div className="grid gap-0.5">
-                  <Label htmlFor="schedule-enabled" className="text-sm font-medium">
+                  <Label
+                    htmlFor="schedule-enabled"
+                    className="text-sm font-medium"
+                  >
                     Auto-invoice on a schedule
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Automatically build an invoice from billable time + uninvoiced expenses on the chosen interval.
+                    Automatically build an invoice from billable time +
+                    uninvoiced expenses on the chosen interval.
                   </p>
                 </div>
               </div>
@@ -298,7 +532,10 @@ export default function ClientsPage() {
                         min="1"
                         value={form.invoiceScheduleWeeks}
                         onChange={(e) =>
-                          setForm({ ...form, invoiceScheduleWeeks: e.target.value })
+                          setForm({
+                            ...form,
+                            invoiceScheduleWeeks: e.target.value,
+                          })
                         }
                         placeholder="2"
                       />
@@ -312,7 +549,10 @@ export default function ClientsPage() {
                         type="date"
                         value={form.invoiceScheduleAnchor}
                         onChange={(e) =>
-                          setForm({ ...form, invoiceScheduleAnchor: e.target.value })
+                          setForm({
+                            ...form,
+                            invoiceScheduleAnchor: e.target.value,
+                          })
                         }
                       />
                     </div>
@@ -327,7 +567,10 @@ export default function ClientsPage() {
                       className="mt-0.5"
                     />
                     <div className="grid gap-0.5">
-                      <Label htmlFor="schedule-autosend" className="text-sm font-medium">
+                      <Label
+                        htmlFor="schedule-autosend"
+                        className="text-sm font-medium"
+                      >
                         Email automatically
                       </Label>
                       <p className="text-xs text-muted-foreground">
