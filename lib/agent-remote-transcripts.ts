@@ -1,6 +1,9 @@
 import "server-only"
 import { transcriptCollectors } from "./agent-time-hosts"
 
+// A collector parses a long chat from disk before its first page; that alone has taken 15s.
+const TRANSCRIPT_TIMEOUT_MS = 60_000
+
 /** Only a configured collector can be queried, never a client-supplied URL. */
 export async function readRemoteTranscript(source: string, id: string, host: string, dbHosts: string[], offset: number) {
   const candidates = transcriptCollectors(host, process.env.AGENT_TIME_REMOTE_URL, dbHosts)
@@ -8,7 +11,7 @@ export async function readRemoteTranscript(source: string, id: string, host: str
     const endpoint = new URL("/api/v1/transcript", collector)
     endpoint.search = new URLSearchParams({ source, id, offset: String(offset) }).toString()
     try {
-      const response = await fetch(endpoint, { cache: "no-store", signal: AbortSignal.timeout(15_000), headers: process.env.AGENT_TIME_API_KEY ? { Authorization: `Bearer ${process.env.AGENT_TIME_API_KEY}` } : undefined })
+      const response = await fetch(endpoint, { cache: "no-store", signal: AbortSignal.timeout(TRANSCRIPT_TIMEOUT_MS), headers: process.env.AGENT_TIME_API_KEY ? { Authorization: `Bearer ${process.env.AGENT_TIME_API_KEY}` } : undefined })
       if (response.status === 404 && !host) continue
       if (!response.ok) throw new Error(response.status === 404 ? "Chat not found on this machine. Update its Agent Time collector if needed." : "The source machine could not return this chat.")
       const body = await response.json()

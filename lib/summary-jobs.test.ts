@@ -31,3 +31,12 @@ test('moving end times wait for settlement while completed windows are eligible'
  assert.equal(intervalIsSettled(now-119_999,now),false)
  assert.equal(intervalIsSettled(now-120_000,now),true)
 })
+test('a failed chat read can be retried sooner than a successful one is reused',async()=>{
+ const run=createSummaryJobs<string>(60_000,0)
+ let calls=0
+ await assert.rejects(run('chat',async()=>{calls++;throw new Error('Collector timed out')}))
+ await new Promise(resolve=>setTimeout(resolve,1))
+ assert.equal(await run('chat',async()=>{calls++;return 'messages'}),'messages')
+ assert.equal(await run('chat',async()=>{calls++;return 'again'}),'messages')
+ assert.equal(calls,2)
+})

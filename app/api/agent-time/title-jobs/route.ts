@@ -11,6 +11,9 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
 const running = new Set<string>()
+// Naming waits on other machines and on a shared model queue; past this, give up so the
+// entry shows Retry instead of "Naming…" until the server restarts.
+const NAMING_LIMIT_MS = 10 * 60_000
 const fixtureStarted = new Map<string, number>()
 
 async function finish(entry: TimeEntry, title: string | null, failed: boolean) {
@@ -27,7 +30,11 @@ async function nameEntry(entry: TimeEntry, hosts: string[]) {
     if (!entry.endTime) { await finish(entry, null, true); return }
     const start = Date.parse(entry.startTime), end = Date.parse(entry.endTime)
     const sources = groupConversationSources(entry.agentTimeSources || [], start, end).filter((source) => source.conversationId)
-    const result = await titleActivityInterval(start, end, sources, hosts)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const result = await Promise.race([
+      titleActivityInterval(start, end, sources, hosts),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Naming timed out")), NAMING_LIMIT_MS) }),
+    ]).finally(() => clearTimeout(timer))
     if ("pending" in result && result.pending) return
     await finish(entry, result.title, false)
   } catch {
