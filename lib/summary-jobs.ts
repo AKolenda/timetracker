@@ -18,3 +18,24 @@ export function createSummaryJobs<T>(cooldownMs = 60_000) {
 export function intervalIsSettled(end: number, now = Date.now()) {
   return end <= now - 120_000
 }
+
+/**
+ * Shares one read of a growing record (a chat still being written) among callers who only
+ * need it up to a time before that read began. Later callers get a fresh read.
+ */
+export function createSnapshotReads<T>(keepMs = 5 * 60_000, failedKeepMs = 15_000, now = () => Date.now()) {
+  const reads = new Map<string, { startedAt: number; expires: number; value: Promise<T> }>()
+  return (key: string, until: number, read: () => Promise<T>): Promise<T> => {
+    const time = now()
+    for (const [id, entry] of reads) if (entry.expires <= time) reads.delete(id)
+    const cached = reads.get(key)
+    if (cached && cached.startedAt >= until) return cached.value
+    const entry = { startedAt: time, expires: Infinity, value: Promise.resolve().then(read) }
+    reads.set(key, entry)
+    entry.value.then(
+      () => { entry.expires = now() + keepMs },
+      () => { entry.expires = now() + failedKeepMs },
+    )
+    return entry.value
+  }
+}
