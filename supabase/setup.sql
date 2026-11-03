@@ -170,3 +170,10 @@ $$;
 alter table public.time_entries add column if not exists bill_factor numeric(5,4) not null default 1
   check (bill_factor between 0 and 1);
 alter table public.settings add column if not exists agent_time_chat_bill_factors jsonb not null default '{}'::jsonb;
+
+-- Offer a second payment account (e.g. AUD) beside USD, and lock the conversion rate on each invoice when it is issued.
+alter table public.settings add column if not exists secondary_remittance jsonb not null default '{}'::jsonb;
+alter table public.clients add column if not exists show_secondary_currency boolean not null default false;
+alter table public.invoices add column if not exists fx_currency text;
+alter table public.invoices add column if not exists fx_rate numeric(18,8) check (fx_rate is null or fx_rate > 0);
+alter table public.invoices add column if not exists fx_rate_date date;

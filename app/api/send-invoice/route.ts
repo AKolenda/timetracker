@@ -6,6 +6,16 @@ import {
   buildSubject,
   type EmailInvoiceData,
 } from "@/lib/email-template"
+import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
+import {
+  INVOICE_CURRENCY,
+  needsFxLock,
+  parseSecondaryRemittance,
+  secondaryCurrencyFor,
+  secondaryTotal,
+  toFxLock,
+  type FxLock,
+} from "@/lib/invoice-currency"
 
 export async function POST(request: Request) {
   if (!process.env.RESEND_API_KEY) {
@@ -91,6 +101,33 @@ export async function POST(request: Request) {
     )
   }
 
+  // The converted amount uses the rate on the day the invoice is first issued; reissues keep it.
+  const secondaryAccount = parseSecondaryRemittance(settings?.secondary_remittance)
+  const secondaryCurrency = secondaryCurrencyFor(
+    client.show_secondary_currency,
+    secondaryAccount
+  )
+  const lockedFx = {
+    fxCurrency: invoice.fx_currency ?? null,
+    fxRate: invoice.fx_rate == null ? null : Number(invoice.fx_rate),
+    fxRateDate: invoice.fx_rate_date ?? null,
+  }
+  let newLock: FxLock | null = null
+  if (needsFxLock(lockedFx, secondaryCurrency)) {
+    try {
+      newLock = toFxLock(
+        secondaryCurrency,
+        await fetchExchangeRate(INVOICE_CURRENCY, secondaryCurrency)
+      )
+    } catch {
+      return NextResponse.json(
+        { error: rateErrorMessage(secondaryCurrency) },
+        { status: 502 }
+      )
+    }
+  }
+  const fx = newLock ?? lockedFx
+
   const fromAddress =
     settings?.email_from_address ||
     settings?.business_email ||
@@ -129,6 +166,12 @@ export async function POST(request: Request) {
       accountNumber: settings?.remittance_account_number,
       notes: settings?.remittance_notes,
     },
+    secondary: secondaryTotal(
+      { total: Number(invoice.total), ...fx },
+      secondaryCurrency,
+      secondaryAccount,
+      null
+    ),
     template: {
       subject:
         customSubject ||
@@ -158,9 +201,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
+    // The page saves the same status and rate after a successful send, so this stays best-effort.
     await supabase
       .from("invoices")
-      .update({ status: "sent" })
+      .update({
+        status: "sent",
+        ...(newLock
+          ? {
+              fx_currency: newLock.fxCurrency,
+              fx_rate: newLock.fxRate,
+              fx_rate_date: newLock.fxRateDate,
+            }
+          : {}),
+      })
       .eq("id", invoiceId)
 
     await supabase
@@ -168,7 +221,7 @@ export async function POST(request: Request) {
       .update({ last_invoice_sent: new Date().toISOString() })
       .eq("id", invoice.client_id)
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, fx: newLock })
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Unknown error" },

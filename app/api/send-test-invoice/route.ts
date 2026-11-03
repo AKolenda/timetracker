@@ -2,6 +2,12 @@ import { NextResponse } from "next/server"
 import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
 import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
+import { fetchExchangeRate } from "@/lib/exchange-rate"
+import {
+  INVOICE_CURRENCY,
+  parseSecondaryRemittance,
+  secondaryTotal,
+} from "@/lib/invoice-currency"
 
 interface TestEmailBody {
   to?: string
@@ -63,6 +69,14 @@ export async function POST(request: Request) {
       body.template?.accentColor ?? settings?.email_accent_color ?? "#111827",
   }
 
+  // Show the second account, if one is set up, the way an opted-in client would see it.
+  const secondaryAccount = parseSecondaryRemittance(settings?.secondary_remittance)
+  const secondaryQuote = secondaryAccount.currency
+    ? await fetchExchangeRate(INVOICE_CURRENCY, secondaryAccount.currency, {
+        next: { revalidate: 3600 },
+      }).catch(() => null)
+    : null
+
   const data: EmailInvoiceData = {
     invoiceNumber: `${settings?.invoice_prefix ?? "INV-"}TEST`,
     issueDate: new Date().toLocaleDateString("en-US", {
@@ -119,6 +133,12 @@ export async function POST(request: Request) {
       accountNumber: settings?.remittance_account_number,
       notes: settings?.remittance_notes,
     },
+    secondary: secondaryTotal(
+      { total: 1275 },
+      secondaryAccount.currency || null,
+      secondaryAccount,
+      secondaryQuote
+    ),
     template,
   }
 

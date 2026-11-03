@@ -27,8 +27,19 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { PageHeader } from "@/components/page-header"
+import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-options"
 import { useStore } from "@/lib/store"
 import { formatCurrency } from "@/lib/format"
+import {
+  INVOICE_CURRENCY,
+  formatWithCode,
+  parseSecondaryRemittance,
+  paymentAccounts,
+  routingLabel,
+  secondaryTotal,
+} from "@/lib/invoice-currency"
+import { useExchangeRate } from "@/lib/use-exchange-rate"
+import { emptySecondaryRemittance, type SecondaryRemittance } from "@/lib/types"
 import { getBrowserTimezone, listTimezones } from "@/lib/datetime"
 
 const CURRENCIES = [
@@ -119,6 +130,10 @@ export default function SettingsPage() {
   }
 
   async function handleSave() {
+    // Only send the second account when it changed, so unrelated saves never touch it.
+    const secondaryChanged =
+      JSON.stringify(parseSecondaryRemittance(secondaryForm)) !==
+      JSON.stringify(parseSecondaryRemittance(data.settings.secondaryRemittance))
     setSaving(true)
     try {
       await updateSettings({
@@ -138,6 +153,9 @@ export default function SettingsPage() {
         defaultInvoiceDueDays: form.defaultInvoiceDueDays,
         displayCurrency:
           form.displayCurrency === "none" ? "" : form.displayCurrency,
+        ...(secondaryChanged
+          ? { secondaryRemittance: parseSecondaryRemittance(secondaryForm) }
+          : {}),
         agentTimeHosts: form.agentTimeHosts || [],
         agentTimeMaxMinutes: form.agentTimeMaxMinutes || null,
         agentTimeHostLabels: form.agentTimeHostLabels || {},
@@ -203,6 +221,37 @@ export default function SettingsPage() {
   }
 
   const senderName = form.businessName || "Your Name"
+  const secondaryForm = form.secondaryRemittance ?? emptySecondaryRemittance
+  function setSecondary(updates: Partial<SecondaryRemittance>) {
+    setForm({ ...form, secondaryRemittance: { ...secondaryForm, ...updates } })
+  }
+  // The sample invoice shows the second account the way an opted-in client sees it.
+  const { quote: sampleQuote } = useExchangeRate(
+    INVOICE_CURRENCY,
+    previewOpen && secondaryForm.currency ? secondaryForm.currency : null
+  )
+  const sampleSecondary = secondaryTotal(
+    { total: 1289.99 },
+    secondaryForm.currency || null,
+    secondaryForm,
+    sampleQuote
+  )
+  const sampleMoney = (amount: number) =>
+    sampleSecondary
+      ? formatWithCode(amount, INVOICE_CURRENCY)
+      : formatCurrency(amount)
+  const sampleAccounts = paymentAccounts(
+    {
+      firstName: form.remittanceFirstName,
+      lastName: form.remittanceLastName,
+      bankName: form.remittanceBankName,
+      routingNumber: form.remittanceRoutingNumber,
+      accountNumber: form.remittanceAccountNumber,
+      notes: form.remittanceNotes,
+    },
+    1289.99,
+    sampleSecondary
+  )
 
   return (
     <>
@@ -307,6 +356,9 @@ export default function SettingsPage() {
               </p>
             </CardHeader>
             <CardContent className="grid gap-4">
+              <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+                Primary account · {INVOICE_CURRENCY}
+              </p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
                   <Label htmlFor="rem-first">First Name</Label>
@@ -385,6 +437,111 @@ export default function SettingsPage() {
                   rows={3}
                 />
               </div>
+              <Separator />
+              <div className="grid gap-1">
+                <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+                  Second account · optional
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Clients you turn this on for see their total in both
+                  currencies and can pay into either account. The converted
+                  amount uses the exchange rate on the day the invoice is sent.
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="rem2-currency">Currency</Label>
+                <Select
+                  value={secondaryForm.currency || "none"}
+                  onValueChange={(v) =>
+                    setSecondary({ currency: v === "none" ? "" : v })
+                  }
+                >
+                  <SelectTrigger id="rem2-currency">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None ({INVOICE_CURRENCY} only)</SelectItem>
+                    {CURRENCIES.filter((c) => c.value !== INVOICE_CURRENCY).map(
+                      (c) => (
+                        <SelectItem key={c.value} value={c.value}>
+                          {c.label}
+                        </SelectItem>
+                      )
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              {secondaryForm.currency && (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-2">
+                      <Label htmlFor="rem2-name">Account Name</Label>
+                      <Input
+                        id="rem2-name"
+                        value={secondaryForm.accountName}
+                        onChange={(e) =>
+                          setSecondary({ accountName: e.target.value })
+                        }
+                        placeholder="John Doe"
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="rem2-bank">Bank Name</Label>
+                      <Input
+                        id="rem2-bank"
+                        value={secondaryForm.bankName}
+                        onChange={(e) =>
+                          setSecondary({ bankName: e.target.value })
+                        }
+                        placeholder={
+                          secondaryForm.currency === "AUD" ? "Wise" : "Bank"
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-2">
+                      <Label htmlFor="rem2-routing">
+                        {routingLabel(secondaryForm.currency)}
+                      </Label>
+                      <Input
+                        id="rem2-routing"
+                        value={secondaryForm.routingNumber}
+                        onChange={(e) =>
+                          setSecondary({ routingNumber: e.target.value })
+                        }
+                        placeholder={
+                          secondaryForm.currency === "AUD" ? "062-000" : ""
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="rem2-account">Account Number</Label>
+                      <Input
+                        id="rem2-account"
+                        value={secondaryForm.accountNumber}
+                        onChange={(e) =>
+                          setSecondary({ accountNumber: e.target.value })
+                        }
+                        placeholder="12345678"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="rem2-notes">Additional Notes</Label>
+                    <Textarea
+                      id="rem2-notes"
+                      value={secondaryForm.notes}
+                      onChange={(e) => setSecondary({ notes: e.target.value })}
+                      placeholder="SWIFT code, PayID, or other instructions"
+                      rows={2}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Turn it on per client under Clients → Edit.
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -990,61 +1147,27 @@ export default function SettingsPage() {
               </tbody>
             </table>
 
-            <div className="mt-6 ml-auto w-72">
+            <div
+              className={`mt-6 ml-auto ${sampleSecondary ? "w-full max-w-sm" : "w-72"}`}
+            >
               <div className="flex justify-between py-2 text-sm">
                 <span className="text-gray-500">Subtotal</span>
-                <span className="font-mono">$1,289.99</span>
+                <span className="font-mono">{sampleMoney(1289.99)}</span>
               </div>
               <div className="flex justify-between py-2 text-sm">
                 <span className="text-gray-500">Tax</span>
-                <span className="font-mono">$0.00</span>
+                <span className="font-mono">{sampleMoney(0)}</span>
               </div>
               <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
                 <span>Total</span>
-                <span className="font-mono">$1,289.99</span>
+                <span className="font-mono">{sampleMoney(1289.99)}</span>
               </div>
+              {sampleSecondary && (
+                <SecondaryTotalRow secondary={sampleSecondary} />
+              )}
             </div>
 
-            {(form.remittanceFirstName || form.remittanceBankName) && (
-              <div className="mt-8 rounded-lg border-2 border-dashed border-gray-300 p-5">
-                <p className="mb-3 text-[11px] font-bold tracking-wider text-gray-500 uppercase">
-                  Remittance Information
-                </p>
-                {(form.remittanceFirstName || form.remittanceLastName) && (
-                  <p className="text-sm">
-                    <span className="text-gray-500">Pay to: </span>
-                    {form.remittanceFirstName} {form.remittanceLastName}
-                  </p>
-                )}
-                {form.remittanceBankName && (
-                  <p className="text-sm">
-                    <span className="text-gray-500">Bank: </span>
-                    {form.remittanceBankName}
-                  </p>
-                )}
-                {form.remittanceRoutingNumber && (
-                  <p className="text-sm">
-                    <span className="text-gray-500">Routing: </span>
-                    <span className="font-mono">
-                      {form.remittanceRoutingNumber}
-                    </span>
-                  </p>
-                )}
-                {form.remittanceAccountNumber && (
-                  <p className="text-sm">
-                    <span className="text-gray-500">Account: </span>
-                    <span className="font-mono">
-                      {form.remittanceAccountNumber}
-                    </span>
-                  </p>
-                )}
-                {form.remittanceNotes && (
-                  <p className="mt-2 text-xs whitespace-pre-line text-gray-500">
-                    {form.remittanceNotes}
-                  </p>
-                )}
-              </div>
-            )}
+            <PaymentOptions accounts={sampleAccounts} />
 
             <p className="mt-10 border-t border-gray-200 pt-4 text-center text-xs text-gray-400">
               Generated by {senderName}

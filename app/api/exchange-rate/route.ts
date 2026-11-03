@@ -1,45 +1,36 @@
 import { NextRequest, NextResponse } from "next/server"
 
-// Cache the rate in-memory so repeated client requests within the same
-// serverless invocation don't re-fetch. The outer Next.js fetch cache
-// (revalidate: 86400) handles cross-invocation caching on Vercel.
-let cached: { from: string; to: string; rate: number; ts: number } | null = null
-const ONE_DAY = 86_400_000
+import { fetchExchangeRate } from "@/lib/exchange-rate"
+import { isCurrencyCode, type ExchangeQuote } from "@/lib/invoice-currency"
+
+// ECB rates change once per business day; an hour keeps drafts on the current day's rate.
+const ONE_HOUR = 3_600_000
+const cache = new Map<string, ExchangeQuote & { ts: number }>()
 
 export async function GET(request: NextRequest) {
-  const from = request.nextUrl.searchParams.get("from") || "USD"
-  const to = request.nextUrl.searchParams.get("to") || "CAD"
+  const from = (request.nextUrl.searchParams.get("from") || "USD").toUpperCase()
+  const to = (request.nextUrl.searchParams.get("to") || "CAD").toUpperCase()
+  if (!isCurrencyCode(from) || !isCurrencyCode(to)) {
+    return NextResponse.json({ error: "Unsupported currency" }, { status: 400 })
+  }
 
   if (from === to) {
     return NextResponse.json({ from, to, rate: 1, cached: true })
   }
 
-  // Return in-memory cache if fresh
-  if (
-    cached &&
-    cached.from === from &&
-    cached.to === to &&
-    Date.now() - cached.ts < ONE_DAY
-  ) {
-    return NextResponse.json({ from, to, rate: cached.rate, cached: true })
+  const key = `${from}:${to}`
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.ts < ONE_HOUR) {
+    return NextResponse.json({ from, to, rate: hit.rate, date: hit.date, cached: true })
   }
 
   try {
-    const res = await fetch(
-      `https://api.frankfurter.app/latest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-      { next: { revalidate: 86400 } }
-    )
-    if (!res.ok) throw new Error(`Frankfurter API ${res.status}`)
-    const data = await res.json()
-    const rate = data.rates?.[to]
-    if (typeof rate !== "number") throw new Error("Rate not found")
-
-    cached = { from, to, rate, ts: Date.now() }
-    return NextResponse.json({ from, to, rate, date: data.date, cached: false })
-  } catch (err) {
-    // Fallback: return stale cache if available
-    if (cached && cached.from === from && cached.to === to) {
-      return NextResponse.json({ from, to, rate: cached.rate, cached: true, stale: true })
+    const quote = await fetchExchangeRate(from, to, { next: { revalidate: 3600 } })
+    cache.set(key, { ...quote, ts: Date.now() })
+    return NextResponse.json({ from, to, ...quote, cached: false })
+  } catch {
+    if (hit) {
+      return NextResponse.json({ from, to, rate: hit.rate, date: hit.date, cached: true, stale: true })
     }
     return NextResponse.json(
       { error: "Failed to fetch exchange rate" },
