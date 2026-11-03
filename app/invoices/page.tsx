@@ -177,7 +177,15 @@ function StatusMenu({
 }
 
 export default function InvoicesPage() {
-  const { money } = useMoney()
+  const { money, currency: displayCurrency } = useMoney()
+  // An issued invoice that locked an amount in the chosen currency shows that amount, since
+  // it's what the client was asked to pay; today's conversion would differ.
+  function listTotal(invoice: Invoice) {
+    const locked = secondaryTotal(invoice, null, null, null)
+    return locked?.currency === displayCurrency
+      ? { total: formatCurrency(locked.amount, locked.currency), secondary: null }
+      : { total: money(invoice.total), secondary: lockedSecondaryLabel(invoice) }
+  }
   const {
     data,
     addInvoice,
@@ -690,10 +698,10 @@ export default function InvoicesPage() {
                         {invoiceDueLabel(inv)}
                       </TableCell>
                       <TableCell className="font-mono text-sm font-medium">
-                        {money(inv.total)}
-                        {lockedSecondaryLabel(inv) && (
+                        {listTotal(inv).total}
+                        {listTotal(inv).secondary && (
                           <span className="block text-xs font-normal text-muted-foreground">
-                            {lockedSecondaryLabel(inv)}
+                            {listTotal(inv).secondary}
                           </span>
                         )}
                       </TableCell>
@@ -859,11 +867,11 @@ export default function InvoicesPage() {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="font-mono text-base font-semibold">
-                          {money(inv.total)}
+                          {listTotal(inv).total}
                         </p>
-                        {lockedSecondaryLabel(inv) && (
+                        {listTotal(inv).secondary && (
                           <p className="font-mono text-xs text-muted-foreground">
-                            {lockedSecondaryLabel(inv)}
+                            {listTotal(inv).secondary}
                           </p>
                         )}
                       </div>
