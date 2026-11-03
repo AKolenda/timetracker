@@ -1,4 +1,11 @@
 import { formatCurrency } from "./format"
+import {
+  INVOICE_CURRENCY,
+  formatWithCode,
+  paymentAccounts,
+  rateNote,
+  type SecondaryTotal,
+} from "./invoice-currency"
 
 export interface EmailLineItem {
   description: string
@@ -34,6 +41,8 @@ export interface EmailInvoiceData {
     accountNumber?: string
     notes?: string
   }
+  /** Converted total and second account, when the client is offered another currency. */
+  secondary?: SecondaryTotal | null
   template: {
     subject: string
     greeting: string
@@ -114,30 +123,47 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
     )
     .join("")
 
-  let remittanceHtml = ""
-  const r = data.remittance
-  if (r && (r.firstName || r.bankName)) {
-    const lines: string[] = []
-    if (r.firstName || r.lastName)
-      lines.push(
-        `<strong>Pay to:</strong> ${escapeHtml(`${r.firstName ?? ""} ${r.lastName ?? ""}`.trim())}`
-      )
-    if (r.bankName)
-      lines.push(`<strong>Bank:</strong> ${escapeHtml(r.bankName)}`)
-    if (r.routingNumber)
-      lines.push(`<strong>Routing:</strong> ${escapeHtml(r.routingNumber)}`)
-    if (r.accountNumber)
-      lines.push(`<strong>Account:</strong> ${escapeHtml(r.accountNumber)}`)
-    if (r.notes) lines.push(escapeHtml(r.notes))
+  const secondary = data.secondary ?? null
+  const money = (amount: number) =>
+    secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
 
-    remittanceHtml = `
+  const accounts = paymentAccounts(data.remittance ?? {}, data.total, secondary)
+  const remittanceHtml = accounts.length
+    ? `
       <div style="margin-top:24px;padding:16px;border:2px dashed #d1d5db;border-radius:8px;">
         <p style="margin:0 0 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#6b7280;">
-          Remittance Information
+          ${accounts.length > 1 ? "Payment Options" : "Remittance Information"}
         </p>
-        ${lines.map((l) => `<p style="margin:4px 0;font-size:14px;">${l}</p>`).join("")}
+        ${accounts
+          .map((account, index) => {
+            const heading = account.heading
+              ? `<p style="margin:${index ? "16px" : "0"} 0 6px;font-size:14px;font-weight:700;">${escapeHtml(account.heading)}<span style="float:right;font-family:monospace;">${escapeHtml(account.amount)}</span></p>`
+              : ""
+            const lines = account.lines
+              .map(
+                (line) =>
+                  `<p style="margin:4px 0;font-size:14px;"><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml(line.value)}</p>`
+              )
+              .join("")
+            const notes = account.notes
+              ? `<p style="margin:4px 0;font-size:14px;">${escapeHtml(account.notes)}</p>`
+              : ""
+            return heading + lines + notes
+          })
+          .join("")}
       </div>`
-  }
+    : ""
+
+  const secondaryTotalHtml = secondary
+    ? `
+          <tr>
+            <td style="padding:4px 0;font-size:14px;color:#6b7280;">Total in ${escapeHtml(secondary.currency)}</td>
+            <td style="padding:4px 0;font-size:14px;font-weight:600;text-align:right;font-family:monospace;">${formatWithCode(secondary.amount, secondary.currency)}</td>
+          </tr>
+          <tr>
+            <td colspan="2" style="padding:0 0 4px;font-size:11px;color:#9ca3af;text-align:right;">${escapeHtml(rateNote(secondary))}</td>
+          </tr>`
+    : ""
 
   return `
     <div style="max-width:600px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;padding:24px;">
@@ -180,20 +206,20 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
         <tbody>${itemsHtml}</tbody>
       </table>
 
-      <div style="margin-top:16px;margin-left:auto;width:250px;">
+      <div style="margin-top:16px;margin-left:auto;width:${secondary ? 320 : 250}px;max-width:100%;">
         <table style="width:100%;">
           <tr>
             <td style="padding:4px 0;font-size:14px;color:#6b7280;">Subtotal</td>
-            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${formatCurrency(data.subtotal)}</td>
+            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.subtotal)}</td>
           </tr>
           <tr>
             <td style="padding:4px 0;font-size:14px;color:#6b7280;">Tax</td>
-            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${formatCurrency(data.tax)}</td>
+            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.tax)}</td>
           </tr>
           <tr style="border-top:2px solid ${accent};">
             <td style="padding:8px 0;font-size:16px;font-weight:700;">Total</td>
-            <td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;font-family:monospace;color:${accent};">${formatCurrency(data.total)}</td>
-          </tr>
+            <td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;font-family:monospace;color:${accent};">${money(data.total)}</td>
+          </tr>${secondaryTotalHtml}
         </table>
       </div>
 

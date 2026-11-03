@@ -3,6 +3,15 @@ import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
 import { normalizeBillFactor } from "@/lib/billing"
 import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
+import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
+import {
+  INVOICE_CURRENCY,
+  parseSecondaryRemittance,
+  secondaryCurrencyFor,
+  secondaryTotal,
+  toFxLock,
+  type FxLock,
+} from "@/lib/invoice-currency"
 
 const ONE_DAY = 86_400_000
 
@@ -65,6 +74,7 @@ export async function POST(request: Request) {
   }
 
   const businessName = settings?.business_name || "TimeTracker"
+  const secondaryAccount = parseSecondaryRemittance(settings?.secondary_remittance)
   const fromAddress =
     settings?.email_from_address || settings?.business_email || "invoices@resend.dev"
 
@@ -202,6 +212,29 @@ export async function POST(request: Request) {
         : 30
     const dueDate = addDaysIso(issueDate, dueDays)
 
+    // Fetch the rate before creating anything, so a failed lookup leaves no stray draft.
+    const secondaryCurrency = secondaryCurrencyFor(
+      client.show_secondary_currency,
+      secondaryAccount
+    )
+    let fxLock: FxLock | null = null
+    if (secondaryCurrency && client.invoice_schedule_auto_send && !dryRun) {
+      try {
+        fxLock = toFxLock(
+          secondaryCurrency,
+          await fetchExchangeRate(INVOICE_CURRENCY, secondaryCurrency)
+        )
+      } catch {
+        results.push({
+          clientId: client.id,
+          clientName: client.name,
+          status: "error",
+          reason: rateErrorMessage(secondaryCurrency),
+        })
+        continue
+      }
+    }
+
     if (dryRun) {
       results.push({
         clientId: client.id,
@@ -295,6 +328,9 @@ export async function POST(request: Request) {
         accountNumber: settings?.remittance_account_number,
         notes: settings?.remittance_notes,
       },
+      secondary: fxLock
+        ? secondaryTotal({ total, ...fxLock }, secondaryCurrency, secondaryAccount, null)
+        : null,
       template: {
         subject: settings?.email_subject || "Invoice {{invoiceNumber}}",
         greeting: settings?.email_greeting || "",
@@ -314,7 +350,16 @@ export async function POST(request: Request) {
 
       await supabase
         .from("invoices")
-        .update({ status: "sent" })
+        .update({
+          status: "sent",
+          ...(fxLock
+            ? {
+                fx_currency: fxLock.fxCurrency,
+                fx_rate: fxLock.fxRate,
+                fx_rate_date: fxLock.fxRateDate,
+              }
+            : {}),
+        })
         .eq("id", createdInv.id)
 
       await supabase

@@ -13,6 +13,8 @@ export interface Client {
   invoiceScheduleEnabled: boolean
   invoiceScheduleAutoSend: boolean
   lastInvoiceSent: string | null
+  /** Show the secondary payment account and converted total on this client's invoices. */
+  showSecondaryCurrency?: boolean
   createdAt: string
 }
 
@@ -88,6 +90,8 @@ export interface Settings {
   timezone: string
   defaultInvoiceDueDays: number
   displayCurrency: string
+  /** Optional second bank account offered on invoices, in a currency other than USD. */
+  secondaryRemittance?: SecondaryRemittance
   agentTimeMaxMinutes?: number | null
   agentTimeHosts?: string[]
   agentTimeHostLabels?: Record<string, string>
@@ -107,7 +111,31 @@ export interface Invoice {
   total: number
   notes: string
   lineItems: InvoiceLineItem[]
+  /** Exchange rate locked when the invoice was issued, for the secondary currency. */
+  fxCurrency?: string | null
+  fxRate?: number | null
+  fxRateDate?: string | null
   createdAt: string
+}
+
+export interface SecondaryRemittance {
+  /** ISO code such as "AUD"; empty when no second account is offered. */
+  currency: string
+  accountName: string
+  bankName: string
+  /** Routing number, BSB, sort code, or equivalent. */
+  routingNumber: string
+  accountNumber: string
+  notes: string
+}
+
+export const emptySecondaryRemittance: SecondaryRemittance = {
+  currency: "",
+  accountName: "",
+  bankName: "",
+  routingNumber: "",
+  accountNumber: "",
+  notes: "",
 }
 
 export interface InvoiceLineItem {
@@ -156,4 +184,5 @@ export const defaultSettings: Settings = {
   timezone: "",
   defaultInvoiceDueDays: 30,
   displayCurrency: "",
+  secondaryRemittance: emptySecondaryRemittance,
 }

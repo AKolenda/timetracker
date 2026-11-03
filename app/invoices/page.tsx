@@ -67,13 +67,27 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import { InvoiceEstimateRow, InvoiceEstimatePreview } from "@/components/invoice-estimates"
+import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-options"
 import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
 import { billedSeconds } from "@/lib/billing"
 import { PageHeader } from "@/components/page-header"
 import { applyEmailTemplateVariables } from "@/lib/email-template"
 import { useStore } from "@/lib/store"
 import { formatCurrency, formatHours } from "@/lib/format"
-import type { Invoice, InvoiceLineItem, TimeEntry, Expense } from "@/lib/types"
+import {
+  INVOICE_CURRENCY,
+  formatRateDate,
+  formatWithCode,
+  needsFxLock,
+  paymentAccounts,
+  secondaryCurrencyFor,
+  secondaryTotal,
+  toFxLock,
+  type ExchangeQuote,
+  type FxLock,
+} from "@/lib/invoice-currency"
+import { fetchQuote, useExchangeRate } from "@/lib/use-exchange-rate"
+import type { Client, Invoice, InvoiceLineItem, Settings, TimeEntry, Expense } from "@/lib/types"
 
 const statusStyles: Record<Invoice["status"], string> = {
   draft: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
@@ -108,6 +122,17 @@ function isPastDue(invoice: Invoice): boolean {
   if (invoice.status === "paid") return false
   if (invoice.dueDate === invoice.issueDate) return false
   return parseISO(invoice.dueDate).getTime() < Date.now()
+}
+
+/** The extra currency this invoice's client is offered, if any. */
+function invoiceSecondaryCurrency(client: Client | undefined, settings: Settings) {
+  return secondaryCurrencyFor(client?.showSecondaryCurrency, settings.secondaryRemittance)
+}
+
+/** The converted amount stored on an issued invoice, for list rows. */
+function lockedSecondaryLabel(invoice: Invoice): string | null {
+  const locked = secondaryTotal(invoice, null, null, null)
+  return locked ? formatWithCode(locked.amount, locked.currency) : null
 }
 
 function StatusMenu({
@@ -297,6 +322,23 @@ export default function InvoicesPage() {
     )
   }
 
+  /**
+   * Issuing a draft records today's rate for clients offered a second currency,
+   * so the converted total never moves after the client has seen it.
+   */
+  async function issueFxLock(
+    invoice: Invoice,
+    nextStatus: Invoice["status"]
+  ): Promise<Partial<FxLock>> {
+    if (invoice.status !== "draft" || nextStatus === "draft") return {}
+    const currency = invoiceSecondaryCurrency(
+      getClient(invoice.clientId),
+      data.settings
+    )
+    if (!needsFxLock(invoice, currency)) return {}
+    return toFxLock(currency, await fetchQuote(INVOICE_CURRENCY, currency))
+  }
+
   function toggleEntry(id: string) {
     setSelectedEntries((prev) => {
       const next = new Set(prev)
@@ -419,7 +461,16 @@ export default function InvoicesPage() {
     }
     const parsedTax = Number.parseFloat(editTax)
     const taxAmount = Number.isFinite(parsedTax) ? parsedTax : 0
+    const original = data.invoices.find((inv) => inv.id === editInvoice.id)
+    let fxLock: Partial<FxLock> = {}
+    try {
+      fxLock = original ? await issueFxLock(original, editInvoice.status) : {}
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't get the exchange rate")
+      return
+    }
     const updates: Partial<Invoice> = {
+      ...fxLock,
       status: editInvoice.status,
       notes: editNotes,
       tax: taxAmount,
@@ -462,11 +513,12 @@ export default function InvoicesPage() {
           message: sendMessage.trim(),
         }),
       })
+      const body = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
         throw new Error(body.error || "Failed to send")
       }
-      await updateInvoice(invoice.id, { status: "sent" })
+      const fx = (body.fx ?? null) as FxLock | null
+      await updateInvoice(invoice.id, { status: "sent", ...(fx ?? {}) })
       toast.success(
         `${invoice.status === "sent" ? "Invoice reissued" : "Invoice sent"} to ${email}`
       )
@@ -481,11 +533,18 @@ export default function InvoicesPage() {
   async function handleDownload(invoice: Invoice) {
     setDownloadingId(invoice.id)
     try {
+      const client = getClient(invoice.clientId)
+      const currency = invoiceSecondaryCurrency(client, data.settings)
+      // Drafts print today's rate; issued invoices keep the rate they were sent with.
+      const quote: ExchangeQuote | null = needsFxLock(invoice, currency)
+        ? await fetchQuote(INVOICE_CURRENCY, currency)
+        : null
       const { downloadInvoicePdf } = await import("@/lib/invoice-pdf")
       await downloadInvoicePdf(
         invoice,
-        getClient(invoice.clientId),
-        data.settings
+        client,
+        data.settings,
+        secondaryTotal(invoice, currency, data.settings.secondaryRemittance, quote)
       )
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to generate PDF")
@@ -508,7 +567,15 @@ export default function InvoicesPage() {
   }
 
   async function handleStatusChange(id: string, status: Invoice["status"]) {
-    await updateInvoice(id, { status })
+    const invoice = data.invoices.find((inv) => inv.id === id)
+    let fxLock: Partial<FxLock> = {}
+    try {
+      fxLock = invoice ? await issueFxLock(invoice, status) : {}
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't get the exchange rate")
+      return
+    }
+    await updateInvoice(id, { status, ...fxLock })
     toast.success(`Status updated to ${status}`)
   }
 
@@ -622,6 +689,11 @@ export default function InvoicesPage() {
                       </TableCell>
                       <TableCell className="font-mono text-sm font-medium">
                         {formatCurrency(inv.total)}
+                        {lockedSecondaryLabel(inv) && (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            {lockedSecondaryLabel(inv)}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <StatusMenu
@@ -783,9 +855,16 @@ export default function InvoicesPage() {
                             : `Due ${format(parseISO(inv.dueDate), "MMM d, yyyy")}`}
                         </p>
                       </div>
-                      <p className="font-mono text-base font-semibold">
-                        {formatCurrency(inv.total)}
-                      </p>
+                      <div className="shrink-0 text-right">
+                        <p className="font-mono text-base font-semibold">
+                          {formatCurrency(inv.total)}
+                        </p>
+                        {lockedSecondaryLabel(inv) && (
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {lockedSecondaryLabel(inv)}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-3 border-t pt-3">
@@ -1277,9 +1356,35 @@ function InvoicePreview({
   onDownload: () => void
   downloading: boolean
 }) {
+  const currency = invoiceSecondaryCurrency(client, settings)
+  const { quote } = useExchangeRate(
+    INVOICE_CURRENCY,
+    needsFxLock(invoice, currency) ? currency : null
+  )
+  const secondary = secondaryTotal(
+    invoice,
+    currency,
+    settings.secondaryRemittance,
+    quote
+  )
+  const money = (amount: number) =>
+    secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
+  const accounts = paymentAccounts(
+    {
+      firstName: settings.remittanceFirstName,
+      lastName: settings.remittanceLastName,
+      bankName: settings.remittanceBankName,
+      routingNumber: settings.remittanceRoutingNumber,
+      accountNumber: settings.remittanceAccountNumber,
+      notes: settings.remittanceNotes,
+    },
+    invoice.total,
+    secondary
+  )
+
   return (
     <>
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-background px-6 py-3">
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-3 sm:px-6">
         <DialogTitle className="text-base font-semibold">
           {invoice.invoiceNumber}
         </DialogTitle>
@@ -1300,8 +1405,15 @@ function InvoicePreview({
           </Button>
         </div>
       </div>
-      <div className="mx-auto w-full max-w-[8.5in] bg-white px-[0.75in] py-[0.5in] text-black dark:bg-white">
-        <div className="flex items-start justify-between border-b-2 border-black pb-4">
+      {secondary && !secondary.locked && (
+        <p className="border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground sm:px-6">
+          The {secondary.currency} total uses the{" "}
+          {secondary.date ? formatRateDate(secondary.date) : "latest"} rate.
+          It&apos;s fixed when the invoice is sent.
+        </p>
+      )}
+      <div className="mx-auto w-full max-w-[8.5in] bg-white px-4 py-6 text-black sm:px-[0.75in] sm:py-[0.5in] dark:bg-white">
+        <div className="flex flex-col gap-4 border-b-2 border-black pb-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-2xl font-bold">
               {settings.businessName || "Your Name"}
@@ -1320,7 +1432,7 @@ function InvoicePreview({
               </p>
             )}
           </div>
-          <div className="text-right">
+          <div className="sm:text-right">
             <p className="font-mono text-3xl font-bold">
               {invoice.invoiceNumber}
             </p>
@@ -1328,8 +1440,13 @@ function InvoicePreview({
               Total Due
             </p>
             <p className="font-mono text-xl font-bold">
-              {formatCurrency(invoice.total)}
+              {money(invoice.total)}
             </p>
+            {secondary && (
+              <p className="font-mono text-sm text-gray-500">
+                or {formatWithCode(secondary.amount, secondary.currency)}
+              </p>
+            )}
             <p className="text-sm text-gray-500">
               {invoice.dueDate === invoice.issueDate
                 ? "Due on receipt"
@@ -1338,7 +1455,7 @@ function InvoicePreview({
           </div>
         </div>
 
-        <div className="mt-8 flex justify-between">
+        <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:justify-between">
           <div>
             <p className="text-xs font-medium tracking-wider text-gray-400 uppercase">
               Bill To
@@ -1353,7 +1470,7 @@ function InvoicePreview({
               </p>
             )}
           </div>
-          <div className="text-right">
+          <div className="sm:text-right">
             <p className="text-sm text-gray-500">
               <span className="font-medium text-gray-700">Issued:</span>{" "}
               {format(new Date(invoice.issueDate), "MMM d, yyyy")}
@@ -1374,16 +1491,16 @@ function InvoicePreview({
         <table className="mt-8 w-full border-collapse">
           <thead>
             <tr className="bg-gray-50">
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">
+              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Description
               </th>
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
+              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Qty
               </th>
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
+              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Rate
               </th>
-              <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
+              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
                 Amount
               </th>
             </tr>
@@ -1391,16 +1508,16 @@ function InvoicePreview({
           <tbody>
             {invoice.lineItems.map((item) => (
               <tr key={item.id}>
-                <td className="border-b border-gray-200 px-4 py-3 text-sm">
+                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-sm">
                   {item.description}
                 </td>
-                <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
+                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-right font-mono text-sm">
                   {item.quantity}
                 </td>
-                <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
+                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-right font-mono text-sm">
                   {formatCurrency(item.unitPrice)}
                 </td>
-                <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm font-medium">
+                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-right font-mono text-sm font-medium">
                   {formatCurrency(item.amount)}
                 </td>
               </tr>
@@ -1408,21 +1525,20 @@ function InvoicePreview({
           </tbody>
         </table>
 
-        <div className="mt-6 ml-auto w-72">
+        <div className={`mt-6 ml-auto ${secondary ? "w-full max-w-sm" : "w-72"}`}>
           <div className="flex justify-between py-2 text-sm">
             <span className="text-gray-500">Subtotal</span>
-            <span className="font-mono">
-              {formatCurrency(invoice.subtotal)}
-            </span>
+            <span className="font-mono">{money(invoice.subtotal)}</span>
           </div>
           <div className="flex justify-between py-2 text-sm">
             <span className="text-gray-500">Tax</span>
-            <span className="font-mono">{formatCurrency(invoice.tax)}</span>
+            <span className="font-mono">{money(invoice.tax)}</span>
           </div>
           <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
             <span>Total</span>
-            <span className="font-mono">{formatCurrency(invoice.total)}</span>
+            <span className="font-mono">{money(invoice.total)}</span>
           </div>
+          {secondary && <SecondaryTotalRow secondary={secondary} />}
         </div>
 
         {invoice.notes && (
@@ -1434,46 +1550,7 @@ function InvoicePreview({
           </div>
         )}
 
-        {(settings.remittanceFirstName || settings.remittanceBankName) && (
-          <div className="mt-8 rounded-lg border-2 border-dashed border-gray-300 p-5">
-            <p className="mb-3 text-[11px] font-bold tracking-wider text-gray-500 uppercase">
-              Remittance Information
-            </p>
-            {(settings.remittanceFirstName || settings.remittanceLastName) && (
-              <p className="text-sm">
-                <span className="text-gray-500">Pay to: </span>
-                {settings.remittanceFirstName} {settings.remittanceLastName}
-              </p>
-            )}
-            {settings.remittanceBankName && (
-              <p className="text-sm">
-                <span className="text-gray-500">Bank: </span>
-                {settings.remittanceBankName}
-              </p>
-            )}
-            {settings.remittanceRoutingNumber && (
-              <p className="text-sm">
-                <span className="text-gray-500">Routing: </span>
-                <span className="font-mono">
-                  {settings.remittanceRoutingNumber}
-                </span>
-              </p>
-            )}
-            {settings.remittanceAccountNumber && (
-              <p className="text-sm">
-                <span className="text-gray-500">Account: </span>
-                <span className="font-mono">
-                  {settings.remittanceAccountNumber}
-                </span>
-              </p>
-            )}
-            {settings.remittanceNotes && (
-              <p className="mt-2 text-xs whitespace-pre-line text-gray-500">
-                {settings.remittanceNotes}
-              </p>
-            )}
-          </div>
-        )}
+        <PaymentOptions accounts={accounts} />
 
         <p className="mt-10 border-t border-gray-200 pt-4 text-center text-xs text-gray-400">
           Generated by {settings.businessName || "TimeTracker"}

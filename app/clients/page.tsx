@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
+import { INVOICE_CURRENCY } from "@/lib/invoice-currency"
 import type { Client } from "@/lib/types"
 
 const CLIENT_COLORS = [
@@ -58,6 +59,7 @@ const emptyForm = {
   invoiceScheduleEnabled: false,
   invoiceScheduleAnchor: "" as string,
   invoiceScheduleAutoSend: true,
+  showSecondaryCurrency: false,
 }
 
 export default function ClientsPage() {
@@ -72,6 +74,7 @@ export default function ClientsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const secondaryCurrency = data.settings.secondaryRemittance?.currency || null
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
   const [invoicesOpen, setInvoicesOpen] = useState(false)
@@ -158,6 +161,7 @@ export default function ClientsPage() {
       invoiceScheduleEnabled: client.invoiceScheduleEnabled ?? false,
       invoiceScheduleAnchor: client.invoiceScheduleAnchor ?? "",
       invoiceScheduleAutoSend: client.invoiceScheduleAutoSend ?? true,
+      showSecondaryCurrency: client.showSecondaryCurrency ?? false,
     })
     setDialogOpen(true)
   }
@@ -181,6 +185,10 @@ export default function ClientsPage() {
       invoiceScheduleEnabled: form.invoiceScheduleEnabled,
       invoiceScheduleAutoSend: form.invoiceScheduleAutoSend,
       lastInvoiceSent: null as string | null,
+      // Sent only when it changes, so saving other client fields never depends on it.
+      ...(form.showSecondaryCurrency !== (editing?.showSecondaryCurrency ?? false)
+        ? { showSecondaryCurrency: form.showSecondaryCurrency }
+        : {}),
     }
     if (editing) {
       await updateClient(editing.id, payload)
@@ -580,6 +588,32 @@ export default function ClientsPage() {
                   </div>
                 </>
               )}
+            </div>
+            <div className="flex items-start gap-3 rounded-md border p-3">
+              <Checkbox
+                id="secondary-currency"
+                checked={!!secondaryCurrency && form.showSecondaryCurrency}
+                disabled={!secondaryCurrency}
+                onCheckedChange={(v) =>
+                  setForm({ ...form, showSecondaryCurrency: !!v })
+                }
+                className="mt-0.5"
+              />
+              <div className="grid gap-0.5">
+                <Label
+                  htmlFor="secondary-currency"
+                  className="text-sm font-medium"
+                >
+                  {secondaryCurrency
+                    ? `Also offer ${secondaryCurrency} payment`
+                    : "Offer a second payment currency"}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {secondaryCurrency
+                    ? `Invoices stay in ${INVOICE_CURRENCY} and also show the ${secondaryCurrency} total at the rate on the day they're sent, with your ${secondaryCurrency} account.`
+                    : "Add a second account under Settings → Remittance Information first."}
+                </p>
+              </div>
             </div>
             <div className="grid gap-2">
               <Label>Color</Label>

@@ -11,6 +11,13 @@ import {
 import { format } from "date-fns"
 
 import { formatCurrency } from "./format"
+import {
+  INVOICE_CURRENCY,
+  formatWithCode,
+  paymentAccounts,
+  rateNote,
+  type SecondaryTotal,
+} from "./invoice-currency"
 import type { Client, Invoice, Settings } from "./types"
 
 // Tailwind gray palette → hex, matching the on-screen InvoicePreview
@@ -43,10 +50,13 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.black,
     paddingBottom: 12,
   },
-  businessName: { fontSize: 18, fontFamily: "Helvetica-Bold", marginBottom: 6 },
+  // Large text sets its own line height; the page's 1.4 resolves against 9pt and overlaps it.
+  businessName: { fontSize: 18, lineHeight: 1.2, fontFamily: "Helvetica-Bold", marginBottom: 6 },
+  headerRight: { alignItems: "flex-end" },
   businessMeta: { marginTop: 2, fontSize: 9, color: COLORS.gray500 },
   invoiceNumberBig: {
     fontSize: 24,
+    lineHeight: 1.2,
     fontFamily: "Courier-Bold",
     textAlign: "right",
   },
@@ -61,7 +71,16 @@ const styles = StyleSheet.create({
   headerTotalValue: {
     marginTop: 2,
     fontSize: 16,
+    lineHeight: 1.2,
     fontFamily: "Courier-Bold",
+    textAlign: "right",
+  },
+  headerSecondary: {
+    marginTop: 1,
+    fontSize: 10,
+    lineHeight: 1.2,
+    fontFamily: "Courier",
+    color: COLORS.gray500,
     textAlign: "right",
   },
   headerDueBadge: {
@@ -87,6 +106,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 3,
     fontSize: 13,
+    lineHeight: 1.2,
     fontFamily: "Helvetica-Bold",
   },
   clientMeta: { fontSize: 9, color: COLORS.gray500 },
@@ -139,10 +159,23 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     marginTop: 4,
   },
-  grandTotalLabel: { fontSize: 14, fontFamily: "Helvetica-Bold" },
+  grandTotalLabel: { fontSize: 14, lineHeight: 1.2, fontFamily: "Helvetica-Bold" },
   grandTotalValue: {
     fontSize: 14,
+    lineHeight: 1.2,
     fontFamily: "Courier-Bold",
+  },
+  secondaryTotalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
+  secondaryTotalValue: { fontSize: 10, fontFamily: "Courier-Bold" },
+  rateNote: {
+    marginTop: 2,
+    fontSize: 7,
+    color: COLORS.gray400,
+    textAlign: "right",
   },
 
   // Notes
@@ -176,6 +209,15 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 1,
   },
+  remittanceAccounts: { flexDirection: "row", gap: 16 },
+  remittanceAccount: { flex: 1 },
+  remittanceHeading: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 4,
+    fontSize: 10,
+    fontFamily: "Helvetica-Bold",
+  },
   remittanceLine: { fontSize: 9, marginTop: 2 },
   remittanceMuted: { color: COLORS.gray500 },
   remittanceNotes: { marginTop: 8, fontSize: 8, color: COLORS.gray500 },
@@ -202,17 +244,28 @@ export function InvoicePdfDocument({
   invoice,
   client,
   settings,
+  secondary = null,
 }: {
   invoice: Invoice
   client: Client | undefined
   settings: Settings
+  secondary?: SecondaryTotal | null
 }) {
   const businessName = settings.businessName || "Your Name"
-  const hasRemittance =
-    !!settings.remittanceFirstName || !!settings.remittanceBankName
-  const remitName = `${settings.remittanceFirstName ?? ""} ${
-    settings.remittanceLastName ?? ""
-  }`.trim()
+  const money = (amount: number) =>
+    secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
+  const accounts = paymentAccounts(
+    {
+      firstName: settings.remittanceFirstName,
+      lastName: settings.remittanceLastName,
+      bankName: settings.remittanceBankName,
+      routingNumber: settings.remittanceRoutingNumber,
+      accountNumber: settings.remittanceAccountNumber,
+      notes: settings.remittanceNotes,
+    },
+    invoice.total,
+    secondary
+  )
   const dueOnReceipt = invoice.dueDate === invoice.issueDate
 
   return (
@@ -238,14 +291,19 @@ export function InvoicePdfDocument({
               </Text>
             ) : null}
           </View>
-          <View>
+          <View style={styles.headerRight}>
             <Text style={styles.invoiceNumberBig}>
               {invoice.invoiceNumber}
             </Text>
             <Text style={styles.headerTotalLabel}>Total Due</Text>
             <Text style={styles.headerTotalValue}>
-              {formatCurrency(invoice.total)}
+              {money(invoice.total)}
             </Text>
+            {secondary ? (
+              <Text style={styles.headerSecondary}>
+                or {formatWithCode(secondary.amount, secondary.currency)}
+              </Text>
+            ) : null}
             <Text style={styles.headerDueBadge}>
               {dueOnReceipt
                 ? "Due on receipt"
@@ -317,21 +375,34 @@ export function InvoicePdfDocument({
           <View style={styles.totalsRow}>
             <Text style={styles.totalsLabel}>Subtotal</Text>
             <Text style={styles.totalsValue}>
-              {formatCurrency(invoice.subtotal)}
+              {money(invoice.subtotal)}
             </Text>
           </View>
           <View style={styles.totalsRow}>
             <Text style={styles.totalsLabel}>Tax</Text>
             <Text style={styles.totalsValue}>
-              {formatCurrency(invoice.tax)}
+              {money(invoice.tax)}
             </Text>
           </View>
           <View style={styles.grandTotalRow}>
             <Text style={styles.grandTotalLabel}>Total</Text>
             <Text style={styles.grandTotalValue}>
-              {formatCurrency(invoice.total)}
+              {money(invoice.total)}
             </Text>
           </View>
+          {secondary ? (
+            <>
+              <View style={styles.secondaryTotalRow}>
+                <Text style={styles.totalsLabel}>
+                  Total in {secondary.currency}
+                </Text>
+                <Text style={styles.secondaryTotalValue}>
+                  {formatWithCode(secondary.amount, secondary.currency)}
+                </Text>
+              </View>
+              <Text style={styles.rateNote}>{rateNote(secondary)}</Text>
+            </>
+          ) : null}
         </View>
 
         {/* Notes */}
@@ -343,42 +414,36 @@ export function InvoicePdfDocument({
         ) : null}
 
         {/* Remittance */}
-        {hasRemittance ? (
-          <View style={styles.remittance}>
-            <Text style={styles.remittanceLabel}>Remittance Information</Text>
-            {remitName ? (
-              <Text style={styles.remittanceLine}>
-                <Text style={styles.remittanceMuted}>Pay to: </Text>
-                {remitName}
-              </Text>
-            ) : null}
-            {settings.remittanceBankName ? (
-              <Text style={styles.remittanceLine}>
-                <Text style={styles.remittanceMuted}>Bank: </Text>
-                {settings.remittanceBankName}
-              </Text>
-            ) : null}
-            {settings.remittanceRoutingNumber ? (
-              <Text style={styles.remittanceLine}>
-                <Text style={styles.remittanceMuted}>Routing: </Text>
-                <Text style={styles.mono}>
-                  {settings.remittanceRoutingNumber}
-                </Text>
-              </Text>
-            ) : null}
-            {settings.remittanceAccountNumber ? (
-              <Text style={styles.remittanceLine}>
-                <Text style={styles.remittanceMuted}>Account: </Text>
-                <Text style={styles.mono}>
-                  {settings.remittanceAccountNumber}
-                </Text>
-              </Text>
-            ) : null}
-            {settings.remittanceNotes ? (
-              <Text style={styles.remittanceNotes}>
-                {settings.remittanceNotes}
-              </Text>
-            ) : null}
+        {accounts.length ? (
+          <View style={styles.remittance} wrap={false}>
+            <Text style={styles.remittanceLabel}>
+              {accounts.length > 1 ? "Payment Options" : "Remittance Information"}
+            </Text>
+            <View style={styles.remittanceAccounts}>
+              {accounts.map((account) => (
+                <View style={styles.remittanceAccount} key={account.heading}>
+                  {account.heading ? (
+                    <View style={styles.remittanceHeading}>
+                      <Text>{account.heading}</Text>
+                      <Text style={styles.mono}>{account.amount}</Text>
+                    </View>
+                  ) : null}
+                  {account.lines.map((line) => (
+                    <Text style={styles.remittanceLine} key={line.label}>
+                      <Text style={styles.remittanceMuted}>{line.label}: </Text>
+                      {line.mono ? (
+                        <Text style={styles.mono}>{line.value}</Text>
+                      ) : (
+                        line.value
+                      )}
+                    </Text>
+                  ))}
+                  {account.notes ? (
+                    <Text style={styles.remittanceNotes}>{account.notes}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
           </View>
         ) : null}
 
@@ -398,10 +463,16 @@ export function InvoicePdfDocument({
 export async function downloadInvoicePdf(
   invoice: Invoice,
   client: Client | undefined,
-  settings: Settings
+  settings: Settings,
+  secondary: SecondaryTotal | null = null
 ): Promise<void> {
   const blob = await pdf(
-    <InvoicePdfDocument invoice={invoice} client={client} settings={settings} />
+    <InvoicePdfDocument
+      invoice={invoice}
+      client={client}
+      settings={settings}
+      secondary={secondary}
+    />
   ).toBlob()
 
   const url = URL.createObjectURL(blob)

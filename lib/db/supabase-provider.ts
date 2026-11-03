@@ -13,6 +13,7 @@ import { defaultSettings } from "../types"
 import type { DataProvider } from "./provider"
 import { parseAgentTimeHosts, parseAgentTimeHostLabels } from "../agent-time-hosts"
 import { normalizeBillFactor } from "../billing"
+import { parseSecondaryRemittance } from "../invoice-currency"
 
 function rowToClient(row: Record<string, unknown>): Client {
   return {
@@ -28,6 +29,7 @@ function rowToClient(row: Record<string, unknown>): Client {
     invoiceScheduleEnabled: (row.invoice_schedule_enabled as boolean) ?? false,
     invoiceScheduleAutoSend: (row.invoice_schedule_auto_send as boolean) ?? true,
     lastInvoiceSent: row.last_invoice_sent as string | null,
+    showSecondaryCurrency: (row.show_secondary_currency as boolean) ?? false,
     createdAt: row.created_at as string,
   }
 }
@@ -105,6 +107,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     timezone: (row.timezone as string) ?? "",
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
     displayCurrency: (row.display_currency as string) ?? "",
+    secondaryRemittance: parseSecondaryRemittance(row.secondary_remittance),
     agentTimeHosts: parseAgentTimeHosts(row.agent_time_hosts),
     agentTimeMaxMinutes: typeof row.agent_time_max_minutes === "number" ? row.agent_time_max_minutes : null,
     agentTimeHostLabels: parseAgentTimeHostLabels(row.agent_time_host_labels),
@@ -128,6 +131,9 @@ function rowToInvoice(
     total: Number(row.total),
     notes: row.notes as string,
     lineItems,
+    fxCurrency: (row.fx_currency as string | null) ?? null,
+    fxRate: row.fx_rate == null ? null : Number(row.fx_rate),
+    fxRateDate: (row.fx_rate_date as string | null) ?? null,
     createdAt: row.created_at as string,
   }
 }
@@ -183,6 +189,7 @@ export class SupabaseProvider implements DataProvider {
         invoice_schedule_anchor: client.invoiceScheduleAnchor,
         invoice_schedule_enabled: client.invoiceScheduleEnabled ?? false,
         invoice_schedule_auto_send: client.invoiceScheduleAutoSend ?? true,
+        ...(client.showSecondaryCurrency ? { show_secondary_currency: true } : {}),
       })
       .select()
       .single()
@@ -209,6 +216,8 @@ export class SupabaseProvider implements DataProvider {
       row.invoice_schedule_auto_send = updates.invoiceScheduleAutoSend
     if (updates.lastInvoiceSent !== undefined)
       row.last_invoice_sent = updates.lastInvoiceSent
+    if (updates.showSecondaryCurrency !== undefined)
+      row.show_secondary_currency = updates.showSecondaryCurrency
     const { error } = await this.db.from("clients").update(row).eq("id", id)
     if (error) throw error
   }
@@ -435,6 +444,8 @@ export class SupabaseProvider implements DataProvider {
       row.default_invoice_due_days = updates.defaultInvoiceDueDays
     if (updates.displayCurrency !== undefined)
       row.display_currency = updates.displayCurrency
+    if (updates.secondaryRemittance !== undefined)
+      row.secondary_remittance = parseSecondaryRemittance(updates.secondaryRemittance)
     if (updates.agentTimeMaxMinutes !== undefined) row.agent_time_max_minutes = updates.agentTimeMaxMinutes
     if (updates.agentTimeChatBillFactors !== undefined)
       row.agent_time_chat_bill_factors = parseChatBillFactors(updates.agentTimeChatBillFactors)
@@ -559,6 +570,9 @@ export class SupabaseProvider implements DataProvider {
     if (updates.dueDate !== undefined) row.due_date = updates.dueDate
     if (updates.tax !== undefined) row.tax = updates.tax
     if (updates.total !== undefined) row.total = updates.total
+    if (updates.fxCurrency !== undefined) row.fx_currency = updates.fxCurrency
+    if (updates.fxRate !== undefined) row.fx_rate = updates.fxRate
+    if (updates.fxRateDate !== undefined) row.fx_rate_date = updates.fxRateDate
     const { error } = await this.db.from("invoices").update(row).eq("id", id)
     if (error) throw error
   }
