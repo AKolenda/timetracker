@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { formatCurrency, formatDate } from "@/lib/format"
+import { formatDate } from "@/lib/format"
 import {
   Plus,
   MoreHorizontal,
@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
+import { useMoney } from "@/lib/display-currency"
 import { INVOICE_CURRENCY } from "@/lib/invoice-currency"
 import type { Client } from "@/lib/types"
 
@@ -63,6 +64,7 @@ const emptyForm = {
 }
 
 export default function ClientsPage() {
+  const { money } = useMoney()
   const {
     data,
     loading,
@@ -127,7 +129,7 @@ export default function ClientsPage() {
         </div>
         <div className="shrink-0 text-right">
           <p className="text-sm tabular-nums">
-            {formatCurrency(invoice.total)}
+            {money(invoice.total)}
           </p>
           <p
             className={`text-xs capitalize ${invoice.status === "paid" ? "text-emerald-600 dark:text-emerald-400" : invoice.status === "overdue" ? "text-destructive" : "text-muted-foreground"}`}
@@ -280,7 +282,7 @@ export default function ClientsPage() {
                     </span>
                     <span className="shrink-0 text-right">
                       <span className="block text-sm font-semibold tabular-nums">
-                        {formatCurrency(total)}
+                        {money(total)}
                       </span>
                       <span className="block text-[11px] text-muted-foreground">
                         Lifetime invoiced
@@ -333,19 +335,19 @@ export default function ClientsPage() {
               </div>
               <p className="text-xs text-muted-foreground">Lifetime invoiced</p>
               <p className="mt-1 text-3xl font-semibold tracking-tight break-words tabular-nums sm:text-4xl">
-                {formatCurrency(lifetime)}
+                {money(lifetime)}
               </p>
               <div className="mt-6 grid grid-cols-2 gap-4 border-b pb-6">
                 <div>
                   <p className="text-xs text-muted-foreground">Paid</p>
                   <p className="mt-1 text-lg font-medium break-words tabular-nums">
-                    {formatCurrency(paid)}
+                    {money(paid)}
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Outstanding</p>
                   <p className="mt-1 text-lg font-medium break-words text-amber-700 tabular-nums dark:text-amber-300">
-                    {formatCurrency(lifetime - paid)}
+                    {money(lifetime - paid)}
                   </p>
                 </div>
               </div>

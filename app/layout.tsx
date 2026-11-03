@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { StoreProvider } from "@/lib/store"
+import { DisplayCurrencyProvider } from "@/lib/display-currency"
 import { Toaster } from "@/components/ui/sonner"
 import { TimerTabIndicator } from "@/components/timer-tab-indicator"
 import { cn } from "@/lib/utils"
@@ -38,6 +39,7 @@ export default function RootLayout({
         <ThemeProvider>
           <TooltipProvider>
             <StoreProvider>
+              <DisplayCurrencyProvider>
               <TimerTabIndicator />
               <SidebarProvider>
                 <AppSidebar />
@@ -46,6 +48,7 @@ export default function RootLayout({
                 </SidebarInset>
               </SidebarProvider>
               <Toaster />
+              </DisplayCurrencyProvider>
             </StoreProvider>
           </TooltipProvider>
         </ThemeProvider>

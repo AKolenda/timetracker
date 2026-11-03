@@ -257,6 +257,7 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
+        currencyToggle={false}
         actions={
           <Button size="sm" onClick={handleSave} disabled={saving}>
             {saving ? "Saving..." : "Save Changes"}

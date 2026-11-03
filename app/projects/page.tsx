@@ -47,7 +47,8 @@ import {
 } from "@/components/ui/table"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
-import { formatCurrency, formatHours } from "@/lib/format"
+import { useMoney } from "@/lib/display-currency"
+import { formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
 import type { Project } from "@/lib/types"
 
@@ -66,6 +67,7 @@ const statusStyles: Record<Project["status"], string> = {
 }
 
 export default function ProjectsPage() {
+  const { money } = useMoney()
   const {
     data,
     addProject,
@@ -220,13 +222,13 @@ export default function ProjectsPage() {
                       {client?.name ?? "—"}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
-                      {formatCurrency(project.rate, project.currency)}/hr
+                      {money(project.rate, project.currency)}/hr
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {formatHours(totalSecs)}h
                     </TableCell>
                     <TableCell className="font-mono text-xs">
-                      {formatCurrency(revenue, project.currency)}
+                      {money(revenue, project.currency)}
                     </TableCell>
                     <TableCell>
                       <Badge

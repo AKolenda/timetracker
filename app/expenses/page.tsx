@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/popover"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
+import { useMoney } from "@/lib/display-currency"
 import { formatCurrency } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { Expense } from "@/lib/types"
@@ -96,6 +97,7 @@ const categoryColors: Record<string, string> = {
 }
 
 export default function ExpensesPage() {
+  const { money } = useMoney()
   const { data, addExpense, updateExpense, deleteExpense, getProject, getClient } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
@@ -200,7 +202,7 @@ export default function ExpensesPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold">
-              {formatCurrency(totalExpenses)}
+              {money(totalExpenses)}
             </div>
           </CardContent>
         </Card>
@@ -212,7 +214,7 @@ export default function ExpensesPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold">
-              {formatCurrency(monthExpenses)}
+              {money(monthExpenses)}
             </div>
           </CardContent>
         </Card>
@@ -309,7 +311,7 @@ export default function ExpensesPage() {
                       {format(parseISO(expense.date), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs font-medium">
-                      {formatCurrency(expense.amount)}
+                      {money(expense.amount)}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
