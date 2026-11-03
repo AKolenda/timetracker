@@ -1175,6 +1175,7 @@ export default function AgenticCodingPage() {
     <>
       <PageHeader
         title="Agentic Coding"
+        currencyToggle={false}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm">

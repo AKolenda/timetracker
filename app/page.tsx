@@ -11,12 +11,14 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
+import { useMoney } from "@/lib/display-currency"
 import { formatCurrency, formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
 import { Badge } from "@/components/ui/badge"
 import { useExchangeRate } from "@/lib/use-exchange-rate"
 
 export default function DashboardPage() {
+  const { money, currency } = useMoney()
   const { data, getClient, getProject } = useStore()
   const displayCurrency = data.settings.displayCurrency
   const { rate } = useExchangeRate("USD", displayCurrency)
@@ -80,9 +82,9 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold">
-              {formatCurrency(totalRevenue)}
+              {money(totalRevenue)}
             </div>
-            {rate && (
+            {rate && displayCurrency !== currency && (
               <p className="mt-0.5 font-mono text-sm text-muted-foreground">
                 ≈ {formatCurrency(totalRevenue * rate, displayCurrency)}
               </p>
@@ -102,7 +104,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold">
-              {formatCurrency(totalExpenses)}
+              {money(totalExpenses)}
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
               {data.expenses.length} entries
@@ -119,9 +121,9 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold">
-              {formatCurrency(totalRevenue + totalExpenses)}
+              {money(totalRevenue + totalExpenses)}
             </div>
-            {rate && (
+            {rate && displayCurrency !== currency && (
               <p className="mt-0.5 font-mono text-sm text-muted-foreground">
                 ≈ {formatCurrency((totalRevenue + totalExpenses) * rate, displayCurrency)}
               </p>
@@ -174,11 +176,11 @@ export default function DashboardPage() {
                 </div>
                 <span className="font-mono text-sm font-medium">
                   {data.projects.length > 0
-                    ? formatCurrency(
+                    ? money(
                         data.projects.reduce((s, p) => s + p.rate, 0) /
                           data.projects.length
                       )
-                    : "$0.00"}
+                    : money(0)}
                 </span>
               </div>
             </div>

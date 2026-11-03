@@ -23,7 +23,8 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
-import { formatCurrency, formatHours } from "@/lib/format"
+import { useMoney } from "@/lib/display-currency"
+import { formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
 import { cn } from "@/lib/utils"
 
@@ -53,6 +54,7 @@ function emptyDay(): DayData {
 }
 
 export default function CalendarPage() {
+  const { money } = useMoney()
   const { data, getProject, getClient } = useStore()
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
@@ -215,7 +217,7 @@ export default function CalendarPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-              {formatCurrency(monthTotals.earnings)}
+              {money(monthTotals.earnings)}
             </div>
           </CardContent>
         </Card>
@@ -227,7 +229,7 @@ export default function CalendarPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold text-red-600 dark:text-red-400">
-              {formatCurrency(monthTotals.expenses)}
+              {money(monthTotals.expenses)}
             </div>
           </CardContent>
         </Card>
@@ -251,7 +253,7 @@ export default function CalendarPage() {
           </CardHeader>
           <CardContent>
             <div className="font-mono text-2xl font-bold text-blue-600 dark:text-blue-400">
-              {formatCurrency(monthTotals.pendingPayments)}
+              {money(monthTotals.pendingPayments)}
             </div>
           </CardContent>
         </Card>
@@ -332,17 +334,17 @@ export default function CalendarPage() {
                       <div className="mt-1 space-y-0.5">
                         {dayData.earnings > 0 && (
                           <div className="truncate rounded bg-emerald-500/10 px-1 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">
-                            +{formatCurrency(dayData.earnings)}
+                            +{money(dayData.earnings)}
                           </div>
                         )}
                         {dayData.expenses > 0 && (
                           <div className="truncate rounded bg-red-500/10 px-1 text-[9px] font-medium text-red-600 dark:text-red-400">
-                            -{formatCurrency(dayData.expenses)}
+                            -{money(dayData.expenses)}
                           </div>
                         )}
                         {dayData.paymentsDue.length > 0 && (
                           <div className="truncate rounded bg-blue-500/10 px-1 text-[9px] font-medium text-blue-600 dark:text-blue-400">
-                            Due: {formatCurrency(dayData.paymentsDue.reduce((s, p) => s + p.total, 0))}
+                            Due: {money(dayData.paymentsDue.reduce((s, p) => s + p.total, 0))}
                           </div>
                         )}
                         {dayData.scheduledSends.length > 0 && (
@@ -389,7 +391,7 @@ export default function CalendarPage() {
                           Earned
                         </p>
                         <p className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(selectedDayData.earnings)}
+                          {money(selectedDayData.earnings)}
                         </p>
                       </div>
                       <div className="rounded-md bg-red-500/10 p-2 text-center">
@@ -397,7 +399,7 @@ export default function CalendarPage() {
                           Spent
                         </p>
                         <p className="font-mono text-sm font-bold text-red-600 dark:text-red-400">
-                          {formatCurrency(selectedDayData.expenses)}
+                          {money(selectedDayData.expenses)}
                         </p>
                       </div>
                     </div>
@@ -456,7 +458,7 @@ export default function CalendarPage() {
                                 {e.description}
                               </span>
                               <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">
-                                -{formatCurrency(e.amount)}
+                                -{money(e.amount)}
                               </span>
                             </div>
                           ))}
@@ -482,7 +484,7 @@ export default function CalendarPage() {
                                 {p.invoiceNumber}
                               </span>
                               <span className="font-mono text-xs font-medium text-blue-600 dark:text-blue-400">
-                                {formatCurrency(p.total)}
+                                {money(p.total)}
                               </span>
                             </div>
                           ))}
@@ -564,7 +566,7 @@ export default function CalendarPage() {
                         </p>
                       </div>
                       <span className="shrink-0 font-mono text-sm font-bold">
-                        {formatCurrency(inv.total)}
+                        {money(inv.total)}
                       </span>
                     </div>
                   ))}

@@ -73,6 +73,7 @@ import { billedSeconds } from "@/lib/billing"
 import { PageHeader } from "@/components/page-header"
 import { applyEmailTemplateVariables } from "@/lib/email-template"
 import { useStore } from "@/lib/store"
+import { useMoney } from "@/lib/display-currency"
 import { formatCurrency, formatHours } from "@/lib/format"
 import {
   INVOICE_CURRENCY,
@@ -176,6 +177,7 @@ function StatusMenu({
 }
 
 export default function InvoicesPage() {
+  const { money } = useMoney()
   const {
     data,
     addInvoice,
@@ -688,7 +690,7 @@ export default function InvoicesPage() {
                         {invoiceDueLabel(inv)}
                       </TableCell>
                       <TableCell className="font-mono text-sm font-medium">
-                        {formatCurrency(inv.total)}
+                        {money(inv.total)}
                         {lockedSecondaryLabel(inv) && (
                           <span className="block text-xs font-normal text-muted-foreground">
                             {lockedSecondaryLabel(inv)}
@@ -857,7 +859,7 @@ export default function InvoicesPage() {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="font-mono text-base font-semibold">
-                          {formatCurrency(inv.total)}
+                          {money(inv.total)}
                         </p>
                         {lockedSecondaryLabel(inv) && (
                           <p className="font-mono text-xs text-muted-foreground">
