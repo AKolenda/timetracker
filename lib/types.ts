@@ -26,6 +26,8 @@ export interface Project {
   currency: string
   status: "active" | "completed" | "on-hold"
   color: string
+  /** Agent Time folders (e.g. "Ascend") whose time imports into this project. */
+  agentFolders?: string[]
   createdAt: string
 }
 

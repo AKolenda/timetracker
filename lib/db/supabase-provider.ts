@@ -43,6 +43,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     currency: row.currency as string,
     status: row.status as Project["status"],
     color: (row.color as string) ?? "",
+    agentFolders: Array.isArray(row.agent_folders) ? (row.agent_folders as string[]) : [],
     createdAt: row.created_at as string,
   }
 }
@@ -258,6 +259,8 @@ export class SupabaseProvider implements DataProvider {
         currency: project.currency,
         status: project.status,
         color: project.color ?? "",
+        // Only sent when used, so creating projects still works before migration 014.
+        ...(project.agentFolders?.length ? { agent_folders: project.agentFolders } : {}),
       })
       .select()
       .single()
@@ -273,6 +276,7 @@ export class SupabaseProvider implements DataProvider {
     if (updates.currency !== undefined) row.currency = updates.currency
     if (updates.status !== undefined) row.status = updates.status
     if (updates.color !== undefined) row.color = updates.color
+    if (updates.agentFolders !== undefined) row.agent_folders = updates.agentFolders
     const { error } = await this.db.from("projects").update(row).eq("id", id)
     if (error) throw error
   }

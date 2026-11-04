@@ -76,7 +76,7 @@ import { billedSeconds, formatBillFactor, normalizeBillFactor, sourcesBillFactor
 import { invoicedSourceIds } from "@/lib/invoice-estimates"
 import { intervalIsSettled } from "@/lib/summary-jobs"
 import { splitAgentRange } from "@/lib/agent-time-intervals"
-import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
+import { PERSONAL_AGENT_PROJECT, adoptableLocalMappings, linkAgentFolders, resolveAgentMappings } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
 type AgentTimeInterval = {
@@ -160,6 +160,12 @@ function summaryKey(slice: AgentImportSlice) {
 function draftDescription(slice: AgentImportSlice, summaries: Record<string, string> = {}) {
   const primary = primaryConversation(slice)
   return summaries[summaryKey(slice)] || primary?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
+}
+
+function demoFixtureRequested() {
+  return typeof window !== "undefined" &&
+    process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
+    new URLSearchParams(window.location.search).get("fixture") === "demo"
 }
 
 function mobileFixtureRequested() {
@@ -453,7 +459,8 @@ export default function TrackerPage() {
   const [importSettingsOpen, setImportSettingsOpen] = useState(false)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
   const requestedSummaries = useRef(new Set<string>())
-  const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
+  // Choices made in this browser before folders were saved on projects; "Personal" still lives here.
+  const [localMappings, setLocalMappings] = useState<Record<string, string>>(() => {
     if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
     try {
       const saved = typeof window !== "undefined" ? localStorage.getItem("timetracker-agent-time-project-mappings") : null
@@ -499,13 +506,67 @@ export default function TrackerPage() {
     return () => window.clearTimeout(id)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function saveProjectMapping(agentProject: string, projectId: string) {
-    setProjectMappings((current) => {
-      const next = { ...current, [agentProject]: projectId }
-      localStorage.setItem("timetracker-agent-time-project-mappings", JSON.stringify(next))
+  function saveLocalMappings(update: (current: Record<string, string>) => Record<string, string>) {
+    setLocalMappings((current) => {
+      const next = update(current)
+      try {
+        localStorage.setItem("timetracker-agent-time-project-mappings", JSON.stringify(next))
+      } catch {
+        // The choice still applies until this page is refreshed.
+      }
       return next
     })
   }
+
+  async function saveProjectMapping(agentProject: string, projectId: string) {
+    const toProject = projectId && projectId !== PERSONAL_AGENT_PROJECT ? projectId : null
+    try {
+      // A project choice is saved on the project, so it holds on every device and shows on the Projects page.
+      for (const change of linkAgentFolders(data.projects, toProject, [agentProject])) {
+        await updateProject(change.id, { agentFolders: change.agentFolders })
+      }
+    } catch {
+      if (toProject) {
+        toast.error("Couldn't link this folder to the project, so it's saved in this browser only")
+        saveLocalMappings((current) => ({ ...current, [agentProject]: projectId }))
+        return
+      }
+    }
+    saveLocalMappings((current) => {
+      const next = { ...current }
+      if (toProject) delete next[agentProject]
+      else next[agentProject] = projectId
+      return next
+    })
+  }
+
+  // Move this browser's older folder choices onto their projects once, so they show up everywhere.
+  const adoptedLocalMappings = useRef(false)
+  useEffect(() => {
+    if (adoptedLocalMappings.current || !data.projects.length || mobileFixtureRequested() || demoFixtureRequested()) return
+    const adoptable = adoptableLocalMappings(data.projects, localMappings)
+    adoptedLocalMappings.current = true
+    if (!adoptable.length) return
+    void (async () => {
+      let projects = data.projects
+      const adopted: string[] = []
+      for (const [folder, projectId] of adoptable) {
+        try {
+          for (const change of linkAgentFolders(projects, projectId, [folder])) {
+            await updateProject(change.id, { agentFolders: change.agentFolders })
+            projects = projects.map((project) => (project.id === change.id ? { ...project, agentFolders: change.agentFolders } : project))
+          }
+          adopted.push(folder)
+        } catch {
+          // Most likely migration 014 isn't applied yet; the browser's choice keeps working meanwhile.
+          break
+        }
+      }
+      if (adopted.length) {
+        saveLocalMappings((current) => Object.fromEntries(Object.entries(current).filter(([folder]) => !adopted.includes(folder))))
+      }
+    })()
+  }, [data.projects]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function startWatchingAgentTimeToday() {
     const today = localDateString(new Date(), data.settings.timezone)
@@ -528,6 +589,15 @@ export default function TrackerPage() {
     const cutoff = new Date(`${effectiveAgentTimeStartDate}T00:00:00`).getTime()
     return Number.isNaN(cutoff) ? null : cutoff
   }, [effectiveAgentTimeStartDate])
+
+  const projectMappings = useMemo(
+    () => resolveAgentMappings(
+      [...(agentTime?.projects ?? []), ...(agentTime?.intervals.map((interval) => interval.project) ?? [])],
+      data.projects,
+      localMappings
+    ),
+    [agentTime, data.projects, localMappings]
+  )
 
   const availableAgentIntervals = useMemo(
     () => agentTime?.intervals.filter((interval) => !agentTimeCutoff || new Date(interval.end).getTime() > agentTimeCutoff) ?? [],
@@ -1273,7 +1343,7 @@ export default function TrackerPage() {
           </div> }
         })}
       />
-      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Import projects" description="Choose where each desktop project belongs. Personal projects stay out of imports." emptyText="No desktop projects to map."
+      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Import projects" description="Choose where each agent folder's time goes. It's saved on the project, so you can also change it on the Projects page. Personal folders stay out of imports." emptyText="No desktop projects to map."
         items={[...unmappedAgentProjects, ...handledAgentProjects].map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
           <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={[{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]} />

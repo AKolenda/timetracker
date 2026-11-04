@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Plus,
+  X,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -50,6 +51,7 @@ import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
+import { agentFolderKey, dedupeAgentFolders, linkAgentFolders, suggestAgentFolders } from "@/lib/agent-import-projects"
 import type { Project } from "@/lib/types"
 
 const emptyForm = {
@@ -58,6 +60,13 @@ const emptyForm = {
   rate: "",
   currency: "USD",
   status: "active" as Project["status"],
+  agentFolders: [] as string[],
+}
+
+function fixtureQuery() {
+  if (process.env.NEXT_PUBLIC_E2E_FIXTURES !== "true" || typeof window === "undefined") return ""
+  const fixture = new URLSearchParams(window.location.search).get("fixture")
+  return fixture === "demo" || fixture === "mobile" ? `&fixture=${fixture}` : ""
 }
 
 const statusStyles: Record<Project["status"], string> = {
@@ -82,6 +91,50 @@ export default function ProjectsPage() {
   const [form, setForm] = useState(emptyForm)
   const [mergeSource, setMergeSource] = useState<Project | null>(null)
   const [mergeTargetId, setMergeTargetId] = useState("")
+  const [folderQuery, setFolderQuery] = useState("")
+  const [detectedFolders, setDetectedFolders] = useState<string[] | null>(null)
+
+  // Folder names come from Agent Time; they're only fetched once a project dialog opens.
+  useEffect(() => {
+    if (!dialogOpen || detectedFolders) return
+    let cancelled = false
+    fetch(`/api/agent-time?foldersOnly=true${fixtureQuery()}`)
+      .then((response) => (response.ok ? response.json() : { projects: [] }))
+      .then((body: { projects?: unknown }) => {
+        if (!cancelled) setDetectedFolders(Array.isArray(body.projects) ? body.projects.filter((p): p is string => typeof p === "string") : [])
+      })
+      .catch(() => {
+        if (!cancelled) setDetectedFolders([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dialogOpen, detectedFolders])
+
+  const folderOwners = useMemo(() => {
+    const owners = new Map<string, Project>()
+    for (const project of data.projects) {
+      if (project.id === editing?.id) continue
+      for (const folder of project.agentFolders ?? []) owners.set(agentFolderKey(folder), project)
+    }
+    return owners
+  }, [data.projects, editing])
+
+  const folderSuggestions = suggestAgentFolders(detectedFolders ?? [], {
+    projectName: form.name,
+    query: folderQuery,
+    linked: form.agentFolders,
+  })
+
+  function addFolder(folder: string) {
+    if (!folder.trim()) return
+    setForm((current) => ({ ...current, agentFolders: dedupeAgentFolders([...current.agentFolders, folder]) }))
+    setFolderQuery("")
+  }
+
+  function removeFolder(folder: string) {
+    setForm((current) => ({ ...current, agentFolders: current.agentFolders.filter((f) => f !== folder) }))
+  }
 
   function openCreate() {
     setEditing(null)
@@ -89,6 +142,7 @@ export default function ProjectsPage() {
       ...emptyForm,
       clientId: data.clients[0]?.id ?? "",
     })
+    setFolderQuery("")
     setDialogOpen(true)
   }
 
@@ -100,7 +154,9 @@ export default function ProjectsPage() {
       rate: project.rate.toString(),
       currency: project.currency,
       status: project.status,
+      agentFolders: project.agentFolders ?? [],
     })
+    setFolderQuery("")
     setDialogOpen(true)
   }
 
@@ -113,6 +169,8 @@ export default function ProjectsPage() {
       toast.error("Please select a client")
       return
     }
+    // A folder typed but not yet added still counts.
+    const agentFolders = dedupeAgentFolders([...form.agentFolders, folderQuery])
     const payload = {
       clientId: form.clientId,
       name: form.name.trim(),
@@ -121,14 +179,27 @@ export default function ProjectsPage() {
       status: form.status,
       color: "",
     }
-    if (editing) {
-      await updateProject(editing.id, payload)
-      toast.success("Project updated")
-    } else {
-      await addProject(payload)
-      toast.success("Project created")
+    const foldersChanged =
+      agentFolders.join("\n") !== (editing?.agentFolders ?? []).join("\n")
+    try {
+      let projectId = editing?.id
+      if (editing) {
+        // Folders are only written when they change, so other edits work before migration 014.
+        await updateProject(editing.id, foldersChanged ? { ...payload, agentFolders } : payload)
+      } else {
+        projectId = (await addProject({ ...payload, agentFolders })).id
+      }
+      // A folder imports into one project only, so take it off any project that had it.
+      if (foldersChanged) {
+        for (const change of linkAgentFolders(data.projects.filter((p) => p.id !== projectId), projectId ?? null, agentFolders)) {
+          await updateProject(change.id, { agentFolders: change.agentFolders })
+        }
+      }
+      toast.success(editing ? "Project updated" : "Project created")
+      setDialogOpen(false)
+    } catch {
+      toast.error(foldersChanged ? "Couldn't save agent folders. Has migration 014 been applied?" : "Couldn't save the project")
     }
-    setDialogOpen(false)
   }
 
   async function handleDelete(project: Project) {
@@ -217,6 +288,11 @@ export default function ProjectsPage() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{project.name}</span>
                       </div>
+                      {!!project.agentFolders?.length && (
+                        <p className="mt-0.5 text-xs text-muted-foreground" title="Agent Time from these folders imports here">
+                          Agent folders: {project.agentFolders.join(", ")}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {client?.name ?? "—"}
@@ -363,6 +439,61 @@ export default function ProjectsPage() {
                   <SelectItem value="on-hold">On Hold</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="agent-folder">Agent folders</Label>
+              <p className="-mt-1 text-xs text-muted-foreground">
+                Agent time from these folders imports into this project. Names match in any case.
+              </p>
+              {form.agentFolders.length > 0 && (
+                <div className="flex flex-wrap gap-1.5" data-testid="agent-folders">
+                  {form.agentFolders.map((folder) => {
+                    const owner = folderOwners.get(agentFolderKey(folder))
+                    return (
+                      <span key={folder} className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/50 py-0.5 pl-2 pr-0.5 text-xs">
+                        <span className="truncate">{folder}</span>
+                        {owner && <span className="shrink-0 text-muted-foreground">· moves from {owner.name}</span>}
+                        <Button type="button" variant="ghost" size="icon-xs" className="size-5" aria-label={`Remove ${folder}`} onClick={() => removeFolder(folder)}>
+                          <X className="size-3" />
+                        </Button>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  id="agent-folder"
+                  value={folderQuery}
+                  onChange={(e) => setFolderQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      addFolder(folderQuery)
+                    }
+                  }}
+                  placeholder="Folder name"
+                  autoComplete="off"
+                />
+                <Button type="button" variant="outline" onClick={() => addFolder(folderQuery)} disabled={!folderQuery.trim()}>
+                  Add
+                </Button>
+              </div>
+              {folderSuggestions.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>{folderQuery.trim() ? "Matching folders:" : "Found in Agent Time:"}</span>
+                  {folderSuggestions.map((folder) => {
+                    const owner = folderOwners.get(agentFolderKey(folder))
+                    return (
+                      <Button key={folder} type="button" variant="outline" size="xs" className="font-normal" onClick={() => addFolder(folder)}>
+                        <Plus className="size-3" data-icon="inline-start" />
+                        {folder}
+                        {owner && <span className="text-muted-foreground">({owner.name})</span>}
+                      </Button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>
