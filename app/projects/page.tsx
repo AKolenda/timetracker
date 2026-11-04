@@ -50,8 +50,9 @@ import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatHours } from "@/lib/format"
+import { formatDistanceToNowStrict } from "date-fns"
 import { billedSeconds } from "@/lib/billing"
-import { agentFolderKey, dedupeAgentFolders, linkAgentFolders, suggestAgentFolders } from "@/lib/agent-import-projects"
+import { agentFolderKey, dedupeAgentFolders, linkAgentFolders, suggestAgentFolders, type AgentFolderActivity } from "@/lib/agent-import-projects"
 import type { Project } from "@/lib/types"
 
 const emptyForm = {
@@ -92,7 +93,7 @@ export default function ProjectsPage() {
   const [mergeSource, setMergeSource] = useState<Project | null>(null)
   const [mergeTargetId, setMergeTargetId] = useState("")
   const [folderQuery, setFolderQuery] = useState("")
-  const [detectedFolders, setDetectedFolders] = useState<string[] | null>(null)
+  const [detectedFolders, setDetectedFolders] = useState<AgentFolderActivity[] | null>(null)
 
   // Folder names come from Agent Time; they're only fetched once a project dialog opens.
   useEffect(() => {
@@ -100,8 +101,14 @@ export default function ProjectsPage() {
     let cancelled = false
     fetch(`/api/agent-time?foldersOnly=true${fixtureQuery()}`)
       .then((response) => (response.ok ? response.json() : { projects: [] }))
-      .then((body: { projects?: unknown }) => {
-        if (!cancelled) setDetectedFolders(Array.isArray(body.projects) ? body.projects.filter((p): p is string => typeof p === "string") : [])
+      .then((body: { folders?: unknown; projects?: unknown }) => {
+        if (cancelled) return
+        const folders = Array.isArray(body.folders)
+          ? body.folders.filter((f): f is AgentFolderActivity => typeof f?.name === "string")
+          : Array.isArray(body.projects)
+            ? body.projects.filter((p): p is string => typeof p === "string").map((name) => ({ name, lastActive: "", seconds: 0 }))
+            : []
+        setDetectedFolders(folders)
       })
       .catch(() => {
         if (!cancelled) setDetectedFolders([])
@@ -124,6 +131,7 @@ export default function ProjectsPage() {
     projectName: form.name,
     query: folderQuery,
     linked: form.agentFolders,
+    linkedElsewhere: new Set(folderOwners.keys()),
   })
 
   function addFolder(folder: string) {
@@ -479,20 +487,43 @@ export default function ProjectsPage() {
                   Add
                 </Button>
               </div>
-              {folderSuggestions.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <span>{folderQuery.trim() ? "Matching folders:" : "Found in Agent Time:"}</span>
-                  {folderSuggestions.map((folder) => {
-                    const owner = folderOwners.get(agentFolderKey(folder))
-                    return (
-                      <Button key={folder} type="button" variant="outline" size="xs" className="font-normal" onClick={() => addFolder(folder)}>
-                        <Plus className="size-3" data-icon="inline-start" />
-                        {folder}
-                        {owner && <span className="text-muted-foreground">({owner.name})</span>}
-                      </Button>
-                    )
-                  })}
+              {detectedFolders === null ? (
+                <p className="text-xs text-muted-foreground">Looking for folders in Agent Time…</p>
+              ) : folderSuggestions.length > 0 ? (
+                <div className="grid gap-1.5" data-testid="agent-folder-suggestions">
+                  <p className="text-xs text-muted-foreground">{folderQuery.trim() ? "Matching folders" : "Suggested folders"}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {folderSuggestions.map((folder) => {
+                      const owner = folderOwners.get(agentFolderKey(folder.name))
+                      const lastActive = folder.lastActive ? new Date(folder.lastActive) : null
+                      return (
+                        <Button
+                          key={folder.name}
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          className="h-auto max-w-full py-1 font-normal"
+                          title={lastActive ? `Last agent activity ${lastActive.toLocaleString()}` : "No agent activity recorded yet"}
+                          onClick={() => addFolder(folder.name)}
+                        >
+                          <Plus className="size-3 shrink-0" data-icon="inline-start" />
+                          <span className="truncate">{folder.name}</span>
+                          {folder.seconds > 0 && <span className="shrink-0 text-muted-foreground">· {formatHours(folder.seconds)}h</span>}
+                          {lastActive && !Number.isNaN(+lastActive) && (
+                            <span className="shrink-0 text-muted-foreground">· {formatDistanceToNowStrict(lastActive, { addSuffix: true })}</span>
+                          )}
+                          {owner && <span className="shrink-0 text-muted-foreground">· on {owner.name}</span>}
+                        </Button>
+                      )
+                    })}
+                  </div>
                 </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {folderQuery.trim()
+                    ? "No folder by that name in Agent Time yet. Add still links it, so its time imports once it shows up."
+                    : "No other folders in Agent Time. Type a name to link one before it shows up."}
+                </p>
               )}
             </div>
           </div>

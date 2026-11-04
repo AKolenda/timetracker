@@ -121,22 +121,83 @@ function looseName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
-/** Detected folders worth offering: ones matching what's typed, or else ones that look like the project's name. */
+export interface AgentFolderActivity {
+  name: string
+  /** ISO time of the folder's latest agent activity, or "" if none was seen. */
+  lastActive: string
+  seconds: number
+}
+
+/** Every folder Agent Time knows, most recently active first, with its total agent time. */
+export function summarizeAgentFolders(
+  names: Iterable<string>,
+  blocks: { project: string; end: string; durationSeconds: number }[]
+): AgentFolderActivity[] {
+  const folders = new Map<string, AgentFolderActivity>()
+  for (const name of names) folders.set(name, { name, lastActive: "", seconds: 0 })
+  for (const block of blocks) {
+    const folder = folders.get(block.project) ?? { name: block.project, lastActive: "", seconds: 0 }
+    folder.seconds += block.durationSeconds
+    if (block.end > folder.lastActive) folder.lastActive = block.end
+    folders.set(block.project, folder)
+  }
+  return [...folders.values()].sort((a, b) => b.lastActive.localeCompare(a.lastActive) || a.name.localeCompare(b.name))
+}
+
+/**
+ * Folders to offer for a project. While typing: folders containing the text, prefix matches first.
+ * Otherwise: folders that look like the project's name, then recently active folders no project has yet.
+ * Folders already on this project are never offered.
+ */
 export function suggestAgentFolders(
-  detected: Iterable<string>,
-  { projectName, query, linked }: { projectName: string; query: string; linked: string[] },
-  limit = 6
-) {
+  detected: AgentFolderActivity[],
+  { projectName, query, linked, linkedElsewhere }: {
+    projectName: string
+    query: string
+    linked: string[]
+    linkedElsewhere: Set<string>
+  },
+  limit = 8
+): AgentFolderActivity[] {
   const taken = new Set(linked.map(agentFolderKey))
+  const seen = new Set<string>()
+  const candidates = detected.filter((folder) => {
+    const key = agentFolderKey(folder.name)
+    if (!key || taken.has(key) || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
   const typed = agentFolderKey(query)
+  if (typed) {
+    const matches = candidates.filter((folder) => agentFolderKey(folder.name).includes(typed))
+    const prefix = matches.filter((folder) => agentFolderKey(folder.name).startsWith(typed))
+    return [...prefix, ...matches.filter((folder) => !prefix.includes(folder))].slice(0, limit)
+  }
   const name = looseName(projectName)
-  return dedupeAgentFolders(detected)
-    .filter((folder) => !taken.has(agentFolderKey(folder)))
-    .filter((folder) => {
-      if (typed) return agentFolderKey(folder).includes(typed)
-      const loose = looseName(folder)
-      return loose.length >= 3 && name.length >= 3 && (loose.includes(name) || name.includes(loose))
-    })
-    .sort((a, b) => a.localeCompare(b))
-    .slice(0, limit)
+  const nameWords = words(projectName)
+  const lookAlike = candidates.filter((folder) => {
+    const loose = looseName(folder.name)
+    return loose.length >= 3 && name.length >= 3 && (loose.includes(name) || name.includes(loose))
+  })
+  const sharesWord = candidates.filter(
+    (folder) => !lookAlike.includes(folder) && words(folder.name).some((word) => nameWords.includes(word))
+  )
+  const unclaimed = candidates.filter(
+    (folder) =>
+      !lookAlike.includes(folder) &&
+      !sharesWord.includes(folder) &&
+      !linkedElsewhere.has(agentFolderKey(folder.name)) &&
+      folder.seconds >= 15 * 60 &&
+      !isThrowawayFolder(folder.name)
+  )
+  return [...lookAlike, ...sharesWord, ...unclaimed].slice(0, limit)
+}
+
+function words(value: string) {
+  return value.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length >= 4)
+}
+
+/** Hidden folders, dated scratch folders and generated ids; still offered when typed. */
+function isThrowawayFolder(name: string) {
+  return /^\./.test(name) || /^\d{4}-\d{2}-\d{2}-/.test(name) || /-[0-9a-f]{8}$/i.test(name) || /^agent-[0-9a-f]{10,}$/i.test(name)
 }
