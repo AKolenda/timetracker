@@ -6,6 +6,7 @@ import { format } from "date-fns"
 import { ArrowLeft, ChevronDown, LoaderCircle, Search } from "lucide-react"
 import { toast } from "sonner"
 
+import { ChatMarkdown, plainTitle } from "@/components/chat-markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -73,7 +74,6 @@ function highlight(text: string, needle: string): ReactNode {
 function MessageRow({ message, placement, source, withDate, needle }: { message: TranscriptMessage; placement: MessagePlacement; source: ConversationSource; withDate: boolean; needle: string }) {
   const [expanded, setExpanded] = useState(false)
   const long = message.text.length > COLLAPSED_MESSAGE_CHARS && !needle
-  const text = long && !expanded ? `${message.text.slice(0, COLLAPSED_MESSAGE_CHARS).trimEnd()}…` : message.text
   const outside = placement === "before" || placement === "after"
   const user = message.role === "user"
   return <article className={`flex min-w-0 gap-3 py-3 ${outside ? "opacity-50" : ""}`} data-placement={placement}>
@@ -85,7 +85,10 @@ function MessageRow({ message, placement, source, withDate, needle }: { message:
         <span className="font-medium">{user ? "You" : source.agent || "Agent"}</span>
         <span className="text-xs text-muted-foreground tabular-nums">{message.at ? clock(message.at, withDate) : "No time"}{outside && ` · ${placement === "before" ? "before entry" : "after entry"}`}</span>
       </p>
-      <p className={`mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"}`}>{highlight(text, needle)}</p>
+      {needle
+        // While searching, show the raw text so every match can be marked.
+        ? <p className={`mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"}`}>{highlight(message.text, needle)}</p>
+        : <div className={`mt-1 min-w-0 break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"} ${long && !expanded ? "max-h-72 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}><ChatMarkdown text={message.text} /></div>}
       {long && <button type="button" className="mt-1 cursor-pointer rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setExpanded(!expanded)}>{expanded ? "Show less" : `Show full message · ${message.text.length.toLocaleString()} characters`}</button>}
     </div>
   </article>
@@ -156,7 +159,6 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
   const transcript = state?.key === key ? state.transcript : undefined
   const messages = useMemo(() => (transcript?.messages ?? []).map((message, index) => ({ index, message, placement: messagePlacement(message.at, entryStart, entryEnd) })), [transcript, entryStart, entryEnd])
   const timed = messages.some((item) => item.placement !== "unknown")
-  const insideCount = messages.filter((item) => item.placement === "inside").length
   const effectiveScope = timed ? scope : "all"
   const needle = query.trim().toLowerCase()
   const visible = messages.filter((item) => (effectiveScope === "all" || item.placement === "inside") && (!needle || item.message.text.toLowerCase().includes(needle)))
@@ -179,11 +181,7 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
       <div className="flex min-w-0 items-start gap-2">
         <Button type="button" variant="ghost" size="icon-xs" className="-ml-1.5 mt-px text-muted-foreground sm:hidden" aria-label="Back to chats" onClick={onBack}><ArrowLeft /></Button>
         <div className="min-w-0 flex-1">
-          <h3 className="text-base font-medium leading-snug break-words">{title}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {source.machineLabel || machineName(source)} · {sourceDescription(source)}{source.model ? ` · ${source.model}` : ""}
-            <span className="block sm:inline"><span className="hidden sm:inline"> · </span><span className="tabular-nums">{formatDuration(source.durationSeconds)}</span> in entry · {loading ? "reading…" : timed ? `${insideCount} of ${total} messages in entry` : "no message times"}</span>
-          </p>
+          <h3 className="text-base font-medium leading-snug break-words" title={`${source.machineLabel || machineName(source)} · ${sourceDescription(source)}${source.model ? ` · ${source.model}` : ""}`}>{plainTitle(title)}</h3>
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -235,15 +233,14 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
 
   return <>
     <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
-      <span className="min-w-0 flex-1 break-words">{description || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 break-words">{plainTitle(description || "") || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
     </button>
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="flex h-[min(90dvh,56rem)] w-[calc(100vw-1rem)] max-w-none flex-col gap-0 overflow-hidden rounded-md p-0 sm:w-[calc(100vw-4rem)] sm:max-w-6xl" data-testid="entry-chats-dropdown" onCloseAutoFocus={(event) => { event.preventDefault(); openerRef.current?.focus() }}>
         <DialogHeader className="shrink-0 border-b px-5 py-3 pr-12 text-left">
-          <DialogTitle className="truncate text-sm font-medium">{description || "Untitled"}</DialogTitle>
-          <DialogDescription className="text-xs tabular-nums">
-            {range} · {conversations.length} {conversations.length === 1 ? "chat" : "chats"} · {formatDuration(totalSeconds)} active
-            {inferred && <span className="block">Matched from activity logs; older entries did not save chat references.</span>}
+          <DialogTitle className="truncate text-sm font-medium" title={`${range} · ${conversations.length} ${conversations.length === 1 ? "chat" : "chats"} · ${formatDuration(totalSeconds)} active`}>{plainTitle(description || "") || "Untitled"}</DialogTitle>
+          <DialogDescription className={inferred ? "text-xs" : "sr-only"}>
+            {inferred ? "Matched from activity logs; older entries did not save chat references." : `${range} · ${conversations.length} ${conversations.length === 1 ? "chat" : "chats"} · ${formatDuration(totalSeconds)} active`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 flex-1">
@@ -259,13 +256,9 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
                 return <button key={conversationKey(source)} type="button" aria-current={active ? "true" : undefined} className={`flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent" : "hover:bg-accent/60"}`} onClick={() => { setSelectedKey(conversationKey(source)); setMobileView("chat") }}>
                   <SourceLogo source={source.agent} agent={source.agent} className="mt-0.5 size-4" />
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{source.conversationTitle || source.conversationSummary || "Untitled chat"}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatDuration(source.durationSeconds)}</span>
-                    </span>
-                    <span className="mt-0.5 flex items-baseline gap-2 text-xs text-muted-foreground">
-                      <span className="min-w-0 flex-1 truncate">{source.machineLabel} · {source.model || source.agent || source.source}</span>
-                      <span className="shrink-0 tabular-nums">{format(source.spans[0].start, "HH:mm")}–{format(source.spans.at(-1)!.end, "HH:mm")}{factor !== 1 && ` · ${formatBillFactor(factor)}`}</span>
+                    <span className="flex items-baseline gap-2" title={`${source.machineLabel} · ${source.model || source.agent || source.source} · ${format(source.spans[0].start, "HH:mm")}–${format(source.spans.at(-1)!.end, "HH:mm")} · ${formatDuration(source.durationSeconds)}`}>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{plainTitle(source.conversationTitle || source.conversationSummary || "") || "Untitled chat"}</span>
+                      {factor !== 1 && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatBillFactor(factor)}</span>}
                     </span>
                   </span>
                 </button>
