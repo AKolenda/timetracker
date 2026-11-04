@@ -65,6 +65,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { TrackerReviewDialog } from "@/components/tracker-review-dialog"
+import { DraftReviewDialog } from "@/components/draft-review-dialog"
 import { EntryChats, type ConversationSource } from "@/components/entry-chat-audit"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
@@ -839,6 +840,11 @@ export default function TrackerPage() {
     if (!await importDraftEntries([draftEntry(slice)])) return
   }
 
+  async function approveDrafts(slices: AgentImportSlice[]) {
+    if (!slices.length) return
+    await importDraftEntries(slices.map(draftEntry))
+  }
+
   async function approveAllDrafts() {
     if (!await importDraftEntries(agentImportPreview.slices.map(draftEntry))) return
   }
@@ -1077,20 +1083,28 @@ export default function TrackerPage() {
   }
 
   function ignoreAgentSlice(slice: AgentImportSlice) {
-    const ignoredRange: IgnoredAgentRange = {
+    skipDrafts([slice])
+  }
+
+  function skipDrafts(slices: AgentImportSlice[]) {
+    if (!slices.length) return
+    const ranges: IgnoredAgentRange[] = slices.map((slice) => ({
       id: `${slice.interval.project}:${slice.start}:${slice.end}`,
       agentProject: slice.interval.project,
       start: slice.start,
       end: slice.end,
-    }
+    }))
     setIgnoredAgentRanges((current) => {
-      if (current.some((range) => range.id === ignoredRange.id)) return current
-      const next = [...current, ignoredRange]
+      const added = ranges.filter((range) => !current.some((existing) => existing.id === range.id))
+      if (!added.length) return current
+      const next = [...current, ...added]
       persistIgnoredAgentRanges(next)
       return next
     })
-    toast("Skipped", {
-      description: `${format(new Date(slice.start), "MMM d, h:mm a")} – ${format(new Date(slice.end), "h:mm a")}`,
+    toast(slices.length === 1 ? "Skipped" : `Skipped ${slices.length} drafts`, {
+      description: slices.length === 1
+        ? `${format(new Date(slices[0].start), "MMM d, h:mm a")} – ${format(new Date(slices[0].end), "h:mm a")}`
+        : "Restore them from Import settings.",
     })
   }
 
@@ -1358,29 +1372,29 @@ export default function TrackerPage() {
           </div> }
         })}
       />
-      <TrackerReviewDialog open={draftsOpen} onOpenChange={setDraftsOpen} title={`Review drafts · ${agentImportPreview.slices.length}`} description="Approve or skip each agent draft. Approved drafts join your time log; skipped time can be restored in Import settings." emptyText="No drafts left to review."
-        actions={agentImportPreview.slices.length > 0 ? <Button size="sm" data-testid="review-approve-all" className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300" disabled={agentTimeLoading || importing} onClick={() => void approveAllDrafts()}><Check className="size-3.5" data-icon="inline-start" />Approve all · <span className="font-mono">{formatDuration(agentImportPreviewSeconds)}</span></Button> : undefined}
+      <DraftReviewDialog open={draftsOpen} onOpenChange={setDraftsOpen} busy={agentTimeLoading || importing} totalSeconds={agentImportPreviewSeconds}
+        onApprove={(ids) => void approveDrafts(agentImportPreview.slices.filter((slice) => ids.includes(slice.id)))}
+        onSkip={(ids) => skipDrafts(agentImportPreview.slices.filter((slice) => ids.includes(slice.id)))}
+        onEdit={(id) => { const slice = agentImportPreview.slices.find((s) => s.id === id); if (!slice) return; returnToDrafts.current = true; setDraftsOpen(false); openDraftEdit(slice) }}
+        onApproveAll={() => void approveAllDrafts()}
         items={[...agentImportPreview.slices].sort((a, b) => b.start - a.start).map((slice) => {
           const project = getProject(slice.projectId)
           const client = project ? getClient(project.clientId) : undefined
           const { description: draftTitle, machines: draftMachines, billFactor } = draftDetails.get(slice.id)!
           const amount = project ? (billedSeconds({ duration: slice.durationSeconds, billFactor }) / 3600) * project.rate : 0
-          const when = `${format(new Date(slice.start), "MMM d, h:mm a")} – ${format(new Date(slice.end), "h:mm a")}`
+          // Skip the client when it only repeats the project's name ("ASCEND · ASCEND").
+          const owner = client && client.name.trim().toLowerCase() !== project?.name.trim().toLowerCase() ? ` · ${client.name}` : ""
           return {
             id: slice.id,
-            searchText: [draftTitle, project?.name, client?.name, draftMachines, when, format(new Date(slice.start), "EEEE MMMM d yyyy")].join(" "),
-            content: <div data-testid="draft-review-row" className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-              <div className="min-w-0">
-                <div className="text-sm font-medium break-words"><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /></div>
-                <p className="mt-1 text-xs text-muted-foreground">{project?.name ?? "—"}{client ? ` · ${client.name}` : ""} · {draftMachines}</p>
-                <p className="mt-0.5 font-mono text-xs text-muted-foreground">{when} · <span className="text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</p>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="sm" data-testid="review-approve-draft" disabled={importing} className="text-amber-700 hover:bg-amber-500/15 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" data-icon="inline-start" />Approve</Button>
-                <Button variant="ghost" size="icon-sm" aria-label="Edit and approve" title="Edit and approve" onClick={() => { returnToDrafts.current = true; setDraftsOpen(false); openDraftEdit(slice) }}><Pencil className="size-3.5" /></Button>
-                <Button variant="ghost" size="sm" data-testid="review-skip-draft" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" data-icon="inline-start" />Skip</Button>
-              </div>
-            </div>,
+            start: slice.start,
+            end: slice.end,
+            durationSeconds: slice.durationSeconds,
+            title: draftTitle,
+            titleNode: <EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />,
+            meta: `${project?.name ?? "—"}${owner} · ${draftMachines}`,
+            amount: amount ? money(amount, project?.currency) : "",
+            billed: billFactor < 1 ? <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} /> : undefined,
+            searchText: [draftTitle, project?.name, client?.name, draftMachines, format(new Date(slice.start), "EEEE MMMM d yyyy h:mm a")].join(" "),
           }
         })}
       />
