@@ -1,7 +1,11 @@
 "use client"
 
+import { useState } from "react"
 import Markdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { Bell, ChevronDown, ClipboardPaste, File, Image as ImageIcon, Info, MessagesSquare, Paperclip, SquareTerminal } from "lucide-react"
+
+import { parseChatMessage, type ChatChip, type ChatChipKind } from "@/lib/chat-context"
 
 // Headings stay close to body size so agent replies full of "## Findings" read as text, not a document.
 const heading = "mt-3 mb-1 font-semibold text-foreground first:mt-0"
@@ -35,9 +39,47 @@ export function ChatMarkdown({ text }: { text: string }) {
   return <Markdown remarkPlugins={[remarkGfm]} components={components}>{text}</Markdown>
 }
 
+const CHIP_ICONS: Record<ChatChipKind, typeof File> = {
+  image: ImageIcon,
+  thread: MessagesSquare,
+  file: File,
+  pasted: ClipboardPaste,
+  command: SquareTerminal,
+  task: Bell,
+  note: Info,
+  other: Paperclip,
+}
+
+function Chip({ chip, open, onToggle }: { chip: ChatChip; open: boolean; onToggle: () => void }) {
+  const Icon = CHIP_ICONS[chip.kind]
+  const className = "inline-flex max-w-full items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+  const content = <><Icon className="size-3 shrink-0" /><span className="truncate">{chip.kind === "thread" ? `Thread · ${chip.label}` : chip.label}</span></>
+  if (!chip.detail) return <span className={className} data-testid="chat-chip" title={chip.label}>{content}</span>
+  return <button type="button" className={`${className} cursor-pointer hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring`} data-testid="chat-chip" aria-expanded={open} onClick={onToggle}>
+    {content}<ChevronDown className={`size-3 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+  </button>
+}
+
+/** A chat message: context, attachments and notices as chips, then the written text as markdown. */
+export function ChatMessageBody({ text }: { text: string }) {
+  const { body, chips } = parseChatMessage(text)
+  const [openChip, setOpenChip] = useState<number | null>(null)
+  const detail = openChip !== null ? chips[openChip]?.detail : undefined
+  return <>
+    {chips.length > 0 && <div className="mb-1.5 flex flex-wrap gap-1.5">
+      {chips.map((chip, index) => <Chip key={index} chip={chip} open={openChip === index} onToggle={() => setOpenChip(openChip === index ? null : index)} />)}
+    </div>}
+    {detail && <pre className="mb-2 max-h-64 overflow-auto rounded-md border bg-muted/50 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">{detail}</pre>}
+    {body && <ChatMarkdown text={body} />}
+  </>
+}
+
 /** A title without the markdown marks an agent sometimes starts its reply with ("## Findings" → "Findings"). */
 export function plainTitle(title: string) {
   return title
+    // "[Thread: Set Up New Neon Organization; ref=thread_…]" → "Set Up New Neon Organization"
+    .replace(/\[[A-Z][\w ]{0,20}: ([^;\]\n]+); ref=[^\]\s]+\]/g, "$1")
+    .replace(/<[a-z_-]+\b[^>]*>/gi, "")
     .replace(/^\s*(#{1,6}\s+|>\s+|[-*+]\s+)/, "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/__(.+?)__/g, "$1")
