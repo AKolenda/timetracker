@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       { role: "user", text: "Tighten the mobile import review so the timeline fits at 390px.", at: at(13, 41) },
       { role: "assistant", text: `Done. The lanes now wrap under the logos and the stats sit on one row.\n\n${"Checked each lane at 390px, 768px and 1280px; no horizontal overflow remains. ".repeat(24)}`, at: at(13, 49) },
       { role: "user", text: "Now check the Claude review notes and apply the ones about spacing.", at: at(14, 3) },
-      { role: "assistant", text: "Applied the spacing notes and left the colour suggestion for you to decide.", at: at(14, 11) },
+      { role: "assistant", text: "## Findings, most severe first\n\nApplied the spacing notes and left the colour suggestion for you to decide.\n\n| Note | Status | Where |\n|---|---|---|\n| Lane spacing | Applied | `review-timeline.tsx` |\n| Logo size | Applied | Header |\n| Accent colour | **Your call** | Theme |\n\n**Also changed:**\n- **Stats row:** stays on one line at 390px.\n- **Logos:** wrap under the lane instead of overflowing.\n  - Checked at 390px, 768px and 1280px.", at: at(14, 11) },
       { role: "user", text: "Run the full tracker suite and report anything flaky.", at: at(14, 20) },
       { role: "assistant", text: "All tracker tests pass. One screenshot test was slow but stable across three runs.", at: at(15, 30) },
       { role: "user", text: "Thanks — tomorrow, draft the PR description.", at: at(15, 52) },
