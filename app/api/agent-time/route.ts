@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl
-    if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && searchParams.get("fixture") === "demo") return NextResponse.json({ projects: [], intervals: [] })
+    if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && searchParams.get("fixture") === "demo") return NextResponse.json({ projects: ["customer-portal", "customer-portal-api", "analytics", "notes"], intervals: [] })
     if (
       process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
       searchParams.get("fixture") === "mobile"
@@ -129,6 +129,10 @@ export async function GET(request: NextRequest) {
       }
     )
 
+    // The Projects page only needs folder names, not every interval.
+    if (searchParams.get("foldersOnly") === "true") {
+      return NextResponse.json({ projects: data.projects }, { headers: { "Cache-Control": "no-store" } })
+    }
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
     })

@@ -7,7 +7,7 @@ export function demoFixture(): AppData {
   const date = (day: number) => new Date(now.getFullYear(), now.getMonth(), day, 12).toISOString().slice(0, 10)
   const today = now.getDate()
   const clients: AppData['clients'] = ['Northstar Studio', 'Harbor Labs', 'Summit Design'].map((name, i) => ({id:`demo-client-${i}`,name,email:`hello@${['northstar','harbor','summit'][i]}.example`,phone:'',address:'',color:['#6366f1','#14b8a6','#f59e0b'][i],invoiceEmail:'',invoiceScheduleWeeks:2,invoiceScheduleAnchor:null,invoiceScheduleEnabled:false,invoiceScheduleAutoSend:false,lastInvoiceSent:null,showSecondaryCurrency:i===0,createdAt:iso}))
-  const projects: AppData['projects'] = ['Customer Portal', 'Analytics Platform', 'Website Refresh'].map((name,i)=>({id:`demo-project-${i}`,clientId:clients[i].id,name,rate:[100,120,95][i],currency:'USD',status:'active',color:clients[i].color,createdAt:iso}))
+  const projects: AppData['projects'] = ['Customer Portal', 'Analytics Platform', 'Website Refresh'].map((name,i)=>({id:`demo-project-${i}`,clientId:clients[i].id,name,rate:[100,120,95][i],currency:'USD',status:'active',color:clients[i].color,agentFolders:i===0?['customer-portal']:[],createdAt:iso}))
   const titles = ['Improve search keyboard navigation','Refine the results preview','Resolve dashboard loading states','Review mobile account settings','Add export progress feedback','Simplify project navigation']
   const timeEntries: AppData['timeEntries'] = Array.from({length:36},(_,i)=>{
     const day=Math.max(1,today-Math.floor(i/3));const start=new Date(now.getFullYear(),now.getMonth(),day,10+(i%3),0,0); const end=new Date(+start+1800000);const project=projects[i%3];const host=i%2?'http://vm.example:8080/api/data':'http://workstation.example:8080/api/data'
