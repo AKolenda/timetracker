@@ -6,7 +6,7 @@ import { format } from "date-fns"
 import { ArrowLeft, ChevronDown, LoaderCircle, Search } from "lucide-react"
 import { toast } from "sonner"
 
-import { ChatMarkdown, plainTitle } from "@/components/chat-markdown"
+import { ChatMessageBody, plainTitle } from "@/components/chat-markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -88,7 +88,7 @@ function MessageRow({ message, placement, source, withDate, needle }: { message:
       {needle
         // While searching, show the raw text so every match can be marked.
         ? <p className={`mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"}`}>{highlight(message.text, needle)}</p>
-        : <div className={`mt-1 min-w-0 break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"} ${long && !expanded ? "max-h-72 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}><ChatMarkdown text={message.text} /></div>}
+        : <div className={`mt-1 min-w-0 break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"} ${long && !expanded ? "max-h-72 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}><ChatMessageBody text={message.text} /></div>}
       {long && <button type="button" className="mt-1 cursor-pointer rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setExpanded(!expanded)}>{expanded ? "Show less" : `Show full message · ${message.text.length.toLocaleString()} characters`}</button>}
     </div>
   </article>
