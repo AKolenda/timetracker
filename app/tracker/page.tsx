@@ -14,6 +14,7 @@ import {
   CalendarIcon,
   Plus,
   LoaderCircle,
+  ListChecks,
   ChevronsUpDown,
   Check,
   X,
@@ -456,6 +457,9 @@ export default function TrackerPage() {
   }, [highlightedEntry])
   const [reviewAgentOverlapsOpen, setReviewAgentOverlapsOpen] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
+  const [draftsOpen, setDraftsOpen] = useState(false)
+  // Editing a draft from the review list swaps to the edit dialog, then comes back to the list.
+  const returnToDrafts = useRef(false)
   const [importSettingsOpen, setImportSettingsOpen] = useState(false)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
   const requestedSummaries = useRef(new Set<string>())
@@ -982,6 +986,13 @@ export default function TrackerPage() {
     setEditOpen(false)
     setEditEntry(null)
     setEditDraft(null)
+    backToDrafts()
+  }
+
+  function backToDrafts() {
+    if (!returnToDrafts.current) return
+    returnToDrafts.current = false
+    setDraftsOpen(true)
   }
 
   async function confirmDelete() {
@@ -1184,6 +1195,10 @@ export default function TrackerPage() {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-sm font-medium">Time Log</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
+            {agentImportPreview.slices.length > 0 && <Button variant="outline" size="sm" data-testid="review-drafts" onClick={() => setDraftsOpen(true)}>
+              <ListChecks className="size-3.5" data-icon="inline-start" />
+              Review drafts
+            </Button>}
             {agentImportPreview.slices.length > 0 && <Button
               size="sm"
               data-testid="approve-all-drafts"
@@ -1343,6 +1358,32 @@ export default function TrackerPage() {
           </div> }
         })}
       />
+      <TrackerReviewDialog open={draftsOpen} onOpenChange={setDraftsOpen} title={`Review drafts · ${agentImportPreview.slices.length}`} description="Approve or skip each agent draft. Approved drafts join your time log; skipped time can be restored in Import settings." emptyText="No drafts left to review."
+        actions={agentImportPreview.slices.length > 0 ? <Button size="sm" data-testid="review-approve-all" className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300" disabled={agentTimeLoading || importing} onClick={() => void approveAllDrafts()}><Check className="size-3.5" data-icon="inline-start" />Approve all · <span className="font-mono">{formatDuration(agentImportPreviewSeconds)}</span></Button> : undefined}
+        items={[...agentImportPreview.slices].sort((a, b) => b.start - a.start).map((slice) => {
+          const project = getProject(slice.projectId)
+          const client = project ? getClient(project.clientId) : undefined
+          const { description: draftTitle, machines: draftMachines, billFactor } = draftDetails.get(slice.id)!
+          const amount = project ? (billedSeconds({ duration: slice.durationSeconds, billFactor }) / 3600) * project.rate : 0
+          const when = `${format(new Date(slice.start), "MMM d, h:mm a")} – ${format(new Date(slice.end), "h:mm a")}`
+          return {
+            id: slice.id,
+            searchText: [draftTitle, project?.name, client?.name, draftMachines, when, format(new Date(slice.start), "EEEE MMMM d yyyy")].join(" "),
+            content: <div data-testid="draft-review-row" className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+              <div className="min-w-0">
+                <div className="text-sm font-medium break-words"><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /></div>
+                <p className="mt-1 text-xs text-muted-foreground">{project?.name ?? "—"}{client ? ` · ${client.name}` : ""} · {draftMachines}</p>
+                <p className="mt-0.5 font-mono text-xs text-muted-foreground">{when} · <span className="text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" data-testid="review-approve-draft" disabled={importing} className="text-amber-700 hover:bg-amber-500/15 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" data-icon="inline-start" />Approve</Button>
+                <Button variant="ghost" size="icon-sm" aria-label="Edit and approve" title="Edit and approve" onClick={() => { returnToDrafts.current = true; setDraftsOpen(false); openDraftEdit(slice) }}><Pencil className="size-3.5" /></Button>
+                <Button variant="ghost" size="sm" data-testid="review-skip-draft" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" data-icon="inline-start" />Skip</Button>
+              </div>
+            </div>,
+          }
+        })}
+      />
       <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Import projects" description="Choose where each agent folder's time goes. It's saved on the project, so you can also change it on the Projects page. Personal folders stay out of imports." emptyText="No desktop projects to map."
         items={[...unmappedAgentProjects, ...handledAgentProjects].map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
@@ -1405,7 +1446,7 @@ export default function TrackerPage() {
       </Dialog>
 
       {/* Edit Entry Dialog */}
-      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) { setEditEntry(null); setEditDraft(null) } }}>
+      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) { setEditEntry(null); setEditDraft(null); backToDrafts() } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editDraft ? "Approve draft" : "Edit Time Entry"}</DialogTitle>
