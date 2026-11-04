@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getDataProvider } from "@/lib/db"
+import { summarizeAgentFolders } from "@/lib/agent-import-projects"
 import {
   fetchAgentTime,
   parseDateBoundary,
@@ -18,7 +19,19 @@ export const dynamic = "force-dynamic"
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl
-    if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && searchParams.get("fixture") === "demo") return NextResponse.json({ projects: ["customer-portal", "customer-portal-api", "analytics", "notes"], intervals: [] })
+    if (process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && searchParams.get("fixture") === "demo") {
+      const day = 86_400_000
+      const folders = ["customer-portal", "customer-portal-api", "analytics-dashboard", "harbor-labs-etl", "summit-site", "notes"]
+      return NextResponse.json({
+        projects: folders,
+        folders: summarizeAgentFolders(folders, folders.slice(0, 5).map((project, i) => ({
+          project,
+          end: new Date(Date.now() - i * day).toISOString(),
+          durationSeconds: (5 - i) * 5400,
+        }))),
+        intervals: [],
+      })
+    }
     if (
       process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
       searchParams.get("fixture") === "mobile"
@@ -131,7 +144,10 @@ export async function GET(request: NextRequest) {
 
     // The Projects page only needs folder names, not every interval.
     if (searchParams.get("foldersOnly") === "true") {
-      return NextResponse.json({ projects: data.projects }, { headers: { "Cache-Control": "no-store" } })
+      return NextResponse.json(
+        { projects: data.projects, folders: summarizeAgentFolders(data.projects, data.intervals) },
+        { headers: { "Cache-Control": "no-store" } }
+      )
     }
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
