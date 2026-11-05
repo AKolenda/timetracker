@@ -20,6 +20,7 @@ import type {
   TimeEntry,
 } from "./types"
 import { demoFixture } from "./demo-fixture"
+import { AppLoading } from "@/components/app-loading"
 import { defaultSettings } from "./types"
 import { getDataProvider } from "./db"
 import { localDateString } from "./datetime"
@@ -57,6 +58,8 @@ function mobileTestFixtureRequested() {
 interface StoreContext {
   data: AppData
   loading: boolean
+  /** Set when the database could not be read; the app shows a retry banner instead of silently empty data. */
+  loadError: string | null
 
   addClient: (client: Omit<Client, "id" | "createdAt">) => Promise<Client>
   updateClient: (id: string, updates: Partial<Client>) => Promise<void>
@@ -105,6 +108,7 @@ const Context = createContext<StoreContext | null>(null)
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<AppData>(defaultData)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const loadAll = useCallback(async () => {
     if (mobileTestFixtureRequested()) {
@@ -154,9 +158,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         settings,
         activeTimers,
       })
-    } catch {
-      // The app can still show its empty state while a database is unavailable.
-      setData(defaultData)
+      setLoadError(null)
+    } catch (error) {
+      // Keep whatever was already loaded and say so, rather than showing an empty app as if data were gone.
+      setLoadError(error instanceof Error ? error.message : "Unknown error")
     } finally {
       setLoading(false)
     }
@@ -552,7 +557,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   if (loading) {
-    return null
+    return <AppLoading />
   }
 
   return (
@@ -560,6 +565,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       value={{
         data,
         loading,
+        loadError,
         addClient,
         updateClient,
         deleteClient,

@@ -24,6 +24,11 @@
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
+    --color-warning: var(--warning);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-info: var(--info);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -72,6 +77,11 @@
     --accent: #eeeef1;
     --accent-foreground: #1b1b1f;
     --destructive: #d94a4a;
+    --success: #2f9e6a;
+    --success-foreground: #1d7a50;
+    --warning: #e2a03f;
+    --warning-foreground: #9a6212;
+    --info: #3f7fd9;
     --border: #e7e7ea;
     --input: #e2e2e6;
     --ring: #5e6ad2;
@@ -107,7 +117,12 @@
     --accent: #202125;
     --accent-foreground: #f7f8f8;
     --destructive: #eb5757;
-    --border: rgb(255 255 255 / 7%);
+    --success: #4cb782;
+    --success-foreground: #6fd3a0;
+    --warning: #f2b64a;
+    --warning-foreground: #f5c56f;
+    --info: #6b9ff0;
+    --border: rgb(255 255 255 / 9%);
     --input: rgb(255 255 255 / 10%);
     --ring: #7170ff;
     --chart-1: #7170ff;
@@ -145,5 +160,19 @@
   }
   input, select, textarea, button, [role="button"] {
     border-radius: var(--radius);
+  }
+  /* Numbers line up in columns everywhere; monospace is reserved for timers, IDs, and code. */
+  td, th, [data-slot="card-content"] {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Hide native number spinners but keep the field editable and focusable. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
   }
 }
