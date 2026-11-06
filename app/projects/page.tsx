@@ -85,7 +85,9 @@ export default function ProjectsPage() {
     getTimeEntriesByProject,
   } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
+  // The target outlives the open flag so the dialog keeps its text while it fades out.
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [editing, setEditing] = useState<Project | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [errors, setErrors] = useState<{ name?: string; clientId?: string }>({})
@@ -219,7 +221,7 @@ export default function ProjectsPage() {
     } catch {
       toast.error("Couldn't delete the project")
     }
-    setDeleteTarget(null)
+    setDeleteOpen(false)
   }
 
   const deleteCounts = (() => {
@@ -274,7 +276,7 @@ export default function ProjectsPage() {
             Merge into…
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => setDeleteTarget(project)}>
+          <DropdownMenuItem variant="destructive" onClick={() => { setDeleteTarget(project); setDeleteOpen(true) }}>
             <Trash2 className="size-4" />
             Delete
           </DropdownMenuItem>
@@ -286,8 +288,8 @@ export default function ProjectsPage() {
   return (
     <>
       <ConfirmDeleteDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
         title={`Delete ${deleteTarget?.name ?? "project"}?`}
         description={
           <>

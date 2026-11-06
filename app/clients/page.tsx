@@ -76,7 +76,9 @@ export default function ClientsPage() {
     getProjectsByClient,
   } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
+  // The target outlives the open flag so the dialog keeps its text while it fades out.
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [nameError, setNameError] = useState<string | null>(null)
@@ -212,7 +214,7 @@ export default function ClientsPage() {
     } catch {
       toast.error("Couldn't delete the client")
     }
-    setDeleteTarget(null)
+    setDeleteOpen(false)
   }
 
   const deleteCounts = (() => {
@@ -228,8 +230,8 @@ export default function ClientsPage() {
   return (
     <>
       <ConfirmDeleteDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
         title={`Delete ${deleteTarget?.name ?? "client"}?`}
         description={
           <>
@@ -358,7 +360,7 @@ export default function ClientsPage() {
                       Edit
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => setDeleteTarget(selectedClient)}
+                      onClick={() => { setDeleteTarget(selectedClient); setDeleteOpen(true) }}
                       className="text-destructive focus:text-destructive"
                     >
                       <Trash2 className="size-4" />
