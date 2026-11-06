@@ -70,7 +70,11 @@ function DialogContent({
           className
         )}
         onOpenAutoFocus={(event) => {
-          openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+          let opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+          // A menu item unmounts once its menu closes, so return focus to the button that opened the menu.
+          const menu = opener?.closest<HTMLElement>('[role="menu"]')
+          if (menu?.id) opener = document.querySelector<HTMLElement>(`[aria-controls="${CSS.escape(menu.id)}"]`) ?? opener
+          openerRef.current = opener
           onOpenAutoFocus?.(event)
         }}
         onCloseAutoFocus={(event) => {

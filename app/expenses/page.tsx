@@ -98,11 +98,30 @@ const categoryColors: Record<string, string> = {
   Other: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
 }
 
+type FormErrors = { projectId?: string; description?: string; amount?: string }
+
+const errorFieldIds: Record<keyof FormErrors, string> = {
+  projectId: "expense-project",
+  description: "expense-desc",
+  amount: "expense-amount",
+}
+
+/** Inline message under a field; its id is what the field's aria-describedby points at. */
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null
+  return (
+    <p id={id} className="text-xs text-destructive">
+      {message}
+    </p>
+  )
+}
+
 export default function ExpensesPage() {
   const { money } = useMoney()
   const { data, addExpense, updateExpense, deleteExpense, getProject, getClient } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
+  const [errors, setErrors] = useState<FormErrors>({})
   const [editTarget, setEditTarget] = useState<Expense | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null)
 
@@ -112,6 +131,7 @@ export default function ExpensesPage() {
       ...emptyForm,
       projectId: data.projects[0]?.id ?? "",
     })
+    setErrors({})
     setDialogOpen(true)
   }
 
@@ -125,6 +145,7 @@ export default function ExpensesPage() {
       date: parseISO(expense.date),
       notes: expense.notes,
     })
+    setErrors({})
     setDialogOpen(true)
   }
 
@@ -133,17 +154,16 @@ export default function ExpensesPage() {
   }
 
   async function handleSave() {
-    if (!form.projectId) {
-      toast.error("Select a project")
-      return
-    }
-    if (!form.description.trim()) {
-      toast.error("Description is required")
-      return
-    }
     const amount = parseFloat(form.amount)
-    if (!amount || amount <= 0) {
-      toast.error("Enter a valid amount")
+    const nextErrors: FormErrors = {
+      projectId: form.projectId ? undefined : "Choose a project",
+      description: form.description.trim() ? undefined : "Enter a description",
+      amount: !amount || amount <= 0 ? "Enter an amount greater than 0" : undefined,
+    }
+    const firstInvalid = (Object.keys(errorFieldIds) as (keyof FormErrors)[]).find((key) => nextErrors[key])
+    if (firstInvalid) {
+      setErrors(nextErrors)
+      document.getElementById(errorFieldIds[firstInvalid])?.focus()
       return
     }
     const values = {
@@ -178,9 +198,20 @@ export default function ExpensesPage() {
   const monthEntries = data.expenses.filter((e) => e.date.startsWith(thisMonth))
   const monthExpenses = monthEntries.reduce((s, e) => s + e.amount, 0)
 
+  function fieldErrorProps(field: keyof FormErrors) {
+    return {
+      "aria-invalid": !!errors[field] || undefined,
+      "aria-describedby": errors[field] ? `${errorFieldIds[field]}-error` : undefined,
+    }
+  }
+
+  function clearError(field: keyof FormErrors) {
+    setErrors((current) => (current[field] ? { ...current, [field]: undefined } : current))
+  }
+
   function invoiceLabel(expense: Expense) {
     const invoiceNumber = invoiceNumberFor(expense)
-    if (invoiceNumber) return <span className="font-mono text-xs">{invoiceNumber}</span>
+    if (invoiceNumber) return <span className="text-xs font-medium tabular-nums">{invoiceNumber}</span>
     if (expense.invoiced) return <span className="text-xs">Invoiced</span>
     return <span className="text-xs text-muted-foreground">Not invoiced</span>
   }
@@ -289,7 +320,7 @@ export default function ExpensesPage() {
         </Card>
       ) : (
         <Card className="py-0">
-          <ul className="divide-y sm:hidden" aria-label="Expenses">
+          <ul className="divide-y lg:hidden" aria-label="Expenses">
             {sortedExpenses.map((expense) => {
               const project = getProject(expense.projectId)
               return (
@@ -317,7 +348,7 @@ export default function ExpensesPage() {
               )
             })}
           </ul>
-          <div className="hidden sm:block">
+          <div className="hidden lg:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -380,9 +411,12 @@ export default function ExpensesPage() {
               <Label htmlFor="expense-project">Project</Label>
               <Select
                 value={form.projectId}
-                onValueChange={(v) => setForm({ ...form, projectId: v })}
+                onValueChange={(v) => {
+                  setForm({ ...form, projectId: v })
+                  clearError("projectId")
+                }}
               >
-                <SelectTrigger id="expense-project" className="w-full">
+                <SelectTrigger id="expense-project" className="w-full" {...fieldErrorProps("projectId")}>
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -397,20 +431,24 @@ export default function ExpensesPage() {
                   })}
                 </SelectContent>
               </Select>
+              <FieldError id="expense-project-error" message={errors.projectId} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="expense-desc">Description</Label>
               <Input
                 id="expense-desc"
                 value={form.description}
-                onChange={(e) =>
+                onChange={(e) => {
                   setForm({ ...form, description: e.target.value })
-                }
+                  clearError("description")
+                }}
                 placeholder="Domain renewal"
+                {...fieldErrorProps("description")}
               />
+              <FieldError id="expense-desc-error" message={errors.description} />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="expense-amount">Amount</Label>
                 <Input
                   id="expense-amount"
@@ -418,13 +456,16 @@ export default function ExpensesPage() {
                   min="0"
                   step="0.01"
                   value={form.amount}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setForm({ ...form, amount: e.target.value })
-                  }
+                    clearError("amount")
+                  }}
                   placeholder="0.00"
+                  {...fieldErrorProps("amount")}
                 />
+                <FieldError id="expense-amount-error" message={errors.amount} />
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="expense-category">Category</Label>
                 <Select
                   value={form.category}

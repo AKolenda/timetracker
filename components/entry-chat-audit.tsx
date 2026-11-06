@@ -232,7 +232,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
   const range = Number.isFinite(end) ? `${format(start, "MMM d, HH:mm")}–${format(end, new Date(start).toDateString() === new Date(end).toDateString() ? "HH:mm" : "MMM d, HH:mm")}` : `${format(start, "MMM d, HH:mm")}–now`
 
   return <>
-    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
+    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left max-lg:gap-1 focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
       <span className="min-w-0 flex-1 break-words">{plainTitle(description || "") || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
     </button>
     <Dialog open={open} onOpenChange={setOpen}>

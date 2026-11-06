@@ -86,6 +86,7 @@ export default function ProjectsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Project | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [errors, setErrors] = useState<{ name?: string; clientId?: string }>({})
   const [mergeSource, setMergeSource] = useState<Project | null>(null)
   const [mergeTargetId, setMergeTargetId] = useState("")
   const [folderQuery, setFolderQuery] = useState("")
@@ -147,6 +148,7 @@ export default function ProjectsPage() {
       clientId: data.clients[0]?.id ?? "",
     })
     setFolderQuery("")
+    setErrors({})
     setDialogOpen(true)
   }
 
@@ -161,16 +163,18 @@ export default function ProjectsPage() {
       agentFolders: project.agentFolders ?? [],
     })
     setFolderQuery("")
+    setErrors({})
     setDialogOpen(true)
   }
 
   async function handleSave() {
-    if (!form.name.trim()) {
-      toast.error("Project name is required")
-      return
+    const nextErrors = {
+      name: form.name.trim() ? undefined : "Enter a project name",
+      clientId: form.clientId ? undefined : "Choose a client",
     }
-    if (!form.clientId) {
-      toast.error("Please select a client")
+    if (nextErrors.name || nextErrors.clientId) {
+      setErrors(nextErrors)
+      document.getElementById(nextErrors.name ? "project-name" : "project-client")?.focus()
       return
     }
     // A folder typed but not yet added still counts.
@@ -314,7 +318,7 @@ export default function ProjectsPage() {
         </Card>
       ) : (
         <Card className="py-0">
-          <ul className="divide-y sm:hidden" aria-label="Projects">
+          <ul className="divide-y lg:hidden" aria-label="Projects">
             {projectRows.map(({ project, client, totalSecs, revenue }) => (
               <li key={project.id} className="flex items-start gap-3 px-4 py-3">
                 <div className="min-w-0 flex-1">
@@ -338,7 +342,7 @@ export default function ProjectsPage() {
               </li>
             ))}
           </ul>
-          <div className="hidden sm:block">
+          <div className="hidden lg:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -399,17 +403,35 @@ export default function ProjectsPage() {
               <Input
                 id="project-name"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value })
+                  setErrors((current) => ({ ...current, name: undefined }))
+                }}
                 placeholder="Website Redesign"
+                aria-invalid={!!errors.name || undefined}
+                aria-describedby={errors.name ? "project-name-error" : undefined}
               />
+              {errors.name && (
+                <p id="project-name-error" className="text-xs text-destructive">
+                  {errors.name}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="project-client">Client</Label>
               <Select
                 value={form.clientId}
-                onValueChange={(v) => setForm({ ...form, clientId: v })}
+                onValueChange={(v) => {
+                  setForm({ ...form, clientId: v })
+                  setErrors((current) => ({ ...current, clientId: undefined }))
+                }}
               >
-                <SelectTrigger id="project-client" className="w-full">
+                <SelectTrigger
+                  id="project-client"
+                  className="w-full"
+                  aria-invalid={!!errors.clientId || undefined}
+                  aria-describedby={errors.clientId ? "project-client-error" : undefined}
+                >
                   <SelectValue placeholder="Select client" />
                 </SelectTrigger>
                 <SelectContent>
@@ -420,6 +442,11 @@ export default function ProjectsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {errors.clientId && (
+                <p id="project-client-error" className="text-xs text-destructive">
+                  {errors.clientId}
+                </p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">

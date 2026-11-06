@@ -512,7 +512,7 @@ export default function CalendarPage() {
                               key={p.invoiceNumber}
                               className="flex items-center justify-between text-sm"
                             >
-                              <span className="font-mono text-xs">
+                              <span className="text-xs font-medium tabular-nums">
                                 {p.invoiceNumber}
                               </span>
                               <span className="text-xs font-medium tabular-nums text-info">
@@ -582,7 +582,7 @@ export default function CalendarPage() {
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-medium">
+                          <span className="text-xs font-medium tabular-nums">
                             {inv.invoiceNumber}
                           </span>
                           <InvoiceStatusBadge status={inv.status} />

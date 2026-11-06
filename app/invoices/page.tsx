@@ -122,6 +122,23 @@ function lockedSecondaryLabel(invoice: Invoice): string | null {
   return locked ? formatWithCode(locked.amount, locked.currency) : null
 }
 
+/** Inline message under a field; its id is what the field's aria-describedby points at. */
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null
+  return (
+    <p id={id} tabIndex={-1} className="text-xs text-destructive outline-none">
+      {message}
+    </p>
+  )
+}
+
+function invalidProps(id: string, message?: string) {
+  return {
+    "aria-invalid": !!message || undefined,
+    "aria-describedby": message ? `${id}-error` : undefined,
+  }
+}
+
 function StatusMenu({
   invoice,
   onChange,
@@ -272,7 +289,10 @@ export default function InvoicesPage() {
     new Set()
   )
 
+  const [createErrors, setCreateErrors] = useState<{ client?: string; items?: string; dueDays?: string }>({})
+
   // Edit form state
+  const [editDueError, setEditDueError] = useState<string | null>(null)
   const [editNotes, setEditNotes] = useState("")
   const [editDueDays, setEditDueDays] = useState("")
   const [editTax, setEditTax] = useState("")
@@ -336,6 +356,7 @@ export default function InvoicesPage() {
     setDueDays(String(defaultDueDays))
     setSelectedEntries(new Set())
     setSelectedExpenses(new Set())
+    setCreateErrors({})
     setCreateOpen(true)
   }
 
@@ -345,6 +366,7 @@ export default function InvoicesPage() {
       parseISO(invoice.issueDate)
     )
     setEditInvoice(invoice)
+    setEditDueError(null)
     setEditNotes(invoice.notes)
     setEditDueDays(String(Math.max(0, currentDueDays)))
     setEditTax(invoice.tax.toString())
@@ -403,7 +425,12 @@ export default function InvoicesPage() {
     return toFxLock(currency, await fetchQuote(INVOICE_CURRENCY, currency))
   }
 
+  function clearItemsError() {
+    setCreateErrors((current) => (current.items ? { ...current, items: undefined } : current))
+  }
+
   function toggleEntry(id: string) {
+    clearItemsError()
     setSelectedEntries((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -413,6 +440,7 @@ export default function InvoicesPage() {
   }
 
   function toggleExpense(id: string) {
+    clearItemsError()
     setSelectedExpenses((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -422,6 +450,7 @@ export default function InvoicesPage() {
   }
 
   function selectAllEntries() {
+    clearItemsError()
     if (selectedEntries.size === unbilledEntries.length) {
       setSelectedEntries(new Set())
     } else {
@@ -430,6 +459,7 @@ export default function InvoicesPage() {
   }
 
   function selectAllExpenses() {
+    clearItemsError()
     if (selectedExpenses.size === unbilledExpenses.length) {
       setSelectedExpenses(new Set())
     } else {
@@ -470,22 +500,35 @@ export default function InvoicesPage() {
   const total = subtotal + tax
 
   async function handleCreate() {
-    if (!selectedClientId) {
-      toast.error("Select a client")
-      return
+    const parsedDueDays = Number.parseInt(dueDays, 10)
+    const errors = {
+      client: selectedClientId ? undefined : "Choose a client",
+      items:
+        selectedClientId && lineItemsPreview.length === 0
+          ? "Select at least one time entry or expense"
+          : undefined,
+      dueDays:
+        !Number.isFinite(parsedDueDays) || parsedDueDays < 0
+          ? "Enter 0 or more days"
+          : undefined,
     }
-    if (lineItemsPreview.length === 0) {
-      toast.error("Select at least one time entry or expense")
+    if (errors.client || errors.items || errors.dueDays) {
+      setCreateErrors(errors)
+      // The items message renders with this state change, so look up the target a frame later.
+      requestAnimationFrame(() => {
+        const target = errors.client
+          ? document.getElementById("invoice-client")
+          : errors.items
+            ? (document.querySelector<HTMLElement>("#invoice-line-items button[role=checkbox]") ??
+              document.getElementById("invoice-items-error"))
+            : document.getElementById("due-days")
+        target?.focus()
+      })
       return
     }
 
     const invoiceNumber = `${data.settings.invoicePrefix}${data.settings.nextInvoiceNumber}`
     const today = format(new Date(), "yyyy-MM-dd")
-    const parsedDueDays = Number.parseInt(dueDays, 10)
-    if (!Number.isFinite(parsedDueDays) || parsedDueDays < 0) {
-      toast.error("Due days must be 0 or greater")
-      return
-    }
     const due = format(addDays(parseISO(today), parsedDueDays), "yyyy-MM-dd")
 
     await addInvoice(
@@ -520,7 +563,8 @@ export default function InvoicesPage() {
     if (!editInvoice) return
     const parsedDueDays = Number.parseInt(editDueDays, 10)
     if (!Number.isFinite(parsedDueDays) || parsedDueDays < 0) {
-      toast.error("Due days must be 0 or greater")
+      setEditDueError("Enter 0 or more days")
+      document.getElementById("edit-due")?.focus()
       return
     }
     const parsedTax = Number.parseFloat(editTax)
@@ -749,14 +793,14 @@ export default function InvoicesPage() {
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden overflow-hidden rounded-md border md:block">
+          <div className="hidden overflow-hidden rounded-md border lg:block">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Invoice</TableHead>
                   <TableHead>Client</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Due</TableHead>
+                  <TableHead className="hidden xl:table-cell">Due</TableHead>
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-20">
@@ -770,7 +814,7 @@ export default function InvoicesPage() {
                   const client = getClient(inv.clientId)
                   return (
                     <TableRow key={inv.id}>
-                      <TableCell className="font-mono text-sm font-medium">
+                      <TableCell className="text-sm font-medium tabular-nums">
                         {inv.invoiceNumber}
                       </TableCell>
                       <TableCell>
@@ -786,10 +830,21 @@ export default function InvoicesPage() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {format(new Date(inv.issueDate), "MMM d, yyyy")}
+                        {/* Below xl the Due column folds in here so the table fits beside the sidebar. */}
+                        <span
+                          className={cn(
+                            "block text-xs xl:hidden",
+                            isPastDue(inv) && "font-medium text-destructive"
+                          )}
+                        >
+                          {inv.dueDate === inv.issueDate
+                            ? "Due on receipt"
+                            : `Due ${invoiceDueLabel(inv)}`}
+                        </span>
                       </TableCell>
                       <TableCell
                         className={cn(
-                          "text-sm",
+                          "hidden text-sm xl:table-cell",
                           isPastDue(inv)
                             ? "font-medium text-destructive"
                             : "text-muted-foreground"
@@ -843,7 +898,7 @@ export default function InvoicesPage() {
           </div>
 
           {/* Mobile cards */}
-          <div className="space-y-3 md:hidden">
+          <div className="space-y-3 lg:hidden">
             {filteredEstimates.map((estimate) => <InvoiceEstimateRow key={estimate.id} estimate={estimate} onReview={() => setEstimateId(estimate.id)} mobile />)}
             {filteredInvoices.map((inv) => {
               const client = getClient(inv.clientId)
@@ -852,7 +907,7 @@ export default function InvoicesPage() {
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="font-mono text-sm font-semibold">
+                        <p className="text-sm font-medium tabular-nums">
                           {inv.invoiceNumber}
                         </p>
                         <div className="mt-1 flex items-center gap-2">
@@ -933,7 +988,7 @@ export default function InvoicesPage() {
           </DialogHeader>
           <div className="grid gap-6 py-4">
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="invoice-client">Client</Label>
                 <Select
                   value={selectedClientId}
@@ -941,9 +996,14 @@ export default function InvoicesPage() {
                     setSelectedClientId(v)
                     setSelectedEntries(new Set())
                     setSelectedExpenses(new Set())
+                    setCreateErrors((current) => ({ ...current, client: undefined, items: undefined }))
                   }}
                 >
-                  <SelectTrigger id="invoice-client" className="w-full">
+                  <SelectTrigger
+                    id="invoice-client"
+                    className="w-full"
+                    {...invalidProps("invoice-client", createErrors.client)}
+                  >
                     <SelectValue placeholder="Select client" />
                   </SelectTrigger>
                   <SelectContent>
@@ -954,8 +1014,9 @@ export default function InvoicesPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <FieldError id="invoice-client-error" message={createErrors.client} />
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="tax-rate">Tax %</Label>
                 <Input
                   id="tax-rate"
@@ -966,7 +1027,7 @@ export default function InvoicesPage() {
                   onChange={(e) => setTaxRate(e.target.value)}
                 />
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="due-days">
                   Due in (days)
                   {dueDays === "0" && (
@@ -980,10 +1041,15 @@ export default function InvoicesPage() {
                   type="number"
                   min="0"
                   value={dueDays}
-                  onChange={(e) => setDueDays(e.target.value)}
+                  onChange={(e) => {
+                    setDueDays(e.target.value)
+                    setCreateErrors((current) => ({ ...current, dueDays: undefined }))
+                  }}
+                  {...invalidProps("due-days", createErrors.dueDays)}
                 />
+                <FieldError id="due-days-error" message={createErrors.dueDays} />
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="invoice-number">Invoice #</Label>
                 <Input
                   id="invoice-number"
@@ -995,7 +1061,14 @@ export default function InvoicesPage() {
             </div>
 
             {selectedClientId && (
-              <div className="grid gap-6 lg:grid-cols-2">
+              <div className="grid gap-2">
+              <div
+                id="invoice-line-items"
+                role="group"
+                aria-label="Time entries and expenses to invoice"
+                aria-describedby={createErrors.items ? "invoice-items-error" : undefined}
+                className="grid gap-6 lg:grid-cols-2"
+              >
                 {/* Time Entries */}
                 <div>
                   <div className="mb-2 flex items-center justify-between">
@@ -1024,7 +1097,7 @@ export default function InvoicesPage() {
                       No billable time entries for this client
                     </div>
                   ) : (
-                    <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+                    <div className={cn("max-h-64 space-y-1 overflow-y-auto rounded-md border p-2", createErrors.items && "border-destructive")}>
                       {unbilledEntries.map((entry) => (
                         <label
                           key={entry.id}
@@ -1080,7 +1153,7 @@ export default function InvoicesPage() {
                       No uninvoiced expenses for this client
                     </div>
                   ) : (
-                    <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+                    <div className={cn("max-h-64 space-y-1 overflow-y-auto rounded-md border p-2", createErrors.items && "border-destructive")}>
                       {unbilledExpenses.map((expense) => (
                         <label
                           key={expense.id}
@@ -1101,6 +1174,8 @@ export default function InvoicesPage() {
                     </div>
                   )}
                 </div>
+              </div>
+              <FieldError id="invoice-items-error" message={createErrors.items} />
               </div>
             )}
 
@@ -1190,10 +1265,16 @@ export default function InvoicesPage() {
                     type="number"
                     min="0"
                     value={editDueDays}
-                    onChange={(e) => setEditDueDays(e.target.value)}
+                    onChange={(e) => {
+                      setEditDueDays(e.target.value)
+                      setEditDueError(null)
+                    }}
                     placeholder="30"
+                    aria-invalid={!!editDueError || undefined}
+                    aria-describedby={editDueError ? "edit-due-error edit-due-hint" : "edit-due-hint"}
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <FieldError id="edit-due-error" message={editDueError ?? undefined} />
+                  <p id="edit-due-hint" className="text-xs text-muted-foreground">
                     {editDueDays === "0"
                       ? "Due on receipt"
                       : "Use 0 for due on receipt"}

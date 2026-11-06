@@ -117,7 +117,7 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
 
-      <SidebarFooter className="gap-0.5 p-2">
+      <SidebarFooter className="gap-0.5 px-3 py-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild isActive={isActive(pathname, settingsItem.href)} className={itemClass}>

@@ -11,6 +11,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 const PAGE_SIZE = 15
 
+/** h:mm, with "<0:01" for drafts that are real but round down to nothing. */
+function entryClock(seconds: number) {
+  return seconds > 0 && seconds < 60 ? "<0:01" : formatClock(seconds)
+}
+
 export interface DraftReviewItem {
   id: string
   start: number
@@ -116,10 +121,10 @@ export function DraftReviewDialog({ open, onOpenChange, items, totalSeconds, bus
                 <div className="min-w-0" title={item.title}>
                   <div className="text-sm font-medium [&_[data-testid=entry-chat-menu]>span:first-child]:truncate">{item.titleNode}</div>
                   <p className="truncate text-xs text-muted-foreground">{item.meta}</p>
-                  <p className="text-xs text-muted-foreground tabular-nums sm:hidden">{when} · <span className="text-warning-foreground">{formatClock(item.durationSeconds)}</span>{item.amount ? ` · ${item.amount}` : ""}</p>
+                  <p className="text-xs text-muted-foreground tabular-nums sm:hidden">{when} · <span className="text-warning-foreground">{entryClock(item.durationSeconds)}</span>{item.amount ? ` · ${item.amount}` : ""}</p>
                 </div>
                 <span className="hidden text-xs whitespace-nowrap text-muted-foreground tabular-nums sm:block">{when}</span>
-                <span className="hidden text-right text-xs text-warning-foreground tabular-nums sm:block">{formatClock(item.durationSeconds)}{item.billed}</span>
+                <span className="hidden text-right text-xs text-warning-foreground tabular-nums sm:block">{entryClock(item.durationSeconds)}{item.billed}</span>
                 <span className="hidden text-right text-xs text-muted-foreground tabular-nums sm:block">{item.amount || "—"}</span>
                 <div className="flex items-center gap-0.5 sm:opacity-50 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
                   <Button variant="ghost" size="icon-xs" data-testid="review-approve-draft" disabled={busy} aria-label="Approve" title="Approve" className="text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground" onClick={() => act(onApprove, [item.id])}><Check className="size-3.5" /></Button>

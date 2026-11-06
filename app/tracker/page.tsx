@@ -385,13 +385,24 @@ function TodayTotal({
 
   return (
     <span data-testid="today-total" className="text-xs font-semibold tabular-nums text-foreground">
-      {formatDuration(completedSeconds + activeSeconds)}
+      {formatLiveTotal(completedSeconds + activeSeconds)}
     </span>
   )
 }
 
+/** Saved durations as h:mm, with "<0:01" for entries that are real but round down to nothing. */
+function entryClock(seconds: number) {
+  return seconds > 0 && seconds < 60 ? "<0:01" : formatClock(seconds)
+}
+
+/** A total that includes a live timer ticks, so it keeps seconds but drops the leading zero: 1:47:24. */
+function formatLiveTotal(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds))
+  return `${Math.floor(total / 3600)}:${String(Math.floor((total % 3600) / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`
+}
+
 function BilledTime({ seconds, factor, block = false }: { seconds: number; factor: number; block?: boolean }) {
-  return <span data-testid="billed-time" title={`Billed at ${formatBillFactor(factor)} of the tracked time`} className={`text-xs font-normal tabular-nums text-muted-foreground ${block ? "mt-0.5 block" : ""}`}>{block ? "" : " "}bill {formatClock(seconds)} · {formatBillFactor(factor)}</span>
+  return <span data-testid="billed-time" title={`Billed at ${formatBillFactor(factor)} of the tracked time`} className={`text-xs font-normal tabular-nums text-muted-foreground ${block ? "mt-0.5 block" : ""}`}>{block ? "" : " "}bill {entryClock(seconds)} · {formatBillFactor(factor)}</span>
 }
 
 /** One machine name, with the rest behind a "+N" popover that works by keyboard and touch. */
@@ -752,6 +763,8 @@ export default function TrackerPage() {
   const importedEntries = useRef<TimeEntry[]>([])
   const latestData = useRef(data)
   latestData.current = data
+  const latestStartTimer = useRef(startTimer)
+  latestStartTimer.current = startTimer
   useEffect(() => {
     const savedIds = new Set(data.timeEntries.map((entry) => entry.id))
     importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
@@ -791,7 +804,7 @@ export default function TrackerPage() {
           seconds += duration
         }
       }
-      if (seconds) toast.success(`Approved ${formatClock(seconds)}. Overlapping time excluded.`)
+      if (seconds) toast.success(`Approved ${entryClock(seconds)}. Overlapping time excluded.`)
       else toast.error("No time imported: this time is already tracked or reserved by an active timer.")
       return true
     } catch {
@@ -919,8 +932,22 @@ export default function TrackerPage() {
   }
 
   function handleDiscard(id: string) {
+    const timer = data.activeTimers.find((current) => current.id === id)
     clearTimer(id)
-    toast("Timer discarded")
+    if (!timer) return
+    toast("Timer discarded", {
+      description: timer.description || getProject(timer.projectId)?.name,
+      duration: 8000,
+      action: {
+        label: "Undo",
+        // The store's startTimer closes over the timers it rendered with, so use the latest one.
+        onClick: () => {
+          if (latestData.current.activeTimers.some((current) => current.id === timer.id)) return
+          latestStartTimer.current(timer)
+          toast.success("Timer restored")
+        },
+      },
+    })
   }
 
   function handleResume(entry: TimeEntry) {
@@ -1148,10 +1175,12 @@ export default function TrackerPage() {
     const client = getClient(project.clientId)
     return `${client?.name ? `${client.name} — ` : ""}${project.name}`
   })()
-  // On phones the row actions sit beside the title, so the second line can use the full width.
-  const rowTitleClass = "max-sm:flex max-sm:min-h-9 max-sm:items-center max-sm:pr-28"
-  const rowActionsClass = "max-sm:absolute max-sm:top-2 max-sm:right-2 max-sm:p-0"
-  // Utilities that open dialogs: outline buttons from sm up, one labelled menu on phones.
+  // On stacked rows (below lg) the row actions sit beside the title, so the second line can use the full width.
+  // The title stops 8px short of the actions so its chat chevron isn't a near-miss for Resume.
+  const rowTitleClass = "max-lg:flex max-lg:min-h-9 max-lg:items-center max-lg:pr-29"
+  const rowActionsClass = "max-lg:absolute max-lg:top-2 max-lg:right-2 max-lg:p-0 max-lg:pointer-fine:top-3.5"
+  const rowActionGroupClass = "flex items-center justify-end gap-0.5 max-lg:gap-0"
+  // Utilities that open dialogs: outline buttons from lg up, one labelled menu on phones and tablets.
   const reviewTools = [
     { id: "review-saved-overlaps", label: "Saved conflicts", icon: TriangleAlert, count: overlapIds.size, open: () => setReviewEntryOverlapsOpen(true) },
     { id: "review-agent-overlaps", label: "Excluded time", icon: EyeOff, count: 0, open: () => setReviewAgentOverlapsOpen(true) },
@@ -1173,14 +1202,14 @@ export default function TrackerPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_260px_auto] sm:items-center">
+              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center lg:grid-cols-[minmax(0,1fr)_220px_auto] xl:grid-cols-[minmax(0,1fr)_260px_auto]">
                 <Input
                   data-testid="timer-description"
                   aria-label="What are you working on?"
                   placeholder="What are you working on?"
                   value={timerDesc}
                   onChange={(e) => setTimerDesc(e.target.value)}
-                  className="h-10 min-w-0 w-full"
+                  className="h-10 min-w-0 w-full sm:col-span-2 lg:col-span-1"
                 />
                 <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
                   <PopoverTrigger asChild>
@@ -1270,7 +1299,7 @@ export default function TrackerPage() {
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="sm:hidden" data-testid="review-tools-menu">
+                <Button variant="outline" size="sm" className="lg:hidden" data-testid="review-tools-menu">
                   Review{overlapIds.size > 0 && <span className="rounded-md bg-destructive/10 px-1.5 text-xs tabular-nums text-destructive">{overlapIds.size}</span>}
                   <ChevronDown className="size-3.5" data-icon="inline-end" />
                 </Button>
@@ -1286,7 +1315,7 @@ export default function TrackerPage() {
           </div>
         </CardHeader>
         <CardContent className="pb-4">
-          <div data-testid="agent-time-controls" className="mb-3 hidden min-w-0 flex-wrap items-center gap-2 sm:flex">
+          <div data-testid="agent-time-controls" className="mb-3 hidden min-w-0 flex-wrap items-center gap-2 lg:flex">
             {reviewTools.map((tool) => <Button key={tool.id} type="button" variant="outline" size="sm" data-testid={tool.id} aria-haspopup="dialog" onClick={tool.open}>
               <tool.icon className="size-3.5 text-muted-foreground" data-icon="inline-start" />
               {tool.label}
@@ -1303,13 +1332,13 @@ export default function TrackerPage() {
           ) : (
             <div className="overflow-hidden rounded-lg border max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table>
-            <TableHeader className="hidden sm:table-header-group">
+            <TableHeader className="hidden lg:table-header-group">
               <TableRow>
                 <TableHead>Description</TableHead>
-                <TableHead className="w-[20%]">Project</TableHead>
-                <TableHead className="w-40">Time</TableHead>
-                <TableHead className="w-24 text-right">Duration</TableHead>
-                <TableHead className="w-24 text-right">Amount</TableHead>
+                <TableHead className="w-[18%] xl:w-[20%]">Project</TableHead>
+                <TableHead className="w-36 xl:w-40">Time</TableHead>
+                <TableHead className="w-20 text-right xl:w-24">Duration</TableHead>
+                <TableHead className="w-20 text-right xl:w-24">Amount</TableHead>
                 <TableHead className="w-px"><span className="sr-only">Actions</span></TableHead>
               </TableRow>
             </TableHeader>
@@ -1328,21 +1357,21 @@ export default function TrackerPage() {
                   const range = timeRange(slice.start, slice.end)
                   return <Fragment key={slice.id}>
                     {dayHeader}
-                    <TableRow data-testid="agent-draft-row" className="bg-warning/[0.07] hover:bg-warning/[0.12] max-sm:relative">
+                    <TableRow data-testid="agent-draft-row" className="bg-warning/[0.07] hover:bg-warning/[0.12] max-lg:relative">
                       <TableCell className="font-medium whitespace-normal break-words">
                         <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /></div>
-                        {draftMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground sm:block"><MachineList names={draftMachines} /></p>}
-                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground sm:hidden">
+                        {draftMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={draftMachines} /></p>}
+                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
                           <p className="line-clamp-2 break-words">{project?.name ?? "—"}{draftMachines.length > 0 && <> · <MachineList names={draftMachines} /></>}</p>
                           <div className="flex flex-wrap items-center gap-x-2"><span className="tabular-nums">{range}</span>
-                          <span className="ml-auto tabular-nums"><span className="text-warning-foreground">{formatClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                          <span className="ml-auto tabular-nums"><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                         </div>
                       </TableCell>
-                      <TableCell className="hidden whitespace-normal sm:table-cell"><span className="line-clamp-2 text-xs text-muted-foreground" title={project?.name}>{project?.name ?? "—"}</span></TableCell>
-                      <TableCell className="hidden text-xs tabular-nums sm:table-cell">{range}</TableCell>
-                      <TableCell className="hidden text-right text-xs tabular-nums text-warning-foreground sm:table-cell">{formatClock(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
-                      <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground sm:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                      <TableCell className={rowActionsClass}><div className="flex items-center justify-end gap-0.5">
+                      <TableCell className="hidden whitespace-normal lg:table-cell"><span className="line-clamp-2 text-xs text-muted-foreground" title={project?.name}>{project?.name ?? "—"}</span></TableCell>
+                      <TableCell className="hidden text-xs tabular-nums lg:table-cell">{range}</TableCell>
+                      <TableCell className="hidden text-right text-xs tabular-nums text-warning-foreground lg:table-cell">{entryClock(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
+                      <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
+                      <TableCell className={rowActionsClass}><div className={rowActionGroupClass}>
                         <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
@@ -1361,27 +1390,27 @@ export default function TrackerPage() {
                 const overlapMarker = overlaps && <span role="img" aria-label="Overlaps other time" title="Overlaps other time. Review it in Saved conflicts." className="inline-flex shrink-0 text-destructive"><TriangleAlert className="size-3.5" aria-hidden="true" /></span>
                 return <Fragment key={entry.id}>
                   {dayHeader}
-                  <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} data-overlap={overlaps || undefined} aria-label={entry.description || "Untitled time entry"} className={`max-sm:relative ${highlightedEntry === entry.id ? "bg-warning/15 outline-2 -outline-offset-2 outline-warning" : ""}`}>
+                  <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} data-overlap={overlaps || undefined} aria-label={entry.description || "Untitled time entry"} className={`max-lg:relative ${highlightedEntry === entry.id ? "bg-warning/15 outline-2 -outline-offset-2 outline-warning" : ""}`}>
                   <TableCell className={`font-medium whitespace-normal break-words ${overlaps ? "shadow-[inset_2px_0_0_var(--destructive)]" : ""}`}>
                     <div className={rowTitleClass}><EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} /></div>
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
                     {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block cursor-pointer rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
-                    {entryMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground sm:block"><MachineList names={entryMachines} /></p>}
-                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground sm:hidden">
+                    {entryMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={entryMachines} /></p>}
+                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
                       <p className="line-clamp-2 break-words">{project?.name ?? "—"}{entryMachines.length > 0 && <> · <MachineList names={entryMachines} /></>}</p>
-                      <div className="flex flex-wrap items-center gap-x-2"><span className="inline-flex items-center gap-1">{overlapMarker}<span className="tabular-nums">{range}</span></span>
-                      <span className="ml-auto tabular-nums"><span className="text-foreground">{formatClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                      <div className="flex flex-wrap items-center gap-x-2"><span className="inline-flex items-center gap-1"><span className="tabular-nums">{range}</span>{overlapMarker}</span>
+                      <span className="ml-auto tabular-nums"><span className="text-foreground">{entryClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                     </div>
                   </TableCell>
-                  <TableCell className="hidden whitespace-normal sm:table-cell">
+                  <TableCell className="hidden whitespace-normal lg:table-cell">
                     <button type="button" className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md text-left text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default" disabled={!project} aria-label={project ? `Edit project ${project.name}` : "Unknown project"} title={project ? `Edit ${project.name}` : undefined} onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
                       <span className="line-clamp-2">{project?.name ?? "—"}</span>{project && <Pencil className="size-3 shrink-0 opacity-60" aria-hidden="true" />}
                     </button>
                   </TableCell>
-                  <TableCell className="hidden text-xs tabular-nums sm:table-cell"><span className="inline-flex items-center gap-1.5">{overlapMarker}{range}</span></TableCell>
-                  <TableCell className="hidden text-right text-xs tabular-nums sm:table-cell">{formatClock(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
-                  <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground sm:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                  <TableCell className={rowActionsClass}><div className="flex items-center justify-end gap-0.5">
+                  <TableCell className="hidden text-xs tabular-nums lg:table-cell"><span className="inline-flex items-center gap-1.5">{range}{overlapMarker}</span></TableCell>
+                  <TableCell className="hidden text-right text-xs tabular-nums lg:table-cell">{entryClock(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
+                  <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
+                  <TableCell className={rowActionsClass}><div className={rowActionGroupClass}>
                     <Button variant="ghost" size="icon-xs" aria-label="Resume timer" title="Resume timer" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>
                     <Button variant="ghost" size="icon-xs" aria-label="Edit entry" title="Edit entry" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
                     <Button variant="ghost" size="icon-xs" aria-label="Delete entry" title="Delete entry" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
@@ -1432,7 +1461,7 @@ export default function TrackerPage() {
           const client = getClient(project?.clientId ?? "")
           const timeLabel = `${format(new Date(overlap.start), "EEE, MMM d, yyyy")} · ${timeRange(overlap.start, overlap.end)}`
           return { id: overlap.key, searchText: `${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="agent-overlap-item" className="flex min-w-0 items-start gap-2">
-            <div className="min-w-0 flex-1"><p className="break-words font-medium">{project?.name ?? "Unknown project"}</p><p className="text-xs text-muted-foreground">{client?.name}</p><p className="mt-1 text-xs tabular-nums text-muted-foreground">{timeLabel}</p><p className="mt-1 text-xs tabular-nums">{formatClock(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
+            <div className="min-w-0 flex-1"><p className="break-words font-medium">{project?.name ?? "Unknown project"}</p><p className="text-xs text-muted-foreground">{client?.name}</p><p className="mt-1 text-xs tabular-nums text-muted-foreground">{timeLabel}</p><p className="mt-1 text-xs tabular-nums">{entryClock(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
             <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed agent overlap" onClick={() => saveOverlapReviews("agent", [...reviewedAgentOverlaps, overlap.key])}><X className="size-4" /></Button>
           </div> }
         })}
@@ -1665,7 +1694,7 @@ export default function TrackerPage() {
                 Calculated duration:{" "}
               </span>
               <span className="text-sm font-medium tabular-nums">
-                {editDuration > 0 ? formatClock(editDuration) : "—"}
+                {editDuration > 0 ? entryClock(editDuration) : "—"}
               </span>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1704,7 +1733,7 @@ export default function TrackerPage() {
             <AlertDialogDescription>
               This will permanently delete &ldquo;
               {deleteTarget?.description || "Untitled"}&rdquo; (
-              {deleteTarget ? formatClock(deleteTarget.duration) : ""}). This
+              {deleteTarget ? entryClock(deleteTarget.duration) : ""}). This
               action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

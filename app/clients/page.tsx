@@ -77,6 +77,7 @@ export default function ClientsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [nameError, setNameError] = useState<string | null>(null)
   const secondaryCurrency = data.settings.secondaryRemittance?.currency || null
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
@@ -121,7 +122,7 @@ export default function ClientsPage() {
         className="flex items-center justify-between gap-3 border-b py-3 last:border-0"
       >
         <div className="min-w-0">
-          <p className="text-sm font-medium break-words">
+          <p className="text-sm font-medium break-words tabular-nums">
             {invoice.invoiceNumber}
           </p>
           <p className="text-xs text-muted-foreground tabular-nums">
@@ -144,6 +145,7 @@ export default function ClientsPage() {
       ...emptyForm,
       color: CLIENT_COLORS[Math.floor(Math.random() * CLIENT_COLORS.length)],
     })
+    setNameError(null)
     setDialogOpen(true)
   }
 
@@ -162,12 +164,14 @@ export default function ClientsPage() {
       invoiceScheduleAutoSend: client.invoiceScheduleAutoSend ?? true,
       showSecondaryCurrency: client.showSecondaryCurrency ?? false,
     })
+    setNameError(null)
     setDialogOpen(true)
   }
 
   async function handleSave() {
     if (!form.name.trim()) {
-      toast.error("Client name is required")
+      setNameError("Enter a client name")
+      document.getElementById("name")?.focus()
       return
     }
     const payload = {
@@ -461,9 +465,19 @@ export default function ClientsPage() {
               <Input
                 id="name"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value })
+                  setNameError(null)
+                }}
                 placeholder="Acme Corporation"
+                aria-invalid={!!nameError || undefined}
+                aria-describedby={nameError ? "name-error" : undefined}
               />
+              {nameError && (
+                <p id="name-error" className="text-xs text-destructive">
+                  {nameError}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="email">Email</Label>
