@@ -76,12 +76,12 @@
     --muted-foreground: #6b6f76;
     --accent: #eeeef1;
     --accent-foreground: #1b1b1f;
-    --destructive: #d94a4a;
+    --destructive: #c23434;
     --success: #2f9e6a;
     --success-foreground: #1d7a50;
     --warning: #e2a03f;
-    --warning-foreground: #9a6212;
-    --info: #3f7fd9;
+    --warning-foreground: #8a5710;
+    --info: #2a62b8;
     --border: #e7e7ea;
     --input: #e2e2e6;
     --ring: #5e6ad2;

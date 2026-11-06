@@ -1332,9 +1332,10 @@ export default function TrackerPage() {
                       <TableCell className="font-medium whitespace-normal break-words">
                         <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /></div>
                         {draftMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground sm:block"><MachineList names={draftMachines} /></p>}
-                        <div className="mt-0.5 flex w-0 min-w-full items-center gap-2 text-xs font-normal text-muted-foreground sm:hidden">
-                          <span className="flex min-w-0 items-baseline gap-1"><span className="shrink-0 tabular-nums">{range}</span><span className="truncate">· {project?.name ?? "—"}</span></span>
-                          <span className="ml-auto shrink-0 tabular-nums"><span className="text-warning-foreground">{formatClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span>
+                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground sm:hidden">
+                          <p className="line-clamp-2 break-words">{project?.name ?? "—"}{draftMachines.length > 0 && <> · <MachineList names={draftMachines} /></>}</p>
+                          <div className="flex flex-wrap items-center gap-x-2"><span className="tabular-nums">{range}</span>
+                          <span className="ml-auto tabular-nums"><span className="text-warning-foreground">{formatClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                         </div>
                       </TableCell>
                       <TableCell className="hidden whitespace-normal sm:table-cell"><span className="line-clamp-2 text-xs text-muted-foreground" title={project?.name}>{project?.name ?? "—"}</span></TableCell>
@@ -1366,9 +1367,10 @@ export default function TrackerPage() {
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
                     {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block cursor-pointer rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
                     {entryMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground sm:block"><MachineList names={entryMachines} /></p>}
-                    <div className="mt-0.5 flex w-0 min-w-full items-center gap-2 text-xs font-normal text-muted-foreground sm:hidden">
-                      <span className="flex min-w-0 items-center gap-1">{overlapMarker}<span className="shrink-0 tabular-nums">{range}</span><span className="truncate">· {project?.name ?? "—"}</span></span>
-                      <span className="ml-auto shrink-0 tabular-nums"><span className="text-foreground">{formatClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span>
+                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground sm:hidden">
+                      <p className="line-clamp-2 break-words">{project?.name ?? "—"}{entryMachines.length > 0 && <> · <MachineList names={entryMachines} /></>}</p>
+                      <div className="flex flex-wrap items-center gap-x-2"><span className="inline-flex items-center gap-1">{overlapMarker}<span className="tabular-nums">{range}</span></span>
+                      <span className="ml-auto tabular-nums"><span className="text-foreground">{formatClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                     </div>
                   </TableCell>
                   <TableCell className="hidden whitespace-normal sm:table-cell">
