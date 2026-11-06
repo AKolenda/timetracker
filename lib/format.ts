@@ -1,8 +1,24 @@
+import { format } from "date-fns"
+
 export function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
   const s = seconds % 60
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
+}
+
+/** Saved durations as h:mm (0:30, 1:48); seconds are only for live timers. */
+export function formatClock(seconds: number): string {
+  const minutes = Math.round(Math.max(0, seconds) / 60)
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`
+}
+
+/** "12:00 – 12:30 PM", keeping AM/PM once when both ends share it; adds the end date when a range crosses midnight. */
+export function formatTimeRange(start: Date | number | string, end: Date | number | string): string {
+  const from = new Date(start)
+  const to = new Date(end)
+  if (format(from, "yyyy-MM-dd") !== format(to, "yyyy-MM-dd")) return `${format(from, "h:mm a")} – ${format(to, "MMM d, h:mm a")}`
+  return `${format(from, format(from, "a") === format(to, "a") ? "h:mm" : "h:mm a")} – ${format(to, "h:mm a")}`
 }
 
 export function formatHours(seconds: number): string {

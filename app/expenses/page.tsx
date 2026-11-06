@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import Link from "next/link"
 import {
   Plus,
   Pencil,
@@ -12,7 +13,7 @@ import { toast } from "sonner"
 import { format, parseISO } from "date-fns"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -57,6 +58,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { PageHeader } from "@/components/page-header"
+import { StatCard, StatGrid } from "@/components/stat-card"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatCurrency } from "@/lib/format"
@@ -173,9 +175,51 @@ export default function ExpensesPage() {
 
   const totalExpenses = data.expenses.reduce((s, e) => s + e.amount, 0)
   const thisMonth = new Date().toISOString().slice(0, 7)
-  const monthExpenses = data.expenses
-    .filter((e) => e.date.startsWith(thisMonth))
-    .reduce((s, e) => s + e.amount, 0)
+  const monthEntries = data.expenses.filter((e) => e.date.startsWith(thisMonth))
+  const monthExpenses = monthEntries.reduce((s, e) => s + e.amount, 0)
+
+  function invoiceLabel(expense: Expense) {
+    const invoiceNumber = invoiceNumberFor(expense)
+    if (invoiceNumber) return <span className="font-mono text-xs">{invoiceNumber}</span>
+    if (expense.invoiced) return <span className="text-xs">Invoiced</span>
+    return <span className="text-xs text-muted-foreground">Not invoiced</span>
+  }
+
+  function rowActions(expense: Expense) {
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => openEdit(expense)}
+          aria-label={`Edit ${expense.description}`}
+          title="Edit"
+        >
+          <Pencil className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => setDeleteTarget(expense)}
+          aria-label={`Delete ${expense.description}`}
+          title="Delete"
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
+    )
+  }
+
+  function categoryBadge(expense: Expense) {
+    return (
+      <Badge
+        variant="secondary"
+        className={categoryColors[expense.category] ?? categoryColors.Other}
+      >
+        {expense.category}
+      </Badge>
+    )
+  }
 
   return (
     <>
@@ -193,56 +237,43 @@ export default function ExpensesPage() {
         }
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Expenses
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {money(totalExpenses)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              This Month
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {money(monthExpenses)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Entries
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {data.expenses.length}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <StatGrid className="mb-6">
+        <StatCard
+          label="Total expenses"
+          value={money(totalExpenses)}
+          hint={`${data.expenses.length} ${data.expenses.length === 1 ? "entry" : "entries"}`}
+        />
+        <StatCard
+          label="This month"
+          value={money(monthExpenses)}
+          hint={`${monthEntries.length} ${monthEntries.length === 1 ? "entry" : "entries"}`}
+        />
+      </StatGrid>
 
       {data.projects.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <p className="text-sm text-muted-foreground">
-              Create a client and project first
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+              <Receipt className="size-5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-medium">
+              {data.clients.length === 0 ? "Add a client and project first" : "Add a project first"}
             </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Every expense belongs to a project.
+            </p>
+            <Button size="sm" variant="outline" className="mt-4" asChild>
+              {data.clients.length === 0 ? (
+                <Link href="/clients">Go to Clients</Link>
+              ) : (
+                <Link href="/projects">Go to Projects</Link>
+              )}
+            </Button>
           </CardContent>
         </Card>
       ) : sortedExpenses.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
               <Receipt className="size-5 text-muted-foreground" />
             </div>
@@ -257,89 +288,79 @@ export default function ExpensesPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Description</TableHead>
-                <TableHead>Project</TableHead>
-                <TableHead>Invoice</TableHead>
-                <TableHead>Invoiced</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="w-16" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedExpenses.map((expense) => {
-                const project = getProject(expense.projectId)
-                return (
-                  <TableRow key={expense.id}>
-                    <TableCell>
-                      <div>
+        <Card className="py-0">
+          <ul className="divide-y sm:hidden" aria-label="Expenses">
+            {sortedExpenses.map((expense) => {
+              const project = getProject(expense.projectId)
+              return (
+                <li key={expense.id} className="px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium break-words">{expense.description}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">
+                        {format(parseISO(expense.date), "MMM d, yyyy")} · {project?.name ?? "No project"}
+                      </p>
+                    </div>
+                    <p className="shrink-0 font-medium tabular-nums">{money(expense.amount)}</p>
+                  </div>
+                  {expense.notes && (
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{expense.notes}</p>
+                  )}
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      {categoryBadge(expense)}
+                      {invoiceLabel(expense)}
+                    </div>
+                    <div className="-mr-1.5 shrink-0">{rowActions(expense)}</div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          <div className="hidden sm:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Description</TableHead>
+                  <TableHead>Project</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="w-20 pr-4"><span className="sr-only">Actions</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedExpenses.map((expense) => {
+                  const project = getProject(expense.projectId)
+                  return (
+                    <TableRow key={expense.id}>
+                      <TableCell className="pl-4 whitespace-normal">
                         <span className="font-medium">{expense.description}</span>
                         {expense.notes && (
-                          <p className="mt-0.5 text-xs text-muted-foreground">
+                          <p className="mt-0.5 line-clamp-2 max-w-sm text-xs text-muted-foreground">
                             {expense.notes}
                           </p>
                         )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">{project?.name ?? "—"}</span>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {invoiceNumberFor(expense) ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className={expense.invoiced ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" : ""}>
-                        {expense.invoiced ? "Yes" : "No"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="secondary"
-                        className={
-                          categoryColors[expense.category] ?? categoryColors.Other
-                        }
-                      >
-                        {expense.category}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(parseISO(expense.date), "MMM d, yyyy")}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs font-medium">
-                      {money(expense.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => openEdit(expense)}
-                          aria-label={`Edit ${expense.description}`}
-                          title="Edit"
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => setDeleteTarget(expense)}
-                          aria-label={`Delete ${expense.description}`}
-                          title="Delete"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {project?.name ?? "—"}
+                      </TableCell>
+                      <TableCell>{categoryBadge(expense)}</TableCell>
+                      <TableCell>{invoiceLabel(expense)}</TableCell>
+                      <TableCell className="text-muted-foreground tabular-nums">
+                        {format(parseISO(expense.date), "MMM d, yyyy")}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {money(expense.amount)}
+                      </TableCell>
+                      <TableCell className="pr-4">{rowActions(expense)}</TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </Card>
       )}
 
@@ -348,7 +369,7 @@ export default function ExpensesPage() {
           <DialogHeader>
             <DialogTitle>{editTarget ? "Edit Expense" : "New Expense"}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-2">
             {editTarget && invoiceNumberFor(editTarget) && (
               <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
                 This expense is on {invoiceNumberFor(editTarget)}. Saving
@@ -356,12 +377,12 @@ export default function ExpensesPage() {
               </p>
             )}
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label htmlFor="expense-project">Project</Label>
               <Select
                 value={form.projectId}
                 onValueChange={(v) => setForm({ ...form, projectId: v })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="expense-project" className="w-full">
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -404,12 +425,12 @@ export default function ExpensesPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Category</Label>
+                <Label htmlFor="expense-category">Category</Label>
                 <Select
                   value={form.category}
                   onValueChange={(v) => setForm({ ...form, category: v })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="expense-category" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -423,10 +444,11 @@ export default function ExpensesPage() {
               </div>
             </div>
             <div className="grid gap-2">
-              <Label>Date</Label>
+              <Label htmlFor="expense-date">Date</Label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
+                    id="expense-date"
                     variant="outline"
                     className={cn(
                       "justify-start text-left font-normal",
@@ -466,7 +488,7 @@ export default function ExpensesPage() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="sticky -bottom-4 bg-popover">
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
