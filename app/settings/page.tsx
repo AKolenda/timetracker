@@ -56,6 +56,11 @@ import {
   type Settings,
 } from "@/lib/types"
 import { getBrowserTimezone, listTimezones } from "@/lib/datetime"
+import {
+  parseWeekendSendRule,
+  WEEKEND_SEND_RULE_LABELS,
+  type WeekendSendRule,
+} from "@/lib/invoice-schedule"
 
 const CURRENCIES = [
   { value: "USD", label: "USD — United States Dollar" },
@@ -82,6 +87,7 @@ function generalFields(s: Settings) {
     nextInvoiceNumber: s.nextInvoiceNumber,
     timezone: s.timezone,
     defaultInvoiceDueDays: s.defaultInvoiceDueDays,
+    invoiceWeekendRule: s.invoiceWeekendRule,
     displayCurrency: s.displayCurrency === "none" ? "" : s.displayCurrency,
     agentTimeHosts: s.agentTimeHosts || [],
     agentTimeMaxMinutes: s.agentTimeMaxMinutes || null,
@@ -530,6 +536,31 @@ export default function SettingsPage() {
               <p className="text-xs text-muted-foreground">
                 Default due-date offset when creating a new invoice. 0 days
                 means due on receipt.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="weekend-rule">Scheduled emails on a weekend</Label>
+              <Select
+                value={form.invoiceWeekendRule}
+                onValueChange={(v) =>
+                  setForm({ ...form, invoiceWeekendRule: parseWeekendSendRule(v) })
+                }
+              >
+                <SelectTrigger id="weekend-rule" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(WEEKEND_SEND_RULE_LABELS) as WeekendSendRule[]).map((rule) => (
+                    <SelectItem key={rule} value={rule}>
+                      {WEEKEND_SEND_RULE_LABELS[rule]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                When a client&apos;s automatic invoice email would go out on a
+                Saturday or Sunday. Later emails keep the same gap from the day
+                it actually went out.
               </p>
             </div>
             <div className="grid gap-2">

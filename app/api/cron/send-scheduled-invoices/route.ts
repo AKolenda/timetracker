@@ -12,6 +12,12 @@ import {
   toFxLock,
   type FxLock,
 } from "@/lib/invoice-currency"
+import {
+  isScheduledSendDue,
+  nextScheduledSend,
+  parseWeekendSendRule,
+  type InvoiceSchedule,
+} from "@/lib/invoice-schedule"
 
 const ONE_DAY = 86_400_000
 
@@ -25,20 +31,12 @@ function addDaysIso(iso: string, days: number): string {
     .slice(0, 10)
 }
 
-function isDue(
-  anchor: string | null,
-  weeks: number | null,
-  lastSent: string | null,
-  now: Date
-): boolean {
-  if (!weeks || weeks <= 0) return false
-  const intervalMs = weeks * 7 * ONE_DAY
-
-  if (lastSent) {
-    return now.getTime() - new Date(lastSent).getTime() >= intervalMs
+function scheduleOf(client: Record<string, unknown>): InvoiceSchedule {
+  return {
+    weeks: client.invoice_schedule_weeks as number | null,
+    anchor: client.invoice_schedule_anchor as string | null,
+    lastSent: client.last_invoice_sent as string | null,
   }
-  if (!anchor) return false
-  return now.getTime() >= new Date(anchor).getTime()
 }
 
 export async function POST(request: Request) {
@@ -74,6 +72,8 @@ export async function POST(request: Request) {
   }
 
   const businessName = settings?.business_name || "TimeTracker"
+  const weekendRule = parseWeekendSendRule(settings?.invoice_weekend_rule)
+  const timezone = (settings?.timezone as string | undefined) || undefined
   const secondaryAccount = parseSecondaryRemittance(settings?.secondary_remittance)
   const fromAddress =
     settings?.email_from_address || settings?.business_email || "invoices@resend.dev"
@@ -87,14 +87,7 @@ export async function POST(request: Request) {
   }> = []
 
   for (const client of clients ?? []) {
-    if (
-      !isDue(
-        client.invoice_schedule_anchor as string | null,
-        client.invoice_schedule_weeks as number | null,
-        client.last_invoice_sent as string | null,
-        now
-      )
-    ) {
+    if (!isScheduledSendDue(scheduleOf(client), weekendRule, now, timezone)) {
       results.push({
         clientId: client.id,
         clientName: client.name,
@@ -388,6 +381,14 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
+  const { data: settings } = await supabase
+    .from("settings")
+    .select("timezone, invoice_weekend_rule")
+    .eq("id", "default")
+    .single()
+  const weekendRule = parseWeekendSendRule(settings?.invoice_weekend_rule)
+  const timezone = (settings?.timezone as string | undefined) || undefined
+
   const { data: clients } = await supabase
     .from("clients")
     .select("id, name, invoice_schedule_weeks, invoice_schedule_anchor, invoice_schedule_enabled, invoice_schedule_auto_send, last_invoice_sent")
@@ -395,28 +396,17 @@ export async function GET() {
 
   const now = new Date()
   const upcoming = (clients ?? []).map((c) => {
-    const weeks = c.invoice_schedule_weeks as number | null
-    const anchor = c.invoice_schedule_anchor as string | null
-    const lastSent = c.last_invoice_sent as string | null
-    let nextRun: string | null = null
-    if (weeks && weeks > 0) {
-      if (lastSent) {
-        nextRun = new Date(
-          new Date(lastSent).getTime() + weeks * 7 * ONE_DAY
-        ).toISOString()
-      } else if (anchor) {
-        nextRun = new Date(anchor).toISOString()
-      }
-    }
+    const schedule = scheduleOf(c)
+    const nextRun = nextScheduledSend(schedule, weekendRule, timezone)
     return {
       clientId: c.id,
       clientName: c.name,
-      weeks,
-      anchor,
+      weeks: schedule.weeks,
+      anchor: schedule.anchor,
       autoSend: c.invoice_schedule_auto_send,
-      lastSent,
+      lastSent: schedule.lastSent,
       nextRun,
-      due: nextRun ? now.getTime() >= new Date(nextRun).getTime() : false,
+      due: isScheduledSendDue(schedule, weekendRule, now, timezone),
     }
   })
 

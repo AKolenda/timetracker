@@ -28,6 +28,7 @@ import { useMoney } from "@/lib/display-currency"
 import { formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
 import { cn } from "@/lib/utils"
+import { scheduledSendsUntil } from "@/lib/invoice-schedule"
 
 interface DayData {
   earnings: number
@@ -126,37 +127,36 @@ export default function CalendarPage() {
 
     const horizonStart = startOfWeek(startOfMonth(currentMonth))
     const horizonEnd = endOfWeek(endOfMonth(addMonths(currentMonth, 6)))
-    const ONE_DAY = 86_400_000
+    const horizonStartKey = format(horizonStart, "yyyy-MM-dd")
+    const horizonEndKey = format(horizonEnd, "yyyy-MM-dd")
+    const { invoiceWeekendRule, timezone } = data.settings
     for (const client of data.clients) {
-      if (!client.invoiceScheduleEnabled || !client.invoiceScheduleWeeks) continue
-      const weeks = client.invoiceScheduleWeeks
-      let next: Date | null = null
-      if (client.lastInvoiceSent) {
-        next = new Date(
-          new Date(client.lastInvoiceSent).getTime() + weeks * 7 * ONE_DAY
-        )
-      } else if (client.invoiceScheduleAnchor) {
-        next = new Date(client.invoiceScheduleAnchor)
-      }
-      if (!next) continue
-      while (next <= horizonEnd) {
-        if (next >= horizonStart) {
-          const key = format(next, "yyyy-MM-dd")
-          const existing = map.get(key) ?? emptyDay()
-          existing.scheduledSends.push({
-            clientId: client.id,
-            clientName: client.name,
-            color: client.color,
-            autoSend: client.invoiceScheduleAutoSend,
-          })
-          map.set(key, existing)
-        }
-        next = new Date(next.getTime() + weeks * 7 * ONE_DAY)
+      if (!client.invoiceScheduleEnabled) continue
+      const sends = scheduledSendsUntil(
+        {
+          weeks: client.invoiceScheduleWeeks,
+          anchor: client.invoiceScheduleAnchor,
+          lastSent: client.lastInvoiceSent,
+        },
+        invoiceWeekendRule,
+        horizonEndKey,
+        timezone
+      )
+      for (const key of sends) {
+        if (key < horizonStartKey) continue
+        const existing = map.get(key) ?? emptyDay()
+        existing.scheduledSends.push({
+          clientId: client.id,
+          clientName: client.name,
+          color: client.color,
+          autoSend: client.invoiceScheduleAutoSend,
+        })
+        map.set(key, existing)
       }
     }
 
     return map
-  }, [data.timeEntries, data.expenses, data.invoices, data.clients, getProject, currentMonth])
+  }, [data.timeEntries, data.expenses, data.invoices, data.clients, data.settings, getProject, currentMonth])
 
   const monthTotals = useMemo(() => {
     const monthStart = startOfMonth(currentMonth)
