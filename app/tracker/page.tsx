@@ -385,7 +385,7 @@ function TodayTotal({
 
   return (
     <span data-testid="today-total" className="text-xs font-semibold tabular-nums text-foreground">
-      {formatLiveTotal(completedSeconds + activeSeconds)}
+      {activeTimers.some((timer) => !timer.pausedAt) ? formatLiveTotal(completedSeconds + activeSeconds) : entryClock(completedSeconds + activeSeconds)}
     </span>
   )
 }

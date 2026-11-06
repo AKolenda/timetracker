@@ -47,6 +47,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
 import { PageHeader } from "@/components/page-header"
 import { ProjectStatusBadge, projectStatusLabels } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
@@ -84,6 +85,7 @@ export default function ProjectsPage() {
     getTimeEntriesByProject,
   } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
   const [editing, setEditing] = useState<Project | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [errors, setErrors] = useState<{ name?: string; clientId?: string }>({})
@@ -211,9 +213,21 @@ export default function ProjectsPage() {
   }
 
   async function handleDelete(project: Project) {
-    await deleteProject(project.id)
-    toast.success("Project deleted")
+    try {
+      await deleteProject(project.id)
+      toast.success("Project deleted")
+    } catch {
+      toast.error("Couldn't delete the project")
+    }
+    setDeleteTarget(null)
   }
+
+  const deleteCounts = (() => {
+    if (!deleteTarget) return null
+    const entries = data.timeEntries.filter((t) => t.projectId === deleteTarget.id).length
+    const expenses = data.expenses.filter((e) => e.projectId === deleteTarget.id).length
+    return { entries, expenses }
+  })()
 
   async function handleMerge() {
     if (!mergeSource || !mergeTargetId) return
@@ -260,7 +274,7 @@ export default function ProjectsPage() {
             Merge into…
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => handleDelete(project)}>
+          <DropdownMenuItem variant="destructive" onClick={() => setDeleteTarget(project)}>
             <Trash2 className="size-4" />
             Delete
           </DropdownMenuItem>
@@ -271,6 +285,20 @@ export default function ProjectsPage() {
 
   return (
     <>
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.name ?? "project"}?`}
+        description={
+          <>
+            This also deletes its {deleteCounts?.entries ?? 0} time {deleteCounts?.entries === 1 ? "entry" : "entries"} and{" "}
+            {deleteCounts?.expenses ?? 0} {deleteCounts?.expenses === 1 ? "expense" : "expenses"}. This can&apos;t be undone. To keep the
+            history, set the project to Completed instead.
+          </>
+        }
+        confirmLabel="Delete project"
+        onConfirm={() => (deleteTarget ? handleDelete(deleteTarget) : undefined)}
+      />
       <PageHeader
         title="Projects"
         actions={

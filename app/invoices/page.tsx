@@ -153,7 +153,7 @@ function StatusMenu({
           type="button"
           aria-label={`Change status for ${invoice.invoiceNumber}`}
           className={cn(
-            "inline-flex h-6 items-center gap-1.5 rounded-md pr-1.5 pl-2 text-xs font-medium whitespace-nowrap transition-colors hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+            "inline-flex h-6 pointer-coarse:h-9 items-center gap-1.5 rounded-md pr-1.5 pl-2 text-xs font-medium whitespace-nowrap transition-colors hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
             invoiceStatusStyles[invoice.status]
           )}
         >

@@ -30,6 +30,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
 import { PageHeader } from "@/components/page-header"
 import { InvoiceStatusBadge } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
@@ -75,6 +76,7 @@ export default function ClientsPage() {
     getProjectsByClient,
   } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Client | null>(null)
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [nameError, setNameError] = useState<string | null>(null)
@@ -204,12 +206,41 @@ export default function ClientsPage() {
   }
 
   async function handleDelete(client: Client) {
-    await deleteClient(client.id)
-    toast.success("Client deleted")
+    try {
+      await deleteClient(client.id)
+      toast.success("Client deleted")
+    } catch {
+      toast.error("Couldn't delete the client")
+    }
+    setDeleteTarget(null)
   }
+
+  const deleteCounts = (() => {
+    if (!deleteTarget) return null
+    const projectIds = new Set(data.projects.filter((p) => p.clientId === deleteTarget.id).map((p) => p.id))
+    return {
+      projects: projectIds.size,
+      entries: data.timeEntries.filter((t) => projectIds.has(t.projectId)).length,
+      expenses: data.expenses.filter((e) => projectIds.has(e.projectId)).length,
+    }
+  })()
 
   return (
     <>
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.name ?? "client"}?`}
+        description={
+          <>
+            This also deletes {deleteCounts?.projects ?? 0} {deleteCounts?.projects === 1 ? "project" : "projects"},{" "}
+            {deleteCounts?.entries ?? 0} time {deleteCounts?.entries === 1 ? "entry" : "entries"} and {deleteCounts?.expenses ?? 0}{" "}
+            {deleteCounts?.expenses === 1 ? "expense" : "expenses"}. This can&apos;t be undone.
+          </>
+        }
+        confirmLabel="Delete client"
+        onConfirm={() => (deleteTarget ? handleDelete(deleteTarget) : undefined)}
+      />
       <PageHeader
         title="Clients"
         actions={
@@ -327,7 +358,7 @@ export default function ClientsPage() {
                       Edit
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => handleDelete(selectedClient)}
+                      onClick={() => setDeleteTarget(selectedClient)}
                       className="text-destructive focus:text-destructive"
                     >
                       <Trash2 className="size-4" />

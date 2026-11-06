@@ -4,6 +4,7 @@ import * as React from "react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { useReturnFocus } from "@/components/ui/use-return-focus"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
@@ -57,9 +58,7 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
-  // Most dialogs here open from a plain button rather than a DialogTrigger, so Radix has nothing to
-  // return focus to; remember what had focus on each opening, before focus moves in, and go back to it.
-  const openerRef = React.useRef<HTMLElement | null>(null)
+  const returnFocus = useReturnFocus(onOpenAutoFocus, onCloseAutoFocus)
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -69,22 +68,7 @@ function DialogContent({
           "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] overflow-y-auto overscroll-contain -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg bg-popover p-4 text-sm text-popover-foreground shadow-2xl ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
-        onOpenAutoFocus={(event) => {
-          let opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-          // A menu item unmounts once its menu closes, so return focus to the button that opened the menu.
-          const menu = opener?.closest<HTMLElement>('[role="menu"]')
-          if (menu?.id) opener = document.querySelector<HTMLElement>(`[aria-controls="${CSS.escape(menu.id)}"]`) ?? opener
-          openerRef.current = opener
-          onOpenAutoFocus?.(event)
-        }}
-        onCloseAutoFocus={(event) => {
-          onCloseAutoFocus?.(event)
-          const opener = openerRef.current
-          openerRef.current = null
-          if (event.defaultPrevented || !opener || opener === document.body || !opener.isConnected) return
-          event.preventDefault()
-          opener.focus()
-        }}
+        {...returnFocus}
         {...props}
       >
         {children}
