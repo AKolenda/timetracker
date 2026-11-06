@@ -1,7 +1,10 @@
 "use client"
 
 import { useState } from "react"
+import { format } from "date-fns"
 import { formatDate } from "@/lib/format"
+import { parseLocalDate } from "@/lib/datetime"
+import { nextScheduledSend } from "@/lib/invoice-schedule"
 import {
   Plus,
   MoreHorizontal,
@@ -91,6 +94,17 @@ export default function ClientsPage() {
   const selectedClient =
     data.clients.find((client) => client.id === selectedClientId) ??
     data.clients[0]
+  const selectedNextSend = selectedClient?.invoiceScheduleEnabled
+    ? nextScheduledSend(
+        {
+          weeks: selectedClient.invoiceScheduleWeeks,
+          anchor: selectedClient.invoiceScheduleAnchor,
+          lastSent: selectedClient.lastInvoiceSent,
+        },
+        data.settings.invoiceWeekendRule,
+        data.settings.timezone
+      )
+    : null
   const issuedInvoices = data.invoices.filter(
     (invoice) => invoice.status !== "draft"
   )
@@ -397,6 +411,8 @@ export default function ClientsPage() {
                   <span className="inline-flex rounded-md bg-success/10 px-2 py-1 text-success-foreground">
                     Auto-invoice every {selectedClient.invoiceScheduleWeeks}w
                     {!selectedClient.invoiceScheduleAutoSend && " (draft only)"}
+                    {selectedNextSend &&
+                      ` · next ${format(parseLocalDate(selectedNextSend), "EEE, MMM d")}`}
                   </span>
                 ) : (
                   <p>Manual invoicing</p>
@@ -613,6 +629,10 @@ export default function ClientsPage() {
                       />
                     </div>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    After the first email, each one counts from the day the last
+                    one went out. Weekend sends follow Settings → Invoicing.
+                  </p>
                   <div className="flex items-start gap-3">
                     <Checkbox
                       id="schedule-autosend"

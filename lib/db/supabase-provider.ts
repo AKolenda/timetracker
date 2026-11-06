@@ -13,6 +13,7 @@ import { defaultSettings } from "../types"
 import type { DataProvider } from "./provider"
 import { parseAgentTimeHosts, parseAgentTimeHostLabels } from "../agent-time-hosts"
 import { normalizeBillFactor } from "../billing"
+import { parseWeekendSendRule } from "../invoice-schedule"
 import { parseSecondaryRemittance } from "../invoice-currency"
 
 function rowToClient(row: Record<string, unknown>): Client {
@@ -107,6 +108,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     emailFromAddress: (row.email_from_address as string) ?? "",
     timezone: (row.timezone as string) ?? "",
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
+    invoiceWeekendRule: parseWeekendSendRule(row.invoice_weekend_rule),
     displayCurrency: (row.display_currency as string) ?? "",
     secondaryRemittance: parseSecondaryRemittance(row.secondary_remittance),
     agentTimeHosts: parseAgentTimeHosts(row.agent_time_hosts),
@@ -446,6 +448,8 @@ export class SupabaseProvider implements DataProvider {
     if (updates.timezone !== undefined) row.timezone = updates.timezone
     if (updates.defaultInvoiceDueDays !== undefined)
       row.default_invoice_due_days = updates.defaultInvoiceDueDays
+    if (updates.invoiceWeekendRule !== undefined)
+      row.invoice_weekend_rule = parseWeekendSendRule(updates.invoiceWeekendRule)
     if (updates.displayCurrency !== undefined)
       row.display_currency = updates.displayCurrency
     if (updates.secondaryRemittance !== undefined)

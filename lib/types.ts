@@ -1,3 +1,4 @@
+import type { WeekendSendRule } from "./invoice-schedule"
 import type { AgentTimeSourceInterval } from "./agent-time"
 
 export interface Client {
@@ -91,6 +92,8 @@ export interface Settings {
   emailFromAddress: string
   timezone: string
   defaultInvoiceDueDays: number
+  /** Where a scheduled invoice email that lands on a weekend goes instead. */
+  invoiceWeekendRule: WeekendSendRule
   displayCurrency: string
   /** Optional second bank account offered on invoices, in a currency other than USD. */
   secondaryRemittance?: SecondaryRemittance
@@ -185,6 +188,7 @@ export const defaultSettings: Settings = {
   emailFromAddress: "",
   timezone: "",
   defaultInvoiceDueDays: 30,
+  invoiceWeekendRule: "monday",
   displayCurrency: "",
   secondaryRemittance: emptySecondaryRemittance,
 }
