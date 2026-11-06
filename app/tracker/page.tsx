@@ -18,6 +18,11 @@ import {
   ChevronsUpDown,
   Check,
   X,
+  TriangleAlert,
+  ChevronDown,
+  EyeOff,
+  FolderInput,
+  Settings2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -63,6 +68,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { TrackerReviewDialog } from "@/components/tracker-review-dialog"
 import { DraftReviewDialog } from "@/components/draft-review-dialog"
@@ -70,7 +76,7 @@ import { EntryChats, type ConversationSource } from "@/components/entry-chat-aud
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
-import { formatDuration, formatHours } from "@/lib/format"
+import { formatClock, formatDuration, formatHours, formatTimeRange as timeRange } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRange } from "@/lib/agent-time-overlap"
 import { conversationKey, groupConversationSources } from "@/lib/agent-time-chats"
@@ -378,14 +384,43 @@ function TodayTotal({
   }, 0)
 
   return (
-    <span data-testid="today-total" className="font-mono text-xs font-semibold tabular-nums text-foreground">
-      {formatDuration(completedSeconds + activeSeconds)}
+    <span data-testid="today-total" className="text-xs font-semibold tabular-nums text-foreground">
+      {activeTimers.some((timer) => !timer.pausedAt) ? formatLiveTotal(completedSeconds + activeSeconds) : entryClock(completedSeconds + activeSeconds)}
     </span>
   )
 }
 
+/** Saved durations as h:mm, with "<0:01" for entries that are real but round down to nothing. */
+function entryClock(seconds: number) {
+  return seconds > 0 && seconds < 60 ? "<0:01" : formatClock(seconds)
+}
+
+/** A total that includes a live timer ticks, so it keeps seconds but drops the leading zero: 1:47:24. */
+function formatLiveTotal(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds))
+  return `${Math.floor(total / 3600)}:${String(Math.floor((total % 3600) / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`
+}
+
 function BilledTime({ seconds, factor, block = false }: { seconds: number; factor: number; block?: boolean }) {
-  return <span data-testid="billed-time" title={`Billed at ${formatBillFactor(factor)} of the tracked time`} className={`font-mono text-[0.7rem] font-normal text-muted-foreground ${block ? "mt-0.5 block" : ""}`}>{block ? "" : " "}bill {formatDuration(seconds)} · {formatBillFactor(factor)}</span>
+  return <span data-testid="billed-time" title={`Billed at ${formatBillFactor(factor)} of the tracked time`} className={`text-xs font-normal tabular-nums text-muted-foreground ${block ? "mt-0.5 block" : ""}`}>{block ? "" : " "}bill {entryClock(seconds)} · {formatBillFactor(factor)}</span>
+}
+
+/** One machine name, with the rest behind a "+N" popover that works by keyboard and touch. */
+function MachineList({ names }: { names: string[] }) {
+  if (!names.length) return null
+  const [first, ...rest] = names
+  return <span className="inline-flex min-w-0 max-w-full items-center gap-1">
+    <span className="truncate" title={first}>{first}</span>
+    {rest.length > 0 && <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="shrink-0 cursor-pointer rounded-md px-1 tabular-nums hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={`${rest.length} more ${rest.length === 1 ? "machine" : "machines"}: ${rest.join(", ")}`}>+{rest.length}</button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto max-w-64 p-2 text-xs">
+        <p className="mb-1 font-medium">Machines</p>
+        <ul className="grid gap-0.5 text-muted-foreground">{names.map((name) => <li key={name}>{name}</li>)}</ul>
+      </PopoverContent>
+    </Popover>}
+  </span>
 }
 
 function ImportProjectPicker({ value, onChange, choices }: { value: string; onChange: (value: string) => void; choices: { value: string; label: string }[] }) {
@@ -644,7 +679,7 @@ export default function TrackerPage() {
     return entrySources.get(entry.id) ?? []
   }
   function machineNames(sources: AgentTimeSourceInterval[]) {
-    return [...new Set(sources.map((source) => machineName(source, data.settings.agentTimeHostLabels)))].join(", ") || "—"
+    return [...new Set(sources.map((source) => machineName(source, data.settings.agentTimeHostLabels)))]
   }
 
   const agentImportPreview = useMemo(
@@ -728,6 +763,8 @@ export default function TrackerPage() {
   const importedEntries = useRef<TimeEntry[]>([])
   const latestData = useRef(data)
   latestData.current = data
+  const latestStartTimer = useRef(startTimer)
+  latestStartTimer.current = startTimer
   useEffect(() => {
     const savedIds = new Set(data.timeEntries.map((entry) => entry.id))
     importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
@@ -767,7 +804,7 @@ export default function TrackerPage() {
           seconds += duration
         }
       }
-      if (seconds) toast.success(`Approved ${formatDuration(seconds)}. Overlapping time excluded.`)
+      if (seconds) toast.success(`Approved ${entryClock(seconds)}. Overlapping time excluded.`)
       else toast.error("No time imported: this time is already tracked or reserved by an active timer.")
       return true
     } catch {
@@ -895,8 +932,22 @@ export default function TrackerPage() {
   }
 
   function handleDiscard(id: string) {
+    const timer = data.activeTimers.find((current) => current.id === id)
     clearTimer(id)
-    toast("Timer discarded")
+    if (!timer) return
+    toast("Timer discarded", {
+      description: timer.description || getProject(timer.projectId)?.name,
+      duration: 8000,
+      action: {
+        label: "Undo",
+        // The store's startTimer closes over the timers it rendered with, so use the latest one.
+        onClick: () => {
+          if (latestData.current.activeTimers.some((current) => current.id === timer.id)) return
+          latestStartTimer.current(timer)
+          toast.success("Timer restored")
+        },
+      },
+    })
   }
 
   function handleResume(entry: TimeEntry) {
@@ -1038,7 +1089,7 @@ export default function TrackerPage() {
     const sources = slice.interval.sourceIntervals || []
     return [slice.id, {
       description: draftDescription(slice, chatSummaries),
-      machines: [...new Set(clipAgentSources(sources, slice.start, slice.end).map((source) => machineName(source, hostLabels)))].join(", ") || "—",
+      machines: [...new Set(clipAgentSources(sources, slice.start, slice.end).map((source) => machineName(source, hostLabels)))],
       billFactor: sourcesBillFactor(sources, slice.start, slice.end, chatFactors),
     }]
   })), [agentImportPreview.slices, chatSummaries, chatFactors, hostLabels])
@@ -1118,32 +1169,52 @@ export default function TrackerPage() {
     setProjectEdit(null)
   }
 
+  const timerProjectLabel = (() => {
+    const project = timerProject ? getProject(timerProject) : undefined
+    if (!project) return undefined
+    const client = getClient(project.clientId)
+    return `${client?.name ? `${client.name} — ` : ""}${project.name}`
+  })()
+  // On stacked rows (below lg) the row actions sit beside the title, so the second line can use the full width.
+  // The title stops 8px short of the actions so its chat chevron isn't a near-miss for Resume.
+  const rowTitleClass = "max-lg:flex max-lg:min-h-9 max-lg:items-center max-lg:pr-29"
+  const rowActionsClass = "max-lg:absolute max-lg:top-2 max-lg:right-2 max-lg:p-0 max-lg:pointer-fine:top-3.5"
+  const rowActionGroupClass = "flex items-center justify-end gap-0.5 max-lg:gap-0"
+  // Utilities that open dialogs: outline buttons from lg up, one labelled menu on phones and tablets.
+  const reviewTools = [
+    { id: "review-saved-overlaps", label: "Saved conflicts", icon: TriangleAlert, count: overlapIds.size, open: () => setReviewEntryOverlapsOpen(true) },
+    { id: "review-agent-overlaps", label: "Excluded time", icon: EyeOff, count: 0, open: () => setReviewAgentOverlapsOpen(true) },
+    { id: "review-agent-projects", label: "Project mappings", icon: FolderInput, count: 0, open: () => setProjectsOpen(true) },
+    { id: "import-settings", label: "Import settings", icon: Settings2, count: 0, open: () => setImportSettingsOpen(true) },
+  ]
+
   return (
     <>
       <PageHeader
-        title="Time Tracker"
+        title="Tracker"
       />
 
       <Card className="mb-6">
-        <CardContent className="pt-5">
+        <CardContent>
           {data.projects.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
               Create a client and project first to start tracking time
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_260px_auto_auto] sm:items-center">
+              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center lg:grid-cols-[minmax(0,1fr)_220px_auto] xl:grid-cols-[minmax(0,1fr)_260px_auto]">
                 <Input
                   data-testid="timer-description"
+                  aria-label="What are you working on?"
                   placeholder="What are you working on?"
                   value={timerDesc}
                   onChange={(e) => setTimerDesc(e.target.value)}
-                  className="h-10 min-w-0 w-full"
+                  className="h-10 min-w-0 w-full sm:col-span-2 lg:col-span-1"
                 />
                 <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
                   <PopoverTrigger asChild>
-                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 min-w-0 w-full justify-between" >
-                      <span className="truncate">{timerProject ? (() => { const project = getProject(timerProject); const client = project ? getClient(project.clientId) : undefined; return project ? `${client?.name ? `${client.name} — ` : ""}${project.name}` : "Select project" })() : "Select project"}</span>
+                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} aria-label={`Project: ${timerProjectLabel ?? "none selected"}`} className="h-10 min-w-0 w-full justify-between font-normal" >
+                      <span className={`truncate ${timerProjectLabel ? "" : "text-muted-foreground"}`}>{timerProjectLabel ?? "Select project"}</span>
                       <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
@@ -1162,41 +1233,40 @@ export default function TrackerPage() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-                <div className="flex h-10 items-center gap-1.5">
-                  <Checkbox
-                    data-testid="timer-billable"
-                    id="timer-billable"
-                    checked={timerBillable}
-                    onCheckedChange={(v) => setTimerBillable(v === true)}
-                  />
-                  <Label
-                    htmlFor="timer-billable"
-                    className="text-xs text-muted-foreground"
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 shrink-0 items-center gap-2">
+                    <Checkbox
+                      data-testid="timer-billable"
+                      id="timer-billable"
+                      checked={timerBillable}
+                      onCheckedChange={(v) => setTimerBillable(v === true)}
+                    />
+                    <Label htmlFor="timer-billable" className="text-sm font-normal text-muted-foreground">
+                      Billable
+                    </Label>
+                  </div>
+                  <Button
+                    data-testid="timer-start"
+                    onClick={handleStart}
+                    className="h-10 flex-1 px-4 sm:flex-none"
                   >
-                    Billable
-                  </Label>
+                    <Play className="size-3.5" data-icon="inline-start" />
+                    Start timer
+                  </Button>
                 </div>
-                <Button
-                  data-testid="timer-start"
-                  onClick={handleStart}
-                  className="w-full sm:w-auto"
-                >
-                  <Play className="size-3.5" data-icon="inline-start" />
-                  Start timer
-                </Button>
               </div>
 
               {activeTimers.length === 0 ? <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"><Clock className="size-5" />No active timers</div> : <div className="grid gap-2">{activeTimers.map((timer) => {
                 const project = getProject(timer.projectId)
-                return <div key={timer.id} data-testid="active-timer" className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                return <div key={timer.id} data-testid="active-timer" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-muted/30 px-4 py-3">
                   <Clock className="size-5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-[9rem] flex-1"><p className="font-medium">{timer.description || project?.name || "Untitled"}</p><p className="text-xs text-muted-foreground">{project?.name ?? "Unknown project"}</p></div>
+                  <div className="min-w-[9rem] flex-1"><p className="font-medium break-words">{timer.description || project?.name || "Untitled"}</p><p className="text-xs text-muted-foreground">{project?.name ?? "Unknown project"}</p></div>
                   <LiveTimer startTime={timer.startTime} pausedAt={timer.pausedAt} accumulatedPause={timer.accumulatedPause} />
                   {timer.pausedAt && <Badge variant="secondary" className="animate-pulse text-xs">Paused</Badge>}
-                  <div className="ml-auto flex gap-2">
-                    <Button variant="outline" onClick={() => handleDiscard(timer.id)}>Discard</Button>
-                    {timer.pausedAt ? <Button onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
-                    <Button variant="destructive" onClick={() => handleStop(timer.id)}><Square className="size-3.5" data-icon="inline-start" />Stop</Button>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    {timer.pausedAt ? <Button variant="outline" onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
+                    <Button onClick={() => handleStop(timer.id)}><Square className="size-3 fill-current" data-icon="inline-start" />Stop &amp; save</Button>
+                    <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/20" onClick={() => handleDiscard(timer.id)}><Trash2 className="size-3.5" data-icon="inline-start" />Discard</Button>
                   </div>
                 </div>
               })}</div>}
@@ -1216,71 +1286,93 @@ export default function TrackerPage() {
             {agentImportPreview.slices.length > 0 && <Button
               size="sm"
               data-testid="approve-all-drafts"
-              className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300"
+              className="bg-warning text-amber-950 hover:bg-warning/85"
               onClick={() => void approveAllDrafts()}
               disabled={agentTimeLoading || importing}
             >
               <Check className="size-3.5" data-icon="inline-start" />
-              Approve {agentImportPreview.slices.length} {agentImportPreview.slices.length === 1 ? "draft" : "drafts"} · <span className="font-mono">{formatDuration(agentImportPreviewSeconds)}</span>
+              Approve {agentImportPreview.slices.length} {agentImportPreview.slices.length === 1 ? "draft" : "drafts"} · <span className="tabular-nums">{formatClock(agentImportPreviewSeconds)}</span>
             </Button>}
             <Button variant="outline" size="sm" onClick={() => setAddHoursOpen(true)}>
               <Plus className="size-3.5" data-icon="inline-start" />
               Add hours
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="lg:hidden" data-testid="review-tools-menu">
+                  Review{overlapIds.size > 0 && <span className="rounded-md bg-destructive/10 px-1.5 text-xs tabular-nums text-destructive">{overlapIds.size}</span>}
+                  <ChevronDown className="size-3.5" data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-56">
+                {reviewTools.map((tool) => <DropdownMenuItem key={tool.id} data-testid={`${tool.id}-menu`} onSelect={tool.open}>
+                  <tool.icon className="size-4" />
+                  <span className="flex-1">{tool.label}…</span>
+                  {tool.count > 0 && <span className="text-xs tabular-nums text-destructive">{tool.count}</span>}
+                </DropdownMenuItem>)}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardHeader>
         <CardContent className="pb-4">
-          <div data-testid="agent-time-controls" className="mb-3 flex min-w-0 flex-wrap items-center gap-1 border-b pb-3">
-            <Button type="button" variant="ghost" size="sm" data-testid="review-saved-overlaps" onClick={() => setReviewEntryOverlapsOpen(true)}>Saved conflicts{overlapIds.size > 0 && <span className="ml-1 rounded bg-muted px-1.5 text-xs tabular-nums">{overlapIds.size}</span>}</Button>
-            <Button type="button" variant="ghost" size="sm" data-testid="review-agent-overlaps" onClick={() => setReviewAgentOverlapsOpen(true)}>Excluded time</Button>
-            <Button type="button" variant="ghost" size="sm" data-testid="review-agent-projects" onClick={() => setProjectsOpen(true)}>Projects</Button>
-            <Button type="button" variant="ghost" size="sm" data-testid="import-settings" onClick={() => setImportSettingsOpen(true)}>Import settings</Button>
+          <div data-testid="agent-time-controls" className="mb-3 hidden min-w-0 flex-wrap items-center gap-2 lg:flex">
+            {reviewTools.map((tool) => <Button key={tool.id} type="button" variant="outline" size="sm" data-testid={tool.id} aria-haspopup="dialog" onClick={tool.open}>
+              <tool.icon className="size-3.5 text-muted-foreground" data-icon="inline-start" />
+              {tool.label}
+              {tool.count > 0 && <span className="rounded-md bg-destructive/10 px-1.5 text-xs tabular-nums text-destructive">{tool.count}</span>}
+            </Button>)}
           </div>
+          {overlapIds.size > 0 && <div data-testid="overlap-summary" className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+            <TriangleAlert className="size-4 shrink-0 text-destructive" aria-hidden="true" />
+            <p className="min-w-0 flex-1"><span className="font-medium tabular-nums">{overlapIds.size} saved {overlapIds.size === 1 ? "entry overlaps" : "entries overlap"} other time.</span> <span className="text-muted-foreground max-sm:hidden">They&apos;re marked in red below.</span></p>
+            <Button type="button" variant="outline" size="sm" aria-haspopup="dialog" onClick={() => setReviewEntryOverlapsOpen(true)}>Review conflicts</Button>
+          </div>}
           {logRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No time entries yet</p>
           ) : (
-            <div className="overflow-hidden rounded-xl border [&_[data-slot=table-container]]:overflow-x-hidden">
+            <div className="overflow-hidden rounded-lg border max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table>
-            <TableHeader>
+            <TableHeader className="hidden lg:table-header-group">
               <TableRow>
-                <TableHead className="sm:w-[30%]">Description</TableHead>
-                <TableHead className="hidden sm:table-cell">Machine</TableHead>
-                <TableHead className="hidden w-[18%] sm:table-cell">Project</TableHead>
-                <TableHead className="hidden w-[12%] sm:table-cell">Date</TableHead>
-                <TableHead className="hidden min-w-28 sm:table-cell">Start / End</TableHead>
-                <TableHead className="hidden w-24 sm:table-cell">Duration</TableHead>
-                <TableHead className="hidden w-[6.5rem] sm:table-cell">Amount</TableHead>
-                <TableHead className="w-px sm:w-24" />
+                <TableHead>Description</TableHead>
+                <TableHead className="w-[18%] xl:w-[20%]">Project</TableHead>
+                <TableHead className="w-36 xl:w-40">Time</TableHead>
+                <TableHead className="w-20 text-right xl:w-24">Duration</TableHead>
+                <TableHead className="w-20 text-right xl:w-24">Amount</TableHead>
+                <TableHead className="w-px"><span className="sr-only">Actions</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {visibleRows.map((row, index) => {
                 const isNewDay = index === 0 || row.date !== visibleRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
-                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
                   const { description: draftTitle, machines: draftMachines, billFactor } = draftDetails.get(slice.id)!
                   const amount = project ? (billedSeconds({ duration: slice.durationSeconds, billFactor }) / 3600) * project.rate : 0
+                  const range = timeRange(slice.start, slice.end)
                   return <Fragment key={slice.id}>
                     {dayHeader}
-                    <TableRow data-testid="agent-draft-row" className="bg-amber-500/[0.07] hover:bg-amber-500/[0.11]">
+                    <TableRow data-testid="agent-draft-row" className="bg-warning/[0.07] hover:bg-warning/[0.12] max-lg:relative">
                       <TableCell className="font-medium whitespace-normal break-words">
-                        <EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />
-                        <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{draftMachines}</p>
-                        <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />} · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${money(amount, project?.currency)}` : ""}</p>
+                        <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /></div>
+                        {draftMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={draftMachines} /></p>}
+                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
+                          <p className="line-clamp-2 break-words">{project?.name ?? "—"}{draftMachines.length > 0 && <> · <MachineList names={draftMachines} /></>}</p>
+                          <div className="flex flex-wrap items-center gap-x-2"><span className="tabular-nums">{range}</span>
+                          <span className="ml-auto tabular-nums"><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                        </div>
                       </TableCell>
-                      <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{draftMachines}</TableCell>
-                      <TableCell className="hidden whitespace-normal sm:table-cell"><span className="block text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
-                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}</TableCell>
-                      <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</TableCell>
-                      <TableCell className="hidden font-mono text-xs text-amber-700 sm:table-cell dark:text-amber-300">{formatDuration(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
-                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                      <TableCell><div className="flex items-center gap-0.5">
-                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
+                      <TableCell className="hidden whitespace-normal lg:table-cell"><span className="line-clamp-2 text-xs text-muted-foreground" title={project?.name}>{project?.name ?? "—"}</span></TableCell>
+                      <TableCell className="hidden text-xs tabular-nums lg:table-cell">{range}</TableCell>
+                      <TableCell className="hidden text-right text-xs tabular-nums text-warning-foreground lg:table-cell">{entryClock(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
+                      <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
+                      <TableCell className={rowActionsClass}><div className={rowActionGroupClass}>
+                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
                         <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
                       </div></TableCell>
@@ -1293,33 +1385,35 @@ export default function TrackerPage() {
                 const entryChatSources = sourcesForEntry(entry)
                 const entryMachines = machineNames(entryChatSources)
                 const amount = entry.billable && project ? (billedSeconds(entry) / 3600) * project.rate : 0
+                const overlaps = overlapIds.has(entry.id)
+                const range = entry.endTime ? timeRange(entry.startTime, entry.endTime) : "No exact times"
+                const overlapMarker = overlaps && <span role="img" aria-label="Overlaps other time" title="Overlaps other time. Review it in Saved conflicts." className="inline-flex shrink-0 text-destructive"><TriangleAlert className="size-3.5" aria-hidden="true" /></span>
                 return <Fragment key={entry.id}>
                   {dayHeader}
-                  <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} aria-label={entry.description || "Untitled time entry"} className={highlightedEntry === entry.id ? "bg-amber-500/15 outline-2 -outline-offset-2 outline-amber-500" : overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
-                  <TableCell className="font-medium whitespace-normal break-words">
-                    <EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} />
+                  <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} data-overlap={overlaps || undefined} aria-label={entry.description || "Untitled time entry"} className={`max-lg:relative ${highlightedEntry === entry.id ? "bg-warning/15 outline-2 -outline-offset-2 outline-warning" : ""}`}>
+                  <TableCell className={`font-medium whitespace-normal break-words ${overlaps ? "shadow-[inset_2px_0_0_var(--destructive)]" : ""}`}>
+                    <div className={rowTitleClass}><EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} /></div>
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
-                    {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
-
-                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entryMachines}</p>
-                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
-                    {overlapIds.has(entry.id) && <button type="button" className="mt-1 block cursor-pointer text-xs text-red-700 underline underline-offset-4 dark:text-red-300" onClick={() => setReviewEntryOverlapsOpen(true)}>Review overlap</button>}
-                    <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />} · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${money(amount, project?.currency)}` : ""}</p>
+                    {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block cursor-pointer rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
+                    {entryMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={entryMachines} /></p>}
+                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
+                      <p className="line-clamp-2 break-words">{project?.name ?? "—"}{entryMachines.length > 0 && <> · <MachineList names={entryMachines} /></>}</p>
+                      <div className="flex flex-wrap items-center gap-x-2"><span className="inline-flex items-center gap-1"><span className="tabular-nums">{range}</span>{overlapMarker}</span>
+                      <span className="ml-auto tabular-nums"><span className="text-foreground">{entryClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                    </div>
                   </TableCell>
-                  <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{entryMachines}</TableCell>
-                  <TableCell className="hidden whitespace-normal sm:table-cell">
-                    <button className="inline-flex max-w-full items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
-                      <span>{project?.name ?? "—"}</span><Pencil className="size-3 shrink-0" />
+                  <TableCell className="hidden whitespace-normal lg:table-cell">
+                    <button type="button" className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md text-left text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default" disabled={!project} aria-label={project ? `Edit project ${project.name}` : "Unknown project"} title={project ? `Edit ${project.name}` : undefined} onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
+                      <span className="line-clamp-2">{project?.name ?? "—"}</span>{project && <Pencil className="size-3 shrink-0 opacity-60" aria-hidden="true" />}
                     </button>
                   </TableCell>
-                  <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(parseLocalDate(entry.date), "MMM d, yyyy")}</TableCell>
-                  <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</TableCell>
-                  <TableCell className="hidden font-mono text-xs sm:table-cell">{formatDuration(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
-                  <TableCell className="hidden font-mono text-xs sm:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                  <TableCell><div className="flex items-center gap-0.5">
-                    <Button variant="ghost" size="icon-xs" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>
-                    <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
-                    <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
+                  <TableCell className="hidden text-xs tabular-nums lg:table-cell"><span className="inline-flex items-center gap-1.5">{range}{overlapMarker}</span></TableCell>
+                  <TableCell className="hidden text-right text-xs tabular-nums lg:table-cell">{entryClock(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
+                  <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
+                  <TableCell className={rowActionsClass}><div className={rowActionGroupClass}>
+                    <Button variant="ghost" size="icon-xs" aria-label="Resume timer" title="Resume timer" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>
+                    <Button variant="ghost" size="icon-xs" aria-label="Edit entry" title="Edit entry" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
+                    <Button variant="ghost" size="icon-xs" aria-label="Delete entry" title="Delete entry" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
                   </div></TableCell>
                   </TableRow>
                 </Fragment>
@@ -1347,15 +1441,15 @@ export default function TrackerPage() {
         items={data.timeEntries.filter((entry) => overlapIds.has(entry.id)).map((entry) => {
           const project = getProject(entry.projectId)
           const client = getClient(project?.clientId ?? "")
-          const timeLabel = `${format(new Date(entry.startTime), "MMM d, yyyy h:mm a")} – ${format(new Date(entry.endTime!), "MMM d, h:mm a")}`
+          const timeLabel = `${format(new Date(entry.startTime), "EEE, MMM d, yyyy")} · ${timeRange(entry.startTime, entry.endTime!)}`
           return { id: entry.id, searchText: `${entry.description} ${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="saved-overlap-review-item">
             <div className="flex items-start justify-between gap-3">
               <p className="min-w-0 break-words font-medium">{entry.description || "Untitled"}</p>
               <Button type="button" variant="ghost" size="icon-sm" data-testid="find-conflict-in-log" aria-label="Find entry in time log" title="Find in time log" onClick={() => { jumpToEntry.current = entry.id; revealEntry(entry.id); setHighlightedEntry(entry.id); setReviewEntryOverlapsOpen(false) }}><ArrowUpRight className="size-4" /></Button>
             </div>
-            <p data-testid="overlap-minutes" className="mb-1 text-sm font-medium tabular-nums text-red-700 dark:text-red-300">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format((overlapDetails.get(entry.id)?.overlapMilliseconds ?? 0) / 60_000)} min overlapping</p>
+            <p data-testid="overlap-minutes" className="mb-1 text-sm font-medium tabular-nums text-destructive">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format((overlapDetails.get(entry.id)?.overlapMilliseconds ?? 0) / 60_000)} min overlapping</p>
             <p className="break-words text-xs text-muted-foreground">{client?.name} / {project?.name ?? "Unknown project"}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{timeLabel}</p>
+            <p className="mt-1 text-xs tabular-nums text-muted-foreground">{timeLabel}</p>
             <div className="mt-2 flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => { setReviewEntryOverlapsOpen(false); openEdit(entry) }}>Edit times</Button><Button type="button" variant="ghost" size="sm" data-testid="dismiss-saved-overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss flag</Button></div>
           </div> }
         })}
@@ -1365,9 +1459,9 @@ export default function TrackerPage() {
         items={pendingAgentOverlaps.map((overlap) => {
           const project = getProject(overlap.projectId)
           const client = getClient(project?.clientId ?? "")
-          const timeLabel = `${format(new Date(overlap.start), "MMM d, yyyy h:mm a")} – ${format(new Date(overlap.end), "MMM d, h:mm a")}`
+          const timeLabel = `${format(new Date(overlap.start), "EEE, MMM d, yyyy")} · ${timeRange(overlap.start, overlap.end)}`
           return { id: overlap.key, searchText: `${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="agent-overlap-item" className="flex min-w-0 items-start gap-2">
-            <div className="min-w-0 flex-1"><p className="break-words font-medium">{project?.name ?? "Unknown project"}</p><p className="text-xs text-muted-foreground">{client?.name}</p><p className="mt-1 text-xs text-muted-foreground">{timeLabel}</p><p className="mt-1 text-xs tabular-nums">{formatDuration(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
+            <div className="min-w-0 flex-1"><p className="break-words font-medium">{project?.name ?? "Unknown project"}</p><p className="text-xs text-muted-foreground">{client?.name}</p><p className="mt-1 text-xs tabular-nums text-muted-foreground">{timeLabel}</p><p className="mt-1 text-xs tabular-nums">{entryClock(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
             <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed agent overlap" onClick={() => saveOverlapReviews("agent", [...reviewedAgentOverlaps, overlap.key])}><X className="size-4" /></Button>
           </div> }
         })}
@@ -1391,14 +1485,14 @@ export default function TrackerPage() {
             durationSeconds: slice.durationSeconds,
             title: draftTitle,
             titleNode: <EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />,
-            meta: `${project?.name ?? "—"}${owner} · ${draftMachines}`,
+            meta: `${project?.name ?? "—"}${owner}${draftMachines.length ? ` · ${draftMachines.join(", ")}` : ""}`,
             amount: amount ? money(amount, project?.currency) : "",
             billed: billFactor < 1 ? <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} /> : undefined,
-            searchText: [draftTitle, project?.name, client?.name, draftMachines, format(new Date(slice.start), "EEEE MMMM d yyyy h:mm a")].join(" "),
+            searchText: [draftTitle, project?.name, client?.name, ...draftMachines, format(new Date(slice.start), "EEEE MMMM d yyyy h:mm a")].join(" "),
           }
         })}
       />
-      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Import projects" description="Choose where each agent folder's time goes. It's saved on the project, so you can also change it on the Projects page. Personal folders stay out of imports." emptyText="No desktop projects to map."
+      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Project mappings" description="Choose where each agent folder's time goes. It's saved on the project, so you can also change it on the Projects page. Personal folders stay out of imports." emptyText="No desktop projects to map."
         items={[...unmappedAgentProjects, ...handledAgentProjects].map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
           <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={[{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]} />
@@ -1408,16 +1502,16 @@ export default function TrackerPage() {
         <DialogContent><DialogHeader><DialogTitle>Import settings</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">Adjust gap grouping and the period included in your review.</p>
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <div className="flex h-8 items-center rounded-md border bg-background pl-3 focus-within:ring-2 focus-within:ring-ring" title="Join gaps up to this many minutes">
-                <span>Gap</span>
-                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center text-xs tabular-nums text-foreground shadow-none [appearance:textfield] focus-visible:ring-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none dark:bg-transparent" />
+              <div className="flex h-8 items-center rounded-md border border-input bg-background pl-3 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30" title="Join gaps up to this many minutes">
+                <label htmlFor="tracker-agent-gap">Gap</label>
+                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center text-[16px] tabular-nums text-foreground shadow-none focus-visible:ring-0 sm:text-xs dark:bg-transparent" />
                 <span className="pr-3">min</span>
               </div>
               <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
               {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE
                 ? <Button type="button" variant="ghost" size="sm" className="h-8" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
                 : <Button type="button" variant="ghost" size="sm" className="h-8" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
-              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></Button>}
+              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 tabular-nums">{formatClock(agentImportPreview.ignoredSeconds)}</span></Button>}
             </div>
           <DialogFooter><Button variant="outline" onClick={() => setImportSettingsOpen(false)}>Done</Button></DialogFooter>
         </DialogContent>
@@ -1431,9 +1525,9 @@ export default function TrackerPage() {
           <div className="grid gap-4 py-3">
             <p className="text-sm text-muted-foreground">Add billable time without needing exact start and end times.</p>
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label htmlFor="hours-project">Project</Label>
               <Select value={hoursForm.projectId} onValueChange={(projectId) => setHoursForm({ ...hoursForm, projectId })}>
-                <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                <SelectTrigger id="hours-project" className="w-full"><SelectValue placeholder="Select project" /></SelectTrigger>
                 <SelectContent>{data.projects.filter((project) => project.status === "active").map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
@@ -1452,8 +1546,8 @@ export default function TrackerPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Project</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid gap-2"><Label>Project name</Label><Input value={projectEdit?.name ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, name: e.target.value } : p)} /></div>
-            <div className="grid gap-2"><Label>Hourly rate</Label><Input type="number" min="0" step="0.01" value={projectEdit?.rate ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, rate: e.target.value } : p)} /></div>
+            <div className="grid gap-2"><Label htmlFor="project-edit-name">Project name</Label><Input id="project-edit-name" value={projectEdit?.name ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, name: e.target.value } : p)} /></div>
+            <div className="grid gap-2"><Label htmlFor="project-edit-rate">Hourly rate</Label><Input id="project-edit-rate" type="number" min="0" step="0.01" value={projectEdit?.rate ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, rate: e.target.value } : p)} /></div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setProjectEdit(null)}>Cancel</Button><Button onClick={saveProjectEdit}>Save changes</Button></DialogFooter>
         </DialogContent>
@@ -1467,14 +1561,14 @@ export default function TrackerPage() {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label htmlFor="edit-project">Project</Label>
               <Select
                 value={editForm.projectId}
                 onValueChange={(v) =>
                   setEditForm({ ...editForm, projectId: v })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger id="edit-project" className="w-full">
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1503,10 +1597,11 @@ export default function TrackerPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label>Start Time</Label>
+                <Label htmlFor="edit-start">Start time</Label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
+                      id="edit-start"
                       variant="outline"
                       className="justify-start text-left font-normal"
                     >
@@ -1539,7 +1634,8 @@ export default function TrackerPage() {
                             d.setHours(h, m)
                             setEditForm({ ...editForm, startTime: d.toISOString() })
                           }}
-                          className="font-mono"
+                          aria-label="Start time of day"
+                          className="tabular-nums"
                         />
                       </div>
                     </div>
@@ -1547,10 +1643,11 @@ export default function TrackerPage() {
                 </Popover>
               </div>
               <div className="grid gap-2">
-                <Label>End Time</Label>
+                <Label htmlFor="edit-end">End time</Label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
+                      id="edit-end"
                       variant="outline"
                       className="justify-start text-left font-normal"
                     >
@@ -1583,7 +1680,8 @@ export default function TrackerPage() {
                             d.setHours(h, m)
                             setEditForm({ ...editForm, endTime: d.toISOString() })
                           }}
-                          className="font-mono"
+                          aria-label="End time of day"
+                          className="tabular-nums"
                         />
                       </div>
                     </div>
@@ -1595,8 +1693,8 @@ export default function TrackerPage() {
               <span className="text-xs text-muted-foreground">
                 Calculated duration:{" "}
               </span>
-              <span className="font-mono text-sm font-medium">
-                {editDuration > 0 ? formatDuration(editDuration) : "—"}
+              <span className="text-sm font-medium tabular-nums">
+                {editDuration > 0 ? entryClock(editDuration) : "—"}
               </span>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1635,7 +1733,7 @@ export default function TrackerPage() {
             <AlertDialogDescription>
               This will permanently delete &ldquo;
               {deleteTarget?.description || "Untitled"}&rdquo; (
-              {deleteTarget ? formatDuration(deleteTarget.duration) : ""}). This
+              {deleteTarget ? entryClock(deleteTarget.duration) : ""}). This
               action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

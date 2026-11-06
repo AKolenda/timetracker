@@ -1,14 +1,25 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Eye, DollarSign, Key, CheckCircle2, Trash2 } from "lucide-react"
 
+import { cn } from "@/lib/utils"
+
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -39,7 +50,11 @@ import {
   secondaryTotal,
 } from "@/lib/invoice-currency"
 import { useExchangeRate } from "@/lib/use-exchange-rate"
-import { emptySecondaryRemittance, type SecondaryRemittance } from "@/lib/types"
+import {
+  emptySecondaryRemittance,
+  type SecondaryRemittance,
+  type Settings,
+} from "@/lib/types"
 import { getBrowserTimezone, listTimezones } from "@/lib/datetime"
 
 const CURRENCIES = [
@@ -50,10 +65,76 @@ const CURRENCIES = [
   { value: "AUD", label: "AUD — Australian Dollar" },
 ]
 
+/** The fields the "Save general settings" button writes, normalized the way they are stored. */
+function generalFields(s: Settings) {
+  return {
+    businessName: s.businessName,
+    businessEmail: s.businessEmail,
+    businessPhone: s.businessPhone,
+    businessAddress: s.businessAddress,
+    remittanceFirstName: s.remittanceFirstName,
+    remittanceLastName: s.remittanceLastName,
+    remittanceBankName: s.remittanceBankName,
+    remittanceRoutingNumber: s.remittanceRoutingNumber,
+    remittanceAccountNumber: s.remittanceAccountNumber,
+    remittanceNotes: s.remittanceNotes,
+    invoicePrefix: s.invoicePrefix,
+    nextInvoiceNumber: s.nextInvoiceNumber,
+    timezone: s.timezone,
+    defaultInvoiceDueDays: s.defaultInvoiceDueDays,
+    displayCurrency: s.displayCurrency === "none" ? "" : s.displayCurrency,
+    agentTimeHosts: s.agentTimeHosts || [],
+    agentTimeMaxMinutes: s.agentTimeMaxMinutes || null,
+    agentTimeHostLabels: s.agentTimeHostLabels || {},
+  }
+}
+
+/** The fields the "Save email format" button writes. */
+function emailFormatFields(s: Settings) {
+  return {
+    emailSubject: s.emailSubject,
+    emailGreeting: s.emailGreeting,
+    emailSignature: s.emailSignature,
+    emailAccentColor: s.emailAccentColor,
+    emailFromAddress: s.emailFromAddress,
+  }
+}
+
+const sameFields = (a: object, b: object) => JSON.stringify(a) === JSON.stringify(b)
+
+/** "Unsaved changes" while the form differs from what is stored, "Saved" right after a save. */
+function SaveStatus({ dirty, saved, className }: { dirty: boolean; saved: boolean; className?: string }) {
+  return (
+    <span aria-live="polite" className={cn("text-xs", dirty ? "text-warning-foreground" : "text-muted-foreground", className)}>
+      {dirty ? (
+        "Unsaved changes"
+      ) : saved ? (
+        <span className="inline-flex items-center gap-1">
+          <CheckCircle2 aria-hidden className="size-3.5 text-success-foreground" />
+          Saved
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+/** A heading that groups the cards one save button covers. */
+function SectionHeading({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="grid gap-0.5 px-1">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <p className="text-xs text-muted-foreground">{description}</p>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const { data, updateSettings } = useStore()
   const [form, setForm] = useState({ ...data.settings })
   const [saving, setSaving] = useState(false)
+  const [generalSaved, setGeneralSaved] = useState(false)
+  const [emailSaving, setEmailSaving] = useState(false)
+  const [emailSaved, setEmailSaved] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [payoutOpen, setPayoutOpen] = useState(false)
   const [resendKey, setResendKey] = useState("")
@@ -115,17 +196,15 @@ export default function SettingsPage() {
   }
 
   async function handleEmailFormatSave() {
+    setEmailSaving(true)
     try {
-      await updateSettings({
-        emailSubject: form.emailSubject,
-        emailGreeting: form.emailGreeting,
-        emailSignature: form.emailSignature,
-        emailAccentColor: form.emailAccentColor,
-        emailFromAddress: form.emailFromAddress,
-      })
+      await updateSettings(emailFormatFields(form))
+      setEmailSaved(true)
       toast.success("Email format saved")
     } catch {
       toast.error("Failed to save email format")
+    } finally {
+      setEmailSaving(false)
     }
   }
 
@@ -137,29 +216,12 @@ export default function SettingsPage() {
     setSaving(true)
     try {
       await updateSettings({
-        businessName: form.businessName,
-        businessEmail: form.businessEmail,
-        businessPhone: form.businessPhone,
-        businessAddress: form.businessAddress,
-        remittanceFirstName: form.remittanceFirstName,
-        remittanceLastName: form.remittanceLastName,
-        remittanceBankName: form.remittanceBankName,
-        remittanceRoutingNumber: form.remittanceRoutingNumber,
-        remittanceAccountNumber: form.remittanceAccountNumber,
-        remittanceNotes: form.remittanceNotes,
-        invoicePrefix: form.invoicePrefix,
-        nextInvoiceNumber: form.nextInvoiceNumber,
-        timezone: form.timezone,
-        defaultInvoiceDueDays: form.defaultInvoiceDueDays,
-        displayCurrency:
-          form.displayCurrency === "none" ? "" : form.displayCurrency,
+        ...generalFields(form),
         ...(secondaryChanged
           ? { secondaryRemittance: parseSecondaryRemittance(secondaryForm) }
           : {}),
-        agentTimeHosts: form.agentTimeHosts || [],
-        agentTimeMaxMinutes: form.agentTimeMaxMinutes || null,
-        agentTimeHostLabels: form.agentTimeHostLabels || {},
       })
+      setGeneralSaved(true)
       toast.success("Settings saved")
     } catch {
       toast.error("Failed to save settings")
@@ -253,29 +315,62 @@ export default function SettingsPage() {
     sampleSecondary
   )
 
+  const browserTimezone = getBrowserTimezone()
+  const timezoneValue = form.timezone || browserTimezone
+  // Some browsers leave "UTC" out of their zone list; the saved or detected zone must still show.
+  const timezoneOptions = useMemo(() => {
+    const zones = listTimezones()
+    return zones.includes(timezoneValue) ? zones : [timezoneValue, ...zones]
+  }, [timezoneValue])
+
+  const generalDirty =
+    !sameFields(generalFields(form), generalFields(data.settings)) ||
+    !sameFields(
+      parseSecondaryRemittance(secondaryForm),
+      parseSecondaryRemittance(data.settings.secondaryRemittance)
+    )
+  const emailDirty = !sameFields(
+    emailFormatFields(form),
+    emailFormatFields(data.settings)
+  )
+
   return (
     <>
       <PageHeader
         title="Settings"
         currencyToggle={false}
         actions={
-          <Button size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : "Save Changes"}
-          </Button>
+          <>
+            <SaveStatus dirty={generalDirty} saved={generalSaved} />
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={saving}
+              data-testid="settings-save-general"
+            >
+              {saving ? "Saving..." : "Save general settings"}
+            </Button>
+          </>
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="grid gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Your Information
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
+      <div className="mx-auto grid w-full max-w-3xl gap-6 pb-6">
+        <SectionHeading
+          title="General"
+          description="Your details, invoicing, payment accounts and Agent Time imports. Saved with “Save general settings” at the top."
+        />
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Your information</CardTitle>
+            <CardDescription className="text-xs">
+              Shown as the sender on every invoice.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="biz-name">Name / Business Name</Label>
+                <Label htmlFor="biz-name">Name / business name</Label>
                 <Input
                   id="biz-name"
                   value={form.businessName}
@@ -308,85 +403,223 @@ export default function SettingsPage() {
                   placeholder="+1 (555) 000-0000"
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="biz-address">Address</Label>
-                <Textarea
-                  id="biz-address"
-                  value={form.businessAddress}
-                  onChange={(e) =>
-                    setForm({ ...form, businessAddress: e.target.value })
-                  }
-                  placeholder="123 Main St&#10;City, State ZIP"
-                  rows={3}
-                />
-              </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="timezone">Timezone</Label>
                 <Select
-                  value={form.timezone || getBrowserTimezone()}
+                  value={timezoneValue}
                   onValueChange={(v) => setForm({ ...form, timezone: v })}
                 >
-                  <SelectTrigger id="timezone">
+                  <SelectTrigger id="timezone" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="max-h-[300px]">
-                    {listTimezones().map((tz) => (
+                    {timezoneOptions.map((tz) => (
                       <SelectItem key={tz} value={tz}>
                         {tz}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Used to date your time entries correctly. Detected browser
-                  timezone:{" "}
-                  <code className="font-mono">{getBrowserTimezone()}</code>.
-                </p>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+            <p className="-mt-2 text-xs text-muted-foreground">
+              The timezone dates your time entries. Detected browser timezone:{" "}
+              <code className="font-mono">{browserTimezone}</code>.
+            </p>
+            <div className="grid gap-2">
+              <Label htmlFor="biz-address">Address</Label>
+              <Textarea
+                id="biz-address"
+                value={form.businessAddress}
+                onChange={(e) =>
+                  setForm({ ...form, businessAddress: e.target.value })
+                }
+                placeholder="123 Main St&#10;City, State ZIP"
+                rows={3}
+              />
+            </div>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Remittance Information
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                This information appears on your invoices so clients know how to
-                pay you
-              </p>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-                Primary account · {INVOICE_CURRENCY}
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="rem-first">First Name</Label>
-                  <Input
-                    id="rem-first"
-                    value={form.remittanceFirstName}
-                    onChange={(e) =>
-                      setForm({ ...form, remittanceFirstName: e.target.value })
-                    }
-                    placeholder="John"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="rem-last">Last Name</Label>
-                  <Input
-                    id="rem-last"
-                    value={form.remittanceLastName}
-                    onChange={(e) =>
-                      setForm({ ...form, remittanceLastName: e.target.value })
-                    }
-                    placeholder="Doe"
-                  />
-                </div>
-              </div>
-              <Separator />
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Invoicing</CardTitle>
+            <CardDescription className="text-xs">
+              Numbering and due dates for new invoices.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="rem-bank">Bank Name</Label>
+                <Label htmlFor="inv-prefix">Invoice prefix</Label>
+                <Input
+                  id="inv-prefix"
+                  value={form.invoicePrefix}
+                  onChange={(e) =>
+                    setForm({ ...form, invoicePrefix: e.target.value })
+                  }
+                  placeholder="INV-"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="inv-next">Next invoice #</Label>
+                <Input
+                  id="inv-next"
+                  type="number"
+                  min="1"
+                  value={form.nextInvoiceNumber}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      nextInvoiceNumber: parseInt(e.target.value) || 1,
+                    })
+                  }
+                  className="tabular-nums"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="net-due">Net due</Label>
+              <div className="flex gap-2">
+                <Select
+                  value={(() => {
+                    const presets = [0, 7, 15, 30, 45, 60, 90]
+                    return presets.includes(form.defaultInvoiceDueDays)
+                      ? String(form.defaultInvoiceDueDays)
+                      : "custom"
+                  })()}
+                  onValueChange={(v) => {
+                    if (v === "custom") return
+                    setForm({
+                      ...form,
+                      defaultInvoiceDueDays: parseInt(v),
+                    })
+                  }}
+                >
+                  <SelectTrigger id="net-due" className="min-w-0 flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Due on receipt</SelectItem>
+                    <SelectItem value="7">Net 7</SelectItem>
+                    <SelectItem value="15">Net 15</SelectItem>
+                    <SelectItem value="30">Net 30</SelectItem>
+                    <SelectItem value="45">Net 45</SelectItem>
+                    <SelectItem value="60">Net 60</SelectItem>
+                    <SelectItem value="90">Net 90</SelectItem>
+                    <SelectItem value="custom">Custom</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number"
+                  min={0}
+                  aria-label="Net due days"
+                  value={form.defaultInvoiceDueDays}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      defaultInvoiceDueDays: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="w-20 tabular-nums"
+                />
+                <span className="self-center text-xs text-muted-foreground">
+                  days
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Default due-date offset when creating a new invoice. 0 days
+                means due on receipt.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="display-currency">Secondary estimate currency</Label>
+              <Select
+                value={form.displayCurrency || "none"}
+                onValueChange={(v) => setForm({ ...form, displayCurrency: v })}
+              >
+                <SelectTrigger id="display-currency" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {CURRENCIES.filter((c) => c.value !== "USD").map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Adds an ≈ converted line under the dashboard revenue totals.
+                The USD/CAD switch in the page header is the main currency
+                setting; this estimate is hidden when it matches that choice.
+                Rate refreshes daily from frankfurter.app.
+              </p>
+            </div>
+            <Separator />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPreviewOpen(true)}
+              >
+                <Eye className="size-4" data-icon="inline-start" />
+                Preview invoice email
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPayoutOpen(true)}
+              >
+                <DollarSign className="size-4" data-icon="inline-start" />
+                Payout threshold
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">
+              Remittance information
+            </CardTitle>
+            <CardDescription className="text-xs">
+              This information appears on your invoices so clients know how to
+              pay you.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+              Primary account · {INVOICE_CURRENCY}
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="rem-first">First name</Label>
+                <Input
+                  id="rem-first"
+                  value={form.remittanceFirstName}
+                  onChange={(e) =>
+                    setForm({ ...form, remittanceFirstName: e.target.value })
+                  }
+                  placeholder="John"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="rem-last">Last name</Label>
+                <Input
+                  id="rem-last"
+                  value={form.remittanceLastName}
+                  onChange={(e) =>
+                    setForm({ ...form, remittanceLastName: e.target.value })
+                  }
+                  placeholder="Doe"
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="grid gap-2">
+                <Label htmlFor="rem-bank">Bank name</Label>
                 <Input
                   id="rem-bank"
                   value={form.remittanceBankName}
@@ -396,59 +629,61 @@ export default function SettingsPage() {
                   placeholder="Chase Bank"
                 />
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="rem-routing">Routing Number</Label>
-                  <Input
-                    id="rem-routing"
-                    value={form.remittanceRoutingNumber}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        remittanceRoutingNumber: e.target.value,
-                      })
-                    }
-                    placeholder="021000021"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="rem-account">Account Number</Label>
-                  <Input
-                    id="rem-account"
-                    value={form.remittanceAccountNumber}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        remittanceAccountNumber: e.target.value,
-                      })
-                    }
-                    placeholder="123456789"
-                  />
-                </div>
-              </div>
               <div className="grid gap-2">
-                <Label htmlFor="rem-notes">Additional Notes</Label>
-                <Textarea
-                  id="rem-notes"
-                  value={form.remittanceNotes}
+                <Label htmlFor="rem-routing">Routing number</Label>
+                <Input
+                  id="rem-routing"
+                  value={form.remittanceRoutingNumber}
                   onChange={(e) =>
-                    setForm({ ...form, remittanceNotes: e.target.value })
+                    setForm({
+                      ...form,
+                      remittanceRoutingNumber: e.target.value,
+                    })
                   }
-                  placeholder="Wire transfer instructions, Zelle info, etc."
-                  rows={3}
+                  placeholder="021000021"
+                  className="tabular-nums"
                 />
               </div>
-              <Separator />
-              <div className="grid gap-1">
-                <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-                  Second account · optional
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Clients you turn this on for see their total in both
-                  currencies and can pay into either account. The converted
-                  amount uses the exchange rate on the day the invoice is sent.
-                </p>
+              <div className="grid gap-2">
+                <Label htmlFor="rem-account">Account number</Label>
+                <Input
+                  id="rem-account"
+                  value={form.remittanceAccountNumber}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      remittanceAccountNumber: e.target.value,
+                    })
+                  }
+                  placeholder="123456789"
+                  className="tabular-nums"
+                />
               </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="rem-notes">Additional notes</Label>
+              <Textarea
+                id="rem-notes"
+                value={form.remittanceNotes}
+                onChange={(e) =>
+                  setForm({ ...form, remittanceNotes: e.target.value })
+                }
+                placeholder="Wire transfer instructions, Zelle info, etc."
+                rows={3}
+              />
+            </div>
+            <Separator />
+            <div className="grid gap-1">
+              <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+                Second account · optional
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Clients you turn this on for see their total in both currencies
+                and can pay into either account. The converted amount uses the
+                exchange rate on the day the invoice is sent.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="rem2-currency">Currency</Label>
                 <Select
@@ -457,11 +692,13 @@ export default function SettingsPage() {
                     setSecondary({ currency: v === "none" ? "" : v })
                   }
                 >
-                  <SelectTrigger id="rem2-currency">
+                  <SelectTrigger id="rem2-currency" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">None ({INVOICE_CURRENCY} only)</SelectItem>
+                    <SelectItem value="none">
+                      None ({INVOICE_CURRENCY} only)
+                    </SelectItem>
                     {CURRENCIES.filter((c) => c.value !== INVOICE_CURRENCY).map(
                       (c) => (
                         <SelectItem key={c.value} value={c.value}>
@@ -472,288 +709,219 @@ export default function SettingsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              {secondaryForm.currency && (
-                <>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="grid gap-2">
-                      <Label htmlFor="rem2-name">Account Name</Label>
-                      <Input
-                        id="rem2-name"
-                        value={secondaryForm.accountName}
-                        onChange={(e) =>
-                          setSecondary({ accountName: e.target.value })
-                        }
-                        placeholder="John Doe"
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="rem2-bank">Bank Name</Label>
-                      <Input
-                        id="rem2-bank"
-                        value={secondaryForm.bankName}
-                        onChange={(e) =>
-                          setSecondary({ bankName: e.target.value })
-                        }
-                        placeholder={
-                          secondaryForm.currency === "AUD" ? "Wise" : "Bank"
-                        }
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="grid gap-2">
-                      <Label htmlFor="rem2-routing">
-                        {routingLabel(secondaryForm.currency)}
-                      </Label>
-                      <Input
-                        id="rem2-routing"
-                        value={secondaryForm.routingNumber}
-                        onChange={(e) =>
-                          setSecondary({ routingNumber: e.target.value })
-                        }
-                        placeholder={
-                          secondaryForm.currency === "AUD" ? "062-000" : ""
-                        }
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="rem2-account">Account Number</Label>
-                      <Input
-                        id="rem2-account"
-                        value={secondaryForm.accountNumber}
-                        onChange={(e) =>
-                          setSecondary({ accountNumber: e.target.value })
-                        }
-                        placeholder="12345678"
-                      />
-                    </div>
-                  </div>
+            </div>
+            {secondaryForm.currency && (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-2">
-                    <Label htmlFor="rem2-notes">Additional Notes</Label>
-                    <Textarea
-                      id="rem2-notes"
-                      value={secondaryForm.notes}
-                      onChange={(e) => setSecondary({ notes: e.target.value })}
-                      placeholder="SWIFT code, PayID, or other instructions"
-                      rows={2}
+                    <Label htmlFor="rem2-name">Account name</Label>
+                    <Input
+                      id="rem2-name"
+                      value={secondaryForm.accountName}
+                      onChange={(e) =>
+                        setSecondary({ accountName: e.target.value })
+                      }
+                      placeholder="John Doe"
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Turn it on per client under Clients → Edit.
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Invoice Settings
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="inv-prefix">Invoice Prefix</Label>
-                  <Input
-                    id="inv-prefix"
-                    value={form.invoicePrefix}
-                    onChange={(e) =>
-                      setForm({ ...form, invoicePrefix: e.target.value })
-                    }
-                    placeholder="INV-"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="inv-next">Next Invoice #</Label>
-                  <Input
-                    id="inv-next"
-                    type="number"
-                    min="1"
-                    value={form.nextInvoiceNumber}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        nextInvoiceNumber: parseInt(e.target.value) || 1,
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="net-due">Net Due</Label>
-                <div className="flex gap-2">
-                  <Select
-                    value={(() => {
-                      const presets = [0, 7, 15, 30, 45, 60, 90]
-                      return presets.includes(form.defaultInvoiceDueDays)
-                        ? String(form.defaultInvoiceDueDays)
-                        : "custom"
-                    })()}
-                    onValueChange={(v) => {
-                      if (v === "custom") return
-                      setForm({
-                        ...form,
-                        defaultInvoiceDueDays: parseInt(v),
-                      })
-                    }}
-                  >
-                    <SelectTrigger id="net-due" className="flex-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">Due on receipt</SelectItem>
-                      <SelectItem value="7">Net 7</SelectItem>
-                      <SelectItem value="15">Net 15</SelectItem>
-                      <SelectItem value="30">Net 30</SelectItem>
-                      <SelectItem value="45">Net 45</SelectItem>
-                      <SelectItem value="60">Net 60</SelectItem>
-                      <SelectItem value="90">Net 90</SelectItem>
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={form.defaultInvoiceDueDays}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        defaultInvoiceDueDays: parseInt(e.target.value) || 0,
-                      })
-                    }
-                    className="w-20 font-mono"
-                  />
-                  <span className="self-center text-xs text-muted-foreground">
-                    days
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Default due-date offset when creating a new invoice.{" "}
-                  <code className="font-mono">0</code> = due on receipt.
-                </p>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="display-currency">Display Currency</Label>
-                <Select
-                  value={form.displayCurrency || ""}
-                  onValueChange={(v) =>
-                    setForm({ ...form, displayCurrency: v })
-                  }
-                >
-                  <SelectTrigger id="display-currency">
-                    <SelectValue placeholder="None (show USD only)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None (show USD only)</SelectItem>
-                    {CURRENCIES.filter((c) => c.value !== "USD").map((c) => (
-                      <SelectItem key={c.value} value={c.value}>
-                        {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Show a converted total alongside USD on dashboard &amp;
-                  reports. Rate refreshes daily from frankfurter.app.
-                </p>
-              </div>
-              <Separator />
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPreviewOpen(true)}
-                >
-                  <Eye className="size-4" data-icon="inline-start" />
-                  Preview Email
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPayoutOpen(true)}
-                >
-                  <DollarSign className="size-4" data-icon="inline-start" />
-                  Payout Threshold
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="text-sm font-medium">
-                    Email Integration
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">
-                    Connect Resend to send invoices directly to your clients
-                  </p>
-                </div>
-                {resendStatus.configured ? (
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                    <CheckCircle2 className="size-3.5" />
-                    Connected
-                  </span>
-                ) : (
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                    Not connected
-                  </span>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              {resendStatus.configured ? (
-                <div className="grid gap-3">
-                  <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <Key className="size-4 text-muted-foreground" />
-                      <span className="font-mono text-sm">
-                        {resendStatus.masked ?? "re_••••"}
-                      </span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleResendDisconnect}
-                    >
-                      <Trash2 className="size-4" data-icon="inline-start" />
-                      Disconnect
-                    </Button>
+                  <div className="grid gap-2">
+                    <Label htmlFor="rem2-bank">Bank name</Label>
+                    <Input
+                      id="rem2-bank"
+                      value={secondaryForm.bankName}
+                      onChange={(e) =>
+                        setSecondary({ bankName: e.target.value })
+                      }
+                      placeholder={
+                        secondaryForm.currency === "AUD" ? "Wise" : "Bank"
+                      }
+                    />
                   </div>
                   <div className="grid gap-2">
-                    <Label
-                      htmlFor="resend-key"
-                      className="text-xs text-muted-foreground"
-                    >
-                      Replace key
+                    <Label htmlFor="rem2-routing">
+                      {routingLabel(secondaryForm.currency)}
                     </Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="resend-key"
-                        type="password"
-                        value={resendKey}
-                        onChange={(e) => setResendKey(e.target.value)}
-                        placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx"
-                        className="flex-1 font-mono text-sm"
-                      />
-                      <Button
-                        size="sm"
-                        onClick={handleResendSave}
-                        disabled={resendSaving || !resendKey.trim()}
-                      >
-                        {resendSaving ? "Saving..." : "Update"}
-                      </Button>
-                    </div>
+                    <Input
+                      id="rem2-routing"
+                      value={secondaryForm.routingNumber}
+                      onChange={(e) =>
+                        setSecondary({ routingNumber: e.target.value })
+                      }
+                      placeholder={
+                        secondaryForm.currency === "AUD" ? "062-000" : ""
+                      }
+                      className="tabular-nums"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="rem2-account">Account number</Label>
+                    <Input
+                      id="rem2-account"
+                      value={secondaryForm.accountNumber}
+                      onChange={(e) =>
+                        setSecondary({ accountNumber: e.target.value })
+                      }
+                      placeholder="12345678"
+                      className="tabular-nums"
+                    />
                   </div>
                 </div>
-              ) : (
                 <div className="grid gap-2">
-                  <Label htmlFor="resend-key">Resend API Key</Label>
+                  <Label htmlFor="rem2-notes">Additional notes</Label>
+                  <Textarea
+                    id="rem2-notes"
+                    value={secondaryForm.notes}
+                    onChange={(e) => setSecondary({ notes: e.target.value })}
+                    placeholder="SWIFT code, PayID, or other instructions"
+                    rows={2}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Turn it on per client under Clients → Edit.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">
+              Agent Time integrations
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Machines the tracker imports agentic coding time from.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="agent-time">Collector URLs (one per line)</Label>
+              <Textarea
+                id="agent-time"
+                value={(form.agentTimeHosts || []).join("\n")}
+                onChange={(e) =>
+                  setForm({ ...form, agentTimeHosts: e.target.value.split("\n") })
+                }
+                placeholder="http://your-machine:8080/api/data"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Add each machine running Agent Time. Overlapping activity is
+                merged so time is not counted twice.
+              </p>
+            </div>
+            {(form.agentTimeHosts || []).some((url) => url.trim()) && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(form.agentTimeHosts || [])
+                  .filter((url) => url.trim())
+                  .map((url, index) => (
+                    <div
+                      key={index}
+                      className="grid min-w-0 gap-1.5 rounded-md border p-3"
+                    >
+                      <Label htmlFor={`machine-label-${index}`}>
+                        Machine label
+                      </Label>
+                      <Input
+                        id={`machine-label-${index}`}
+                        value={form.agentTimeHostLabels?.[url.trim()] || ""}
+                        placeholder="e.g. Work laptop or Coding VM"
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            agentTimeHostLabels: {
+                              ...form.agentTimeHostLabels,
+                              [url.trim()]: e.target.value,
+                            },
+                          })
+                        }
+                      />
+                      <p className="font-mono text-xs break-all text-muted-foreground">
+                        {url.trim()}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            )}
+            <div className="grid gap-2 sm:max-w-xs">
+              <Label htmlFor="agent-time-max">
+                Maximum entry length (minutes)
+              </Label>
+              <Input
+                id="agent-time-max"
+                type="number"
+                min={1}
+                max={1440}
+                step={1}
+                value={form.agentTimeMaxMinutes ?? ""}
+                placeholder="No limit"
+                className="tabular-nums"
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    agentTimeMaxMinutes: e.target.value
+                      ? Math.max(
+                          1,
+                          Math.min(1440, Math.round(Number(e.target.value)))
+                        )
+                      : null,
+                  })
+                }
+              />
+            </div>
+            <p className="-mt-2 text-xs text-muted-foreground">
+              Split new Agent Time imports into intervals with titles based on
+              each interval’s activity. Leave blank for no limit. Saved entries
+              are unchanged.
+            </p>
+          </CardContent>
+        </Card>
+
+        <SectionHeading
+          title="Email"
+          description="Sending invoices by email. Each card here saves on its own."
+        />
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Email integration</CardTitle>
+            <CardDescription className="text-xs">
+              Connect Resend to send invoices directly to your clients.
+            </CardDescription>
+            <CardAction>
+              {resendStatus.configured ? (
+                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-success/10 px-2 py-0.5 text-xs font-medium text-success-foreground">
+                  <CheckCircle2 aria-hidden className="size-3.5" />
+                  Connected
+                </span>
+              ) : (
+                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  Not connected
+                </span>
+              )}
+            </CardAction>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            {resendStatus.configured ? (
+              <div className="grid gap-3">
+                <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Key aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-mono text-sm">
+                      {resendStatus.masked ?? "re_••••"}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleResendDisconnect}
+                  >
+                    <Trash2 className="size-4" data-icon="inline-start" />
+                    Disconnect
+                  </Button>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="resend-key">Replace key</Label>
                   <div className="flex gap-2">
                     <Input
                       id="resend-key"
@@ -761,107 +929,123 @@ export default function SettingsPage() {
                       value={resendKey}
                       onChange={(e) => setResendKey(e.target.value)}
                       placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx"
-                      className="flex-1 font-mono text-sm"
+                      className="min-w-0 flex-1 font-mono text-sm"
                     />
                     <Button
                       size="sm"
                       onClick={handleResendSave}
                       disabled={resendSaving || !resendKey.trim()}
+                      className="self-center"
                     >
-                      <Key className="size-4" data-icon="inline-start" />
-                      {resendSaving ? "Saving..." : "Save Key"}
+                      {resendSaving ? "Saving..." : "Save new key"}
                     </Button>
                   </div>
                 </div>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Your API key is stored server-side as an environment variable
-                and never exposed to the browser.
-              </p>
-              {resendStatus.configured && (
-                <>
-                  <Separator />
-                  <div className="grid gap-2">
-                    <Label htmlFor="test-email">Send a test invoice</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        id="test-email"
-                        type="email"
-                        value={testEmail}
-                        onChange={(e) => setTestEmail(e.target.value)}
-                        placeholder="you@example.com"
-                        className="flex-1"
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleSendTest}
-                        disabled={testSending || !testEmail.trim()}
-                      >
-                        {testSending ? "Sending..." : "Send Test"}
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Sends a sample invoice using your saved Email Format
-                      settings.
-                    </p>
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                <Label htmlFor="resend-key">Resend API key</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="resend-key"
+                    type="password"
+                    value={resendKey}
+                    onChange={(e) => setResendKey(e.target.value)}
+                    placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx"
+                    className="min-w-0 flex-1 font-mono text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleResendSave}
+                    disabled={resendSaving || !resendKey.trim()}
+                    className="self-center"
+                  >
+                    <Key className="size-4" data-icon="inline-start" />
+                    {resendSaving ? "Saving..." : "Save key"}
+                  </Button>
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Saves right away. Your API key is stored server-side as an
+              environment variable and never exposed to the browser.
+            </p>
+            {resendStatus.configured && (
+              <>
+                <Separator />
+                <div className="grid gap-2">
+                  <Label htmlFor="test-email">Send a test invoice</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="test-email"
+                      type="email"
+                      value={testEmail}
+                      onChange={(e) => setTestEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="min-w-0 flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSendTest}
+                      disabled={testSending || !testEmail.trim()}
+                      className="self-center"
+                    >
+                      {testSending ? "Sending..." : "Send test"}
+                    </Button>
                   </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="text-sm font-medium">
-                    Email Format
-                  </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Customize the subject, greeting, and signature. Variables:{" "}
-                    <code className="font-mono">{"{{invoiceNumber}}"}</code>{" "}
-                    <code className="font-mono">{"{{businessName}}"}</code>{" "}
-                    <code className="font-mono">{"{{clientName}}"}</code>{" "}
-                    <code className="font-mono">{"{{total}}"}</code>{" "}
-                    <code className="font-mono">{"{{dueDate}}"}</code>
+                    Sends a sample invoice using your saved email format.
                   </p>
                 </div>
-                <Button size="sm" onClick={handleEmailFormatSave}>
-                  Save Format
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="email-from">From Address</Label>
-                <Input
-                  id="email-from"
-                  value={form.emailFromAddress}
-                  onChange={(e) =>
-                    setForm({ ...form, emailFromAddress: e.target.value })
-                  }
-                  placeholder="invoices@yourdomain.com"
-                  className="font-mono text-sm"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Must be on a domain you&apos;ve verified in Resend. Falls back
-                  to your business email.
-                </p>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="email-subject">Subject Line</Label>
-                <Input
-                  id="email-subject"
-                  value={form.emailSubject}
-                  onChange={(e) =>
-                    setForm({ ...form, emailSubject: e.target.value })
-                  }
-                  placeholder="Invoice {{invoiceNumber}} from {{businessName}}"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="email-greeting">Greeting / Intro</Label>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Email format</CardTitle>
+            <CardDescription className="text-xs">
+              Customize the subject, greeting, and signature. Variables:{" "}
+              <code className="font-mono">{"{{invoiceNumber}}"}</code>{" "}
+              <code className="font-mono">{"{{businessName}}"}</code>{" "}
+              <code className="font-mono">{"{{clientName}}"}</code>{" "}
+              <code className="font-mono">{"{{total}}"}</code>{" "}
+              <code className="font-mono">{"{{dueDate}}"}</code>
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="email-from">From address</Label>
+              <Input
+                id="email-from"
+                value={form.emailFromAddress}
+                onChange={(e) =>
+                  setForm({ ...form, emailFromAddress: e.target.value })
+                }
+                placeholder="invoices@yourdomain.com"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Must be on a domain you&apos;ve verified in Resend. Falls back
+                to your business email.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="email-subject">Subject line</Label>
+              <Input
+                id="email-subject"
+                value={form.emailSubject}
+                onChange={(e) =>
+                  setForm({ ...form, emailSubject: e.target.value })
+                }
+                placeholder="Invoice {{invoiceNumber}} from {{businessName}}"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid content-start gap-2">
+                <Label htmlFor="email-greeting">Greeting / intro</Label>
                 <Textarea
                   id="email-greeting"
                   value={form.emailGreeting}
@@ -872,87 +1056,74 @@ export default function SettingsPage() {
                   placeholder="Hi {{clientName}},&#10;&#10;Please find your invoice below."
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="email-signature">Signature / Closing</Label>
+              <div className="grid content-start gap-2">
+                <Label htmlFor="email-signature">Signature / closing</Label>
                 <Textarea
                   id="email-signature"
                   value={form.emailSignature}
                   onChange={(e) =>
                     setForm({ ...form, emailSignature: e.target.value })
                   }
-                  rows={2}
+                  rows={3}
                   placeholder="Thanks,&#10;{{businessName}}"
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="email-color">Accent Color</Label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="email-color"
-                    type="color"
-                    value={form.emailAccentColor}
-                    onChange={(e) =>
-                      setForm({ ...form, emailAccentColor: e.target.value })
-                    }
-                    className="h-9 w-12 cursor-pointer rounded border border-input bg-background p-0.5"
-                  />
-                  <Input
-                    value={form.emailAccentColor}
-                    onChange={(e) =>
-                      setForm({ ...form, emailAccentColor: e.target.value })
-                    }
-                    placeholder="#111827"
-                    className="font-mono text-sm"
-                  />
-                </div>
+            </div>
+            <div className="grid gap-2 sm:max-w-xs">
+              <Label htmlFor="email-color">Accent color</Label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="email-color"
+                  type="color"
+                  value={form.emailAccentColor}
+                  onChange={(e) =>
+                    setForm({ ...form, emailAccentColor: e.target.value })
+                  }
+                  className="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-background p-0.5 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                />
+                <Input
+                  aria-label="Accent color hex value"
+                  value={form.emailAccentColor}
+                  onChange={(e) =>
+                    setForm({ ...form, emailAccentColor: e.target.value })
+                  }
+                  placeholder="#111827"
+                  className="min-w-0 font-mono text-sm"
+                />
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Agent Time Integrations
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="agent-time-max">Maximum entry length (minutes)</Label>
-                <Input id="agent-time-max" type="number" min={1} max={1440} step={1} value={form.agentTimeMaxMinutes ?? ""} placeholder="No limit" className="[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" onChange={(e) => setForm({ ...form, agentTimeMaxMinutes: e.target.value ? Math.max(1, Math.min(1440, Math.round(Number(e.target.value)))) : null })} />
-                <p className="text-xs text-muted-foreground">Split new Agent Time imports into intervals with titles based on each interval’s activity. Leave blank for no limit. Saved entries are unchanged.</p>
-                <Label htmlFor="agent-time">Collector URLs (one per line)</Label>
-                <Textarea id="agent-time" value={(form.agentTimeHosts || []).join("\n")} onChange={(e) => setForm({ ...form, agentTimeHosts: e.target.value.split("\n") })} placeholder="http://your-machine:8080/api/data" />
-                <p className="text-xs text-muted-foreground">Add each machine running Agent Time. Overlapping activity is merged so time is not counted twice.</p>
-                <div className="grid gap-3">
-                  {(form.agentTimeHosts || []).filter((url) => url.trim()).map((url, index) => <div key={index} className="grid gap-1.5 rounded-md border p-3">
-                    <Label htmlFor={`machine-label-${index}`}>Machine label</Label>
-                    <Input id={`machine-label-${index}`} value={form.agentTimeHostLabels?.[url.trim()] || ""} placeholder="e.g. Work laptop or Coding VM" onChange={(e) => setForm({ ...form, agentTimeHostLabels: { ...form.agentTimeHostLabels, [url.trim()]: e.target.value } })} />
-                    <p className="break-all text-xs text-muted-foreground">{url.trim()}</p>
-                  </div>)}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </CardContent>
+          <CardFooter className="justify-end gap-3">
+            <SaveStatus dirty={emailDirty} saved={emailSaved} />
+            <Button
+              size="sm"
+              onClick={handleEmailFormatSave}
+              disabled={emailSaving}
+              data-testid="settings-save-email-format"
+            >
+              {emailSaving ? "Saving..." : "Save email format"}
+            </Button>
+          </CardFooter>
+        </Card>
       </div>
 
       {/* Payout Threshold Dialog */}
       <Dialog open={payoutOpen} onOpenChange={setPayoutOpen}>
         <DialogContent className="w-[95vw] sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Payout Threshold</DialogTitle>
-            <p className="text-sm text-muted-foreground">
+            <DialogTitle>Payout threshold</DialogTitle>
+            <DialogDescription>
               Set the minimum balance required before a payout is triggered.
-            </p>
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-6 py-4">
             <div className="grid gap-2">
-              <Label>Preferred Currency</Label>
+              <Label htmlFor="payout-currency">Preferred currency</Label>
               <Select
                 value={form.payoutCurrency}
                 onValueChange={(v) => setForm({ ...form, payoutCurrency: v })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="payout-currency" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -966,9 +1137,9 @@ export default function SettingsPage() {
             </div>
             <div className="grid gap-3">
               <div className="flex items-baseline justify-between gap-3">
-                <Label htmlFor="payout-amount">Minimum Payout Amount</Label>
+                <Label htmlFor="payout-amount">Minimum payout amount</Label>
                 <div className="flex items-baseline">
-                  <span className="font-mono text-2xl font-bold text-muted-foreground">
+                  <span className="text-2xl font-semibold text-muted-foreground tabular-nums">
                     $
                   </span>
                   <Input
@@ -997,11 +1168,12 @@ export default function SettingsPage() {
                         : Math.min(10000, Math.max(50, n))
                       setForm({ ...form, payoutMinAmount: clamped })
                     }}
-                    className="h-auto w-32 border-0 bg-transparent p-0 text-right font-mono text-2xl font-bold shadow-none focus-visible:ring-0"
+                    className="h-auto w-32 border-0 bg-transparent p-0 text-right text-2xl font-semibold tabular-nums shadow-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   />
                 </div>
               </div>
               <Slider
+                aria-label="Minimum payout amount"
                 value={[
                   Math.min(10000, Math.max(50, form.payoutMinAmount || 50)),
                 ]}
@@ -1013,9 +1185,9 @@ export default function SettingsPage() {
                 step={50}
                 className="w-full"
               />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>$50 (MIN)</span>
-                <span>$10,000 (MAX)</span>
+              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                <span>$50 minimum</span>
+                <span>$10,000 maximum</span>
               </div>
             </div>
             <div className="grid gap-2">
@@ -1035,7 +1207,7 @@ export default function SettingsPage() {
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={handlePayoutSave}>Save Threshold</Button>
+            <Button onClick={handlePayoutSave}>Save threshold</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

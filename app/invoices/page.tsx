@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useMemo, useState } from "react"
 import {
   Plus,
@@ -56,7 +57,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,6 +71,12 @@ import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-
 import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
 import { billedSeconds } from "@/lib/billing"
 import { PageHeader } from "@/components/page-header"
+import {
+  InvoiceStatusBadge,
+  invoiceStatusDots,
+  invoiceStatusLabels,
+  invoiceStatusStyles,
+} from "@/components/status-badge"
 import { applyEmailTemplateVariables } from "@/lib/email-template"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
@@ -88,30 +94,10 @@ import {
   type FxLock,
 } from "@/lib/invoice-currency"
 import { fetchQuote, useExchangeRate } from "@/lib/use-exchange-rate"
+import { cn } from "@/lib/utils"
 import type { Client, Invoice, InvoiceLineItem, Settings, TimeEntry, Expense } from "@/lib/types"
 
-const statusStyles: Record<Invoice["status"], string> = {
-  draft: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
-  sent: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  paid: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  overdue: "bg-red-500/10 text-red-600 dark:text-red-400",
-}
-
-const statusDots: Record<Invoice["status"], string> = {
-  draft: "bg-gray-400",
-  sent: "bg-blue-500",
-  paid: "bg-emerald-500",
-  overdue: "bg-red-500",
-}
-
-const statusLabels: Record<Invoice["status"], string> = {
-  draft: "Draft",
-  sent: "Sent",
-  paid: "Paid",
-  overdue: "Overdue",
-}
-
-const STATUS_OPTIONS = Object.keys(statusLabels) as Invoice["status"][]
+const STATUS_OPTIONS = Object.keys(invoiceStatusLabels) as Invoice["status"][]
 
 function invoiceDueLabel(invoice: Invoice): string {
   return invoice.dueDate === invoice.issueDate
@@ -136,6 +122,23 @@ function lockedSecondaryLabel(invoice: Invoice): string | null {
   return locked ? formatWithCode(locked.amount, locked.currency) : null
 }
 
+/** Inline message under a field; its id is what the field's aria-describedby points at. */
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null
+  return (
+    <p id={id} tabIndex={-1} className="text-xs text-destructive outline-none">
+      {message}
+    </p>
+  )
+}
+
+function invalidProps(id: string, message?: string) {
+  return {
+    "aria-invalid": !!message || undefined,
+    "aria-describedby": message ? `${id}-error` : undefined,
+  }
+}
+
 function StatusMenu({
   invoice,
   onChange,
@@ -149,12 +152,16 @@ function StatusMenu({
         <button
           type="button"
           aria-label={`Change status for ${invoice.invoiceNumber}`}
-          className={`inline-flex items-center gap-1.5 rounded-full py-1 pl-2.5 pr-2 text-xs font-medium transition-colors hover:ring-1 hover:ring-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${statusStyles[invoice.status]}`}
+          className={cn(
+            "inline-flex h-6 pointer-coarse:h-9 items-center gap-1.5 rounded-md pr-1.5 pl-2 text-xs font-medium whitespace-nowrap transition-colors hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+            invoiceStatusStyles[invoice.status]
+          )}
         >
           <span
-            className={`size-1.5 rounded-full ${statusDots[invoice.status]}`}
+            aria-hidden
+            className={cn("size-1.5 rounded-full", invoiceStatusDots[invoice.status])}
           />
-          {statusLabels[invoice.status]}
+          {invoiceStatusLabels[invoice.status]}
           <ChevronDown className="size-3 opacity-60" />
         </button>
       </DropdownMenuTrigger>
@@ -164,13 +171,77 @@ function StatusMenu({
             key={status}
             onClick={() => status !== invoice.status && onChange(status)}
           >
-            <span className={`size-2 rounded-full ${statusDots[status]}`} />
-            {statusLabels[status]}
+            <span aria-hidden className={cn("size-2 rounded-full", invoiceStatusDots[status])} />
+            {invoiceStatusLabels[status]}
             {status === invoice.status && (
               <Check className="ml-auto size-3.5 opacity-60" />
             )}
           </DropdownMenuItem>
         ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** Secondary row actions; Preview stays visible beside it on desktop and joins the menu on phones. */
+function InvoiceActionsMenu({
+  invoice,
+  downloading,
+  sending,
+  onPreview,
+  onDownload,
+  onEdit,
+  onSend,
+  onDelete,
+  className,
+}: {
+  invoice: Invoice
+  downloading: boolean
+  sending: boolean
+  onPreview?: () => void
+  onDownload: () => void
+  onEdit: () => void
+  onSend: () => void
+  onDelete: () => void
+  className?: string
+}) {
+  const reissue = invoice.status === "sent"
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className={cn("shrink-0", className)}
+          aria-label={`More actions for ${invoice.invoiceNumber}`}
+          title="More actions"
+        >
+          {downloading || sending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <MoreHorizontal className="size-4" />
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {onPreview && (
+          <DropdownMenuItem onClick={onPreview}>
+            <Eye className="size-4" /> Preview
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={onSend} disabled={sending}>
+          <Send className="size-4" /> {reissue ? "Reissue invoice" : "Send invoice"}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onDownload} disabled={downloading}>
+          <Download className="size-4" /> Download PDF
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onEdit}>
+          <Pencil className="size-4" /> Edit
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={onDelete}>
+          <Trash2 className="size-4" /> Delete
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -218,7 +289,10 @@ export default function InvoicesPage() {
     new Set()
   )
 
+  const [createErrors, setCreateErrors] = useState<{ client?: string; items?: string; dueDays?: string }>({})
+
   // Edit form state
+  const [editDueError, setEditDueError] = useState<string | null>(null)
   const [editNotes, setEditNotes] = useState("")
   const [editDueDays, setEditDueDays] = useState("")
   const [editTax, setEditTax] = useState("")
@@ -282,6 +356,7 @@ export default function InvoicesPage() {
     setDueDays(String(defaultDueDays))
     setSelectedEntries(new Set())
     setSelectedExpenses(new Set())
+    setCreateErrors({})
     setCreateOpen(true)
   }
 
@@ -291,6 +366,7 @@ export default function InvoicesPage() {
       parseISO(invoice.issueDate)
     )
     setEditInvoice(invoice)
+    setEditDueError(null)
     setEditNotes(invoice.notes)
     setEditDueDays(String(Math.max(0, currentDueDays)))
     setEditTax(invoice.tax.toString())
@@ -349,7 +425,12 @@ export default function InvoicesPage() {
     return toFxLock(currency, await fetchQuote(INVOICE_CURRENCY, currency))
   }
 
+  function clearItemsError() {
+    setCreateErrors((current) => (current.items ? { ...current, items: undefined } : current))
+  }
+
   function toggleEntry(id: string) {
+    clearItemsError()
     setSelectedEntries((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -359,6 +440,7 @@ export default function InvoicesPage() {
   }
 
   function toggleExpense(id: string) {
+    clearItemsError()
     setSelectedExpenses((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -368,6 +450,7 @@ export default function InvoicesPage() {
   }
 
   function selectAllEntries() {
+    clearItemsError()
     if (selectedEntries.size === unbilledEntries.length) {
       setSelectedEntries(new Set())
     } else {
@@ -376,6 +459,7 @@ export default function InvoicesPage() {
   }
 
   function selectAllExpenses() {
+    clearItemsError()
     if (selectedExpenses.size === unbilledExpenses.length) {
       setSelectedExpenses(new Set())
     } else {
@@ -416,22 +500,35 @@ export default function InvoicesPage() {
   const total = subtotal + tax
 
   async function handleCreate() {
-    if (!selectedClientId) {
-      toast.error("Select a client")
-      return
+    const parsedDueDays = Number.parseInt(dueDays, 10)
+    const errors = {
+      client: selectedClientId ? undefined : "Choose a client",
+      items:
+        selectedClientId && lineItemsPreview.length === 0
+          ? "Select at least one time entry or expense"
+          : undefined,
+      dueDays:
+        !Number.isFinite(parsedDueDays) || parsedDueDays < 0
+          ? "Enter 0 or more days"
+          : undefined,
     }
-    if (lineItemsPreview.length === 0) {
-      toast.error("Select at least one time entry or expense")
+    if (errors.client || errors.items || errors.dueDays) {
+      setCreateErrors(errors)
+      // The items message renders with this state change, so look up the target a frame later.
+      requestAnimationFrame(() => {
+        const target = errors.client
+          ? document.getElementById("invoice-client")
+          : errors.items
+            ? (document.querySelector<HTMLElement>("#invoice-line-items button[role=checkbox]") ??
+              document.getElementById("invoice-items-error"))
+            : document.getElementById("due-days")
+        target?.focus()
+      })
       return
     }
 
     const invoiceNumber = `${data.settings.invoicePrefix}${data.settings.nextInvoiceNumber}`
     const today = format(new Date(), "yyyy-MM-dd")
-    const parsedDueDays = Number.parseInt(dueDays, 10)
-    if (!Number.isFinite(parsedDueDays) || parsedDueDays < 0) {
-      toast.error("Due days must be 0 or greater")
-      return
-    }
     const due = format(addDays(parseISO(today), parsedDueDays), "yyyy-MM-dd")
 
     await addInvoice(
@@ -466,7 +563,8 @@ export default function InvoicesPage() {
     if (!editInvoice) return
     const parsedDueDays = Number.parseInt(editDueDays, 10)
     if (!Number.isFinite(parsedDueDays) || parsedDueDays < 0) {
-      toast.error("Due days must be 0 or greater")
+      setEditDueError("Enter 0 or more days")
+      document.getElementById("edit-due")?.focus()
       return
     }
     const parsedTax = Number.parseFloat(editTax)
@@ -613,56 +711,101 @@ export default function InvoicesPage() {
     <>
       <PageHeader
         title="Invoices"
+        actions={
+          <Button
+            size="sm"
+            onClick={openCreate}
+            disabled={data.clients.length === 0}
+            title={data.clients.length === 0 ? "Add a client first" : undefined}
+          >
+            <Plus className="size-3.5" data-icon="inline-start" />
+            New invoice
+          </Button>
+        }
       />
 
       <Card data-testid="invoice-section">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-sm font-medium">Invoice Log</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            {filteredEstimates.length > 0 && <Button size="sm" data-testid="review-invoice-previews" className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300" onClick={() => setEstimateId(filteredEstimates[0].id)}><Eye className="size-3.5" />Review {filteredEstimates.length} {filteredEstimates.length === 1 ? "preview" : "previews"}</Button>}
-            <Button size="sm" variant="outline" onClick={openCreate} disabled={data.clients.length === 0}><Plus className="size-3.5" />New Invoice</Button>
-          </div>
+          <CardTitle className="text-sm font-medium">Invoice log</CardTitle>
+          {filteredEstimates.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="review-invoice-previews"
+              className="self-start sm:self-auto"
+              onClick={() => setEstimateId(filteredEstimates[0].id)}
+            >
+              <Eye className="size-3.5 text-warning-foreground" data-icon="inline-start" />
+              Review {filteredEstimates.length} {filteredEstimates.length === 1 ? "preview" : "previews"}
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
       <div className="mb-5 max-w-md">
-        <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" placeholder="Search invoice number, client, or status" /></div>
+        <div className="relative">
+          <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+            placeholder="Search invoices"
+            aria-label="Search invoices by number, client, or status"
+          />
+        </div>
       </div>
 
       {filteredInvoices.length === 0 && filteredEstimates.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-              <FileText className="size-5 text-muted-foreground" />
-            </div>
-            <p className="text-sm font-medium">No invoices yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Create your first invoice from tracked time and expenses
-            </p>
-            <Button
-              size="sm"
-              className="mt-4"
-              onClick={openCreate}
-              disabled={data.clients.length === 0}
-            >
-              <Plus className="size-4" data-icon="inline-start" />
-              New Invoice
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="flex flex-col items-center justify-center rounded-md border border-dashed px-4 py-16 text-center">
+          <div className="mb-4 flex size-12 items-center justify-center rounded-md bg-muted">
+            <FileText aria-hidden className="size-5 text-muted-foreground" />
+          </div>
+          {search.trim() ? (
+            <>
+              <p className="text-sm font-medium">No invoices match “{search.trim()}”</p>
+              <Button size="sm" variant="outline" className="mt-4" onClick={() => setSearch("")}>
+                Clear search
+              </Button>
+            </>
+          ) : data.clients.length === 0 ? (
+            <>
+              <p className="text-sm font-medium">No invoices yet</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Add a client and track some time to create your first invoice.
+              </p>
+              <Button asChild size="sm" className="mt-4">
+                <Link href="/clients">Add a client</Link>
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium">No invoices yet</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Create your first invoice from tracked time and expenses.
+              </p>
+              <Button size="sm" className="mt-4" onClick={openCreate}>
+                <Plus className="size-4" data-icon="inline-start" />
+                New invoice
+              </Button>
+            </>
+          )}
+        </div>
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden overflow-hidden rounded-md border md:block">
+          <div className="hidden overflow-hidden rounded-md border lg:block">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Invoice</TableHead>
                   <TableHead>Client</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Due</TableHead>
-                  <TableHead>Total</TableHead>
+                  <TableHead className="hidden xl:table-cell">Due</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-32" />
+                  <TableHead className="w-20">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -671,7 +814,7 @@ export default function InvoicesPage() {
                   const client = getClient(inv.clientId)
                   return (
                     <TableRow key={inv.id}>
-                      <TableCell className="font-mono text-sm font-medium">
+                      <TableCell className="text-sm font-medium tabular-nums">
                         {inv.invoiceNumber}
                       </TableCell>
                       <TableCell>
@@ -685,19 +828,31 @@ export default function InvoicesPage() {
                           <span className="text-sm">{client?.name ?? "—"}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
+                      <TableCell className="text-sm text-muted-foreground">
                         {format(new Date(inv.issueDate), "MMM d, yyyy")}
+                        {/* Below xl the Due column folds in here so the table fits beside the sidebar. */}
+                        <span
+                          className={cn(
+                            "block text-xs xl:hidden",
+                            isPastDue(inv) && "font-medium text-destructive"
+                          )}
+                        >
+                          {inv.dueDate === inv.issueDate
+                            ? "Due on receipt"
+                            : `Due ${invoiceDueLabel(inv)}`}
+                        </span>
                       </TableCell>
                       <TableCell
-                        className={`font-mono text-xs ${
+                        className={cn(
+                          "hidden text-sm xl:table-cell",
                           isPastDue(inv)
-                            ? "font-medium text-red-600 dark:text-red-400"
+                            ? "font-medium text-destructive"
                             : "text-muted-foreground"
-                        }`}
+                        )}
                       >
                         {invoiceDueLabel(inv)}
                       </TableCell>
-                      <TableCell className="font-mono text-sm font-medium">
+                      <TableCell className="text-right text-sm font-medium tabular-nums">
                         {listTotal(inv).total}
                         {listTotal(inv).secondary && (
                           <span className="block text-xs font-normal text-muted-foreground">
@@ -724,52 +879,15 @@ export default function InvoicesPage() {
                           >
                             <Eye className="size-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => handleDownload(inv)}
-                            disabled={downloadingId === inv.id}
-                            aria-label={`Download ${inv.invoiceNumber} PDF`}
-                            title="Download PDF"
-                          >
-                            {downloadingId === inv.id ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <Download className="size-3.5" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => openEdit(inv)}
-                            aria-label={`Edit ${inv.invoiceNumber}`}
-                            title="Edit"
-                          >
-                            <Pencil className="size-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => openSend(inv)}
-                            disabled={sendingId === inv.id}
-                            aria-label={`${inv.status === "sent" ? "Reissue" : "Send"} ${inv.invoiceNumber}`}
-                            title={
-                              inv.status === "sent"
-                                ? "Reissue invoice"
-                                : "Send invoice"
-                            }
-                          >
-                            <Send className="size-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => setDeleteTarget(inv)}
-                            aria-label={`Delete ${inv.invoiceNumber}`}
-                            title="Delete"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
+                          <InvoiceActionsMenu
+                            invoice={inv}
+                            downloading={downloadingId === inv.id}
+                            sending={sendingId === inv.id}
+                            onDownload={() => handleDownload(inv)}
+                            onEdit={() => openEdit(inv)}
+                            onSend={() => openSend(inv)}
+                            onDelete={() => setDeleteTarget(inv)}
+                          />
                         </div>
                       </TableCell>
                     </TableRow>
@@ -780,7 +898,7 @@ export default function InvoicesPage() {
           </div>
 
           {/* Mobile cards */}
-          <div className="space-y-3 md:hidden">
+          <div className="space-y-3 lg:hidden">
             {filteredEstimates.map((estimate) => <InvoiceEstimateRow key={estimate.id} estimate={estimate} onReview={() => setEstimateId(estimate.id)} mobile />)}
             {filteredInvoices.map((inv) => {
               const client = getClient(inv.clientId)
@@ -789,7 +907,7 @@ export default function InvoicesPage() {
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="font-mono text-sm font-semibold">
+                        <p className="text-sm font-medium tabular-nums">
                           {inv.invoiceNumber}
                         </p>
                         <div className="mt-1 flex items-center gap-2">
@@ -804,61 +922,28 @@ export default function InvoicesPage() {
                           </span>
                         </div>
                       </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            className="-mr-1 -mt-1 shrink-0"
-                            aria-label={`Actions for ${inv.invoiceNumber}`}
-                          >
-                            <MoreHorizontal className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
-                          <DropdownMenuItem
-                            onClick={() => setPreviewInvoice(inv)}
-                          >
-                            <Eye className="size-4" /> Preview
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleDownload(inv)}
-                            disabled={downloadingId === inv.id}
-                          >
-                            <Download className="size-4" /> Download PDF
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => openEdit(inv)}>
-                            <Pencil className="size-4" /> Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => openSend(inv)}
-                            disabled={sendingId === inv.id}
-                          >
-                            <Send className="size-4" />
-                            {inv.status === "sent" ? "Reissue" : "Send"}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={() => setDeleteTarget(inv)}
-                          >
-                            <Trash2 className="size-4" /> Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <InvoiceActionsMenu
+                        invoice={inv}
+                        downloading={downloadingId === inv.id}
+                        sending={sendingId === inv.id}
+                        onPreview={() => setPreviewInvoice(inv)}
+                        onDownload={() => handleDownload(inv)}
+                        onEdit={() => openEdit(inv)}
+                        onSend={() => openSend(inv)}
+                        onDelete={() => setDeleteTarget(inv)}
+                        className="-mt-1 -mr-1"
+                      />
                     </div>
 
                     <div className="mt-3 flex items-end justify-between gap-3">
                       <div className="space-y-0.5 text-xs text-muted-foreground">
-                        <p className="font-mono">
+                        <p>
                           Issued {format(new Date(inv.issueDate), "MMM d, yyyy")}
                         </p>
                         <p
-                          className={`font-mono ${
-                            isPastDue(inv)
-                              ? "font-medium text-red-600 dark:text-red-400"
-                              : ""
-                          }`}
+                          className={cn(
+                            isPastDue(inv) && "font-medium text-destructive"
+                          )}
                         >
                           {inv.dueDate === inv.issueDate
                             ? "Due on receipt"
@@ -866,11 +951,11 @@ export default function InvoicesPage() {
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="font-mono text-base font-semibold">
+                        <p className="text-base font-semibold tabular-nums">
                           {listTotal(inv).total}
                         </p>
                         {listTotal(inv).secondary && (
-                          <p className="font-mono text-xs text-muted-foreground">
+                          <p className="text-xs text-muted-foreground tabular-nums">
                             {listTotal(inv).secondary}
                           </p>
                         )}
@@ -903,17 +988,22 @@ export default function InvoicesPage() {
           </DialogHeader>
           <div className="grid gap-6 py-4">
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              <div className="grid gap-2">
-                <Label>Client</Label>
+              <div className="grid content-start gap-2">
+                <Label htmlFor="invoice-client">Client</Label>
                 <Select
                   value={selectedClientId}
                   onValueChange={(v) => {
                     setSelectedClientId(v)
                     setSelectedEntries(new Set())
                     setSelectedExpenses(new Set())
+                    setCreateErrors((current) => ({ ...current, client: undefined, items: undefined }))
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger
+                    id="invoice-client"
+                    className="w-full"
+                    {...invalidProps("invoice-client", createErrors.client)}
+                  >
                     <SelectValue placeholder="Select client" />
                   </SelectTrigger>
                   <SelectContent>
@@ -924,8 +1014,9 @@ export default function InvoicesPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <FieldError id="invoice-client-error" message={createErrors.client} />
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="tax-rate">Tax %</Label>
                 <Input
                   id="tax-rate"
@@ -936,11 +1027,11 @@ export default function InvoicesPage() {
                   onChange={(e) => setTaxRate(e.target.value)}
                 />
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="due-days">
                   Due in (days)
                   {dueDays === "0" && (
-                    <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
                       on receipt
                     </span>
                   )}
@@ -950,12 +1041,18 @@ export default function InvoicesPage() {
                   type="number"
                   min="0"
                   value={dueDays}
-                  onChange={(e) => setDueDays(e.target.value)}
+                  onChange={(e) => {
+                    setDueDays(e.target.value)
+                    setCreateErrors((current) => ({ ...current, dueDays: undefined }))
+                  }}
+                  {...invalidProps("due-days", createErrors.dueDays)}
                 />
+                <FieldError id="due-days-error" message={createErrors.dueDays} />
               </div>
-              <div className="grid gap-2">
-                <Label>Invoice #</Label>
+              <div className="grid content-start gap-2">
+                <Label htmlFor="invoice-number">Invoice #</Label>
                 <Input
+                  id="invoice-number"
                   value={`${data.settings.invoicePrefix}${data.settings.nextInvoiceNumber}`}
                   disabled
                   className="font-mono"
@@ -964,7 +1061,14 @@ export default function InvoicesPage() {
             </div>
 
             {selectedClientId && (
-              <div className="grid gap-6 lg:grid-cols-2">
+              <div className="grid gap-2">
+              <div
+                id="invoice-line-items"
+                role="group"
+                aria-label="Time entries and expenses to invoice"
+                aria-describedby={createErrors.items ? "invoice-items-error" : undefined}
+                className="grid gap-6 lg:grid-cols-2"
+              >
                 {/* Time Entries */}
                 <div>
                   <div className="mb-2 flex items-center justify-between">
@@ -993,7 +1097,7 @@ export default function InvoicesPage() {
                       No billable time entries for this client
                     </div>
                   ) : (
-                    <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+                    <div className={cn("max-h-64 space-y-1 overflow-y-auto rounded-md border p-2", createErrors.items && "border-destructive")}>
                       {unbilledEntries.map((entry) => (
                         <label
                           key={entry.id}
@@ -1007,10 +1111,10 @@ export default function InvoicesPage() {
                             {entry.projectName}:{" "}
                             {entry.description || "Untitled"}
                           </span>
-                          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                             {formatHours(billedSeconds(entry))}h
                           </span>
-                          <span className="shrink-0 font-mono text-xs font-medium">
+                          <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums">
                             {formatCurrency(
                               (billedSeconds(entry) / 3600) * entry.rate
                             )}
@@ -1049,7 +1153,7 @@ export default function InvoicesPage() {
                       No uninvoiced expenses for this client
                     </div>
                   ) : (
-                    <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+                    <div className={cn("max-h-64 space-y-1 overflow-y-auto rounded-md border p-2", createErrors.items && "border-destructive")}>
                       {unbilledExpenses.map((expense) => (
                         <label
                           key={expense.id}
@@ -1062,7 +1166,7 @@ export default function InvoicesPage() {
                           <span className="flex-1 truncate">
                             {expense.projectName}: {expense.description}
                           </span>
-                          <span className="shrink-0 font-mono text-xs font-medium">
+                          <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums">
                             {formatCurrency(expense.amount)}
                           </span>
                         </label>
@@ -1070,6 +1174,8 @@ export default function InvoicesPage() {
                     </div>
                   )}
                 </div>
+              </div>
+              <FieldError id="invoice-items-error" message={createErrors.items} />
               </div>
             )}
 
@@ -1090,7 +1196,7 @@ export default function InvoicesPage() {
                 <div className="rounded-md border p-4">
                   <div className="flex justify-between py-1 text-sm">
                     <span className="text-muted-foreground">Subtotal</span>
-                    <span className="font-mono">
+                    <span className="tabular-nums">
                       {formatCurrency(subtotal)}
                     </span>
                   </div>
@@ -1098,12 +1204,12 @@ export default function InvoicesPage() {
                     <span className="text-muted-foreground">
                       Tax ({taxRate}%)
                     </span>
-                    <span className="font-mono">{formatCurrency(tax)}</span>
+                    <span className="tabular-nums">{formatCurrency(tax)}</span>
                   </div>
                   <Separator className="my-2" />
                   <div className="flex justify-between py-1 text-lg font-bold">
                     <span>Total</span>
-                    <span className="font-mono">{formatCurrency(total)}</span>
+                    <span className="tabular-nums">{formatCurrency(total)}</span>
                   </div>
                 </div>
               </div>
@@ -1131,7 +1237,7 @@ export default function InvoicesPage() {
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="grid gap-2">
-                  <Label>Status</Label>
+                  <Label htmlFor="edit-status">Status</Label>
                   <Select
                     value={editInvoice.status}
                     onValueChange={(v) =>
@@ -1141,7 +1247,7 @@ export default function InvoicesPage() {
                       })
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="edit-status" className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1159,10 +1265,16 @@ export default function InvoicesPage() {
                     type="number"
                     min="0"
                     value={editDueDays}
-                    onChange={(e) => setEditDueDays(e.target.value)}
+                    onChange={(e) => {
+                      setEditDueDays(e.target.value)
+                      setEditDueError(null)
+                    }}
                     placeholder="30"
+                    aria-invalid={!!editDueError || undefined}
+                    aria-describedby={editDueError ? "edit-due-error edit-due-hint" : "edit-due-hint"}
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <FieldError id="edit-due-error" message={editDueError ?? undefined} />
+                  <p id="edit-due-hint" className="text-xs text-muted-foreground">
                     {editDueDays === "0"
                       ? "Due on receipt"
                       : "Use 0 for due on receipt"}
@@ -1183,20 +1295,20 @@ export default function InvoicesPage() {
               <div className="rounded-md bg-muted/50 p-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Subtotal</span>
-                  <span className="font-mono">
+                  <span className="tabular-nums">
                     {formatCurrency(editInvoice.subtotal)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Tax</span>
-                  <span className="font-mono">
+                  <span className="tabular-nums">
                     {formatCurrency(parseFloat(editTax) || 0)}
                   </span>
                 </div>
                 <Separator className="my-1" />
                 <div className="flex justify-between font-semibold">
                   <span>Total</span>
-                  <span className="font-mono">
+                  <span className="tabular-nums">
                     {formatCurrency(
                       editInvoice.subtotal + (parseFloat(editTax) || 0)
                     )}
@@ -1399,9 +1511,7 @@ function InvoicePreview({
           {invoice.invoiceNumber}
         </DialogTitle>
         <div className="flex items-center gap-3">
-          <Badge variant="secondary" className={statusStyles[invoice.status]}>
-            {invoice.status}
-          </Badge>
+          <InvoiceStatusBadge status={invoice.status} />
           <Button size="sm" onClick={onDownload} disabled={downloading}>
             {downloading ? (
               <Loader2

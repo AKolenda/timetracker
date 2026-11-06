@@ -7,7 +7,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
-  FolderKanban,
+  Users,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -30,7 +30,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
 import { PageHeader } from "@/components/page-header"
+import { InvoiceStatusBadge } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { INVOICE_CURRENCY } from "@/lib/invoice-currency"
@@ -74,8 +76,12 @@ export default function ClientsPage() {
     getProjectsByClient,
   } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
+  // The target outlives the open flag so the dialog keeps its text while it fades out.
+  const [deleteTarget, setDeleteTarget] = useState<Client | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [nameError, setNameError] = useState<string | null>(null)
   const secondaryCurrency = data.settings.secondaryRemittance?.currency || null
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
@@ -120,22 +126,18 @@ export default function ClientsPage() {
         className="flex items-center justify-between gap-3 border-b py-3 last:border-0"
       >
         <div className="min-w-0">
-          <p className="text-sm font-medium break-words">
+          <p className="text-sm font-medium break-words tabular-nums">
             {invoice.invoiceNumber}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground tabular-nums">
             {formatDate(invoice.issueDate)}
           </p>
         </div>
-        <div className="shrink-0 text-right">
-          <p className="text-sm tabular-nums">
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <p className="text-sm font-medium tabular-nums">
             {money(invoice.total)}
           </p>
-          <p
-            className={`text-xs capitalize ${invoice.status === "paid" ? "text-emerald-600 dark:text-emerald-400" : invoice.status === "overdue" ? "text-destructive" : "text-muted-foreground"}`}
-          >
-            {invoice.status}
-          </p>
+          <InvoiceStatusBadge status={invoice.status} />
         </div>
       </div>
     ))
@@ -147,6 +149,7 @@ export default function ClientsPage() {
       ...emptyForm,
       color: CLIENT_COLORS[Math.floor(Math.random() * CLIENT_COLORS.length)],
     })
+    setNameError(null)
     setDialogOpen(true)
   }
 
@@ -165,12 +168,14 @@ export default function ClientsPage() {
       invoiceScheduleAutoSend: client.invoiceScheduleAutoSend ?? true,
       showSecondaryCurrency: client.showSecondaryCurrency ?? false,
     })
+    setNameError(null)
     setDialogOpen(true)
   }
 
   async function handleSave() {
     if (!form.name.trim()) {
-      toast.error("Client name is required")
+      setNameError("Enter a client name")
+      document.getElementById("name")?.focus()
       return
     }
     const payload = {
@@ -203,12 +208,41 @@ export default function ClientsPage() {
   }
 
   async function handleDelete(client: Client) {
-    await deleteClient(client.id)
-    toast.success("Client deleted")
+    try {
+      await deleteClient(client.id)
+      toast.success("Client deleted")
+    } catch {
+      toast.error("Couldn't delete the client")
+    }
+    setDeleteOpen(false)
   }
+
+  const deleteCounts = (() => {
+    if (!deleteTarget) return null
+    const projectIds = new Set(data.projects.filter((p) => p.clientId === deleteTarget.id).map((p) => p.id))
+    return {
+      projects: projectIds.size,
+      entries: data.timeEntries.filter((t) => projectIds.has(t.projectId)).length,
+      expenses: data.expenses.filter((e) => projectIds.has(e.projectId)).length,
+    }
+  })()
 
   return (
     <>
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${deleteTarget?.name ?? "client"}?`}
+        description={
+          <>
+            This also deletes {deleteCounts?.projects ?? 0} {deleteCounts?.projects === 1 ? "project" : "projects"},{" "}
+            {deleteCounts?.entries ?? 0} time {deleteCounts?.entries === 1 ? "entry" : "entries"} and {deleteCounts?.expenses ?? 0}{" "}
+            {deleteCounts?.expenses === 1 ? "expense" : "expenses"}. This can&apos;t be undone.
+          </>
+        }
+        confirmLabel="Delete client"
+        onConfirm={() => (deleteTarget ? handleDelete(deleteTarget) : undefined)}
+      />
       <PageHeader
         title="Clients"
         actions={
@@ -225,14 +259,16 @@ export default function ClientsPage() {
         </p>
       ) : data.clients.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <FolderKanban className="mb-4 size-6 text-muted-foreground" />
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+              <Users className="size-5 text-muted-foreground" />
+            </div>
             <p className="text-sm font-medium">No clients yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Create your first client to get started
             </p>
             <Button size="sm" className="mt-4" onClick={openCreate}>
-              <Plus className="size-4" />
+              <Plus className="size-4" data-icon="inline-start" />
               New Client
             </Button>
           </CardContent>
@@ -260,7 +296,7 @@ export default function ClientsPage() {
                     type="button"
                     aria-pressed={selected}
                     onClick={() => setSelectedClientId(client.id)}
-                    className={`flex w-full items-center justify-between gap-3 border-b border-l-2 px-3 py-5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5 ${selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-muted/50"}`}
+                    className={`flex w-full items-center justify-between gap-3 border-b border-l-2 px-3 py-4 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5 ${selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-muted/50"}`}
                   >
                     <span className="flex min-w-0 items-center gap-3">
                       <span
@@ -284,7 +320,7 @@ export default function ClientsPage() {
                       <span className="block text-sm font-semibold tabular-nums">
                         {money(total)}
                       </span>
-                      <span className="block text-[11px] text-muted-foreground">
+                      <span className="block text-xs text-muted-foreground">
                         Lifetime invoiced
                       </span>
                     </span>
@@ -324,7 +360,7 @@ export default function ClientsPage() {
                       Edit
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => handleDelete(selectedClient)}
+                      onClick={() => { setDeleteTarget(selectedClient); setDeleteOpen(true) }}
                       className="text-destructive focus:text-destructive"
                     >
                       <Trash2 className="size-4" />
@@ -346,7 +382,7 @@ export default function ClientsPage() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Outstanding</p>
-                  <p className="mt-1 text-lg font-medium break-words text-amber-700 tabular-nums dark:text-amber-300">
+                  <p className="mt-1 text-lg font-medium break-words text-warning-foreground tabular-nums">
                     {money(lifetime - paid)}
                   </p>
                 </div>
@@ -358,7 +394,7 @@ export default function ClientsPage() {
                 {selectedClient.phone && <p>{selectedClient.phone}</p>}
                 {selectedClient.invoiceScheduleEnabled &&
                 selectedClient.invoiceScheduleWeeks ? (
-                  <span className="inline-flex rounded-md bg-emerald-500/10 px-2 py-1 text-emerald-600 dark:text-emerald-400">
+                  <span className="inline-flex rounded-md bg-success/10 px-2 py-1 text-success-foreground">
                     Auto-invoice every {selectedClient.invoiceScheduleWeeks}w
                     {!selectedClient.invoiceScheduleAutoSend && " (draft only)"}
                   </span>
@@ -395,7 +431,7 @@ export default function ClientsPage() {
       ) : null}
 
       <Dialog open={invoicesOpen} onOpenChange={setInvoicesOpen}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle className="break-words">
               {selectedClient?.name} invoices
@@ -436,7 +472,7 @@ export default function ClientsPage() {
             >
               Previous
             </Button>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground tabular-nums">
               {currentInvoicePage + 1} / {lastInvoicePage + 1}
             </span>
             <Button
@@ -456,15 +492,25 @@ export default function ClientsPage() {
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Client" : "New Client"}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label htmlFor="name">Name</Label>
               <Input
                 id="name"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value })
+                  setNameError(null)
+                }}
                 placeholder="Acme Corporation"
+                aria-invalid={!!nameError || undefined}
+                aria-describedby={nameError ? "name-error" : undefined}
               />
+              {nameError && (
+                <p id="name-error" className="text-xs text-destructive">
+                  {nameError}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="email">Email</Label>
@@ -618,13 +664,15 @@ export default function ClientsPage() {
               </div>
             </div>
             <div className="grid gap-2">
-              <Label>Color</Label>
-              <div className="flex gap-2">
-                {CLIENT_COLORS.map((color) => (
+              <Label id="client-color-label">Color</Label>
+              <div role="group" aria-labelledby="client-color-label" className="flex flex-wrap gap-2">
+                {CLIENT_COLORS.map((color, index) => (
                   <button
                     key={color}
                     type="button"
-                    className="size-7 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all"
+                    aria-label={`Color ${index + 1}`}
+                    aria-pressed={form.color === color}
+                    className="size-7 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
                     style={{
                       backgroundColor: color,
                       ["--tw-ring-color" as string]:
@@ -636,7 +684,7 @@ export default function ClientsPage() {
               </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="sticky -bottom-4 bg-popover">
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>

@@ -48,7 +48,7 @@ function ChatBillFactor({ factor, onChange }: { factor: number; onChange: (facto
     <div className="flex items-center rounded-md border p-0.5">
       {BILL_FACTOR_PRESETS.map((option) => { const active = Math.abs(option.value - factor) < 0.0001; return <button key={option.label} type="button" className={`h-5 cursor-pointer rounded-[4px] px-1.5 font-medium focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={active} onClick={() => onChange(option.value)}>{option.label}</button> })}
       <form className="flex items-center" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
-        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-12 rounded-[4px] bg-transparent px-1.5 text-center text-[16px] leading-none font-medium sm:w-11 sm:text-xs outline-none [appearance:textfield] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
+        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-12 rounded-[4px] bg-transparent px-1.5 text-center text-[16px] leading-none font-medium sm:w-11 sm:text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
       </form>
     </div>
   </div>
@@ -232,7 +232,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
   const range = Number.isFinite(end) ? `${format(start, "MMM d, HH:mm")}–${format(end, new Date(start).toDateString() === new Date(end).toDateString() ? "HH:mm" : "MMM d, HH:mm")}` : `${format(start, "MMM d, HH:mm")}–now`
 
   return <>
-    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
+    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left max-lg:gap-1 focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
       <span className="min-w-0 flex-1 break-words">{plainTitle(description || "") || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
     </button>
     <Dialog open={open} onOpenChange={setOpen}>

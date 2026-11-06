@@ -14,6 +14,7 @@ import {
   RefreshCw,
   ArrowLeft,
   ArrowRight,
+  AlertTriangle,
   X,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -53,8 +54,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader } from "@/components/page-header"
-import { formatDuration } from "@/lib/format"
+import { StatCard, StatGrid } from "@/components/stat-card"
+import { formatClock as formatHm, formatDuration } from "@/lib/format"
 
 const AGENT_TIME_START_DATE = "2026-08-30"
 const HIDDEN_CHATS_KEY = "timetracker-agentic-hidden-chats"
@@ -115,6 +118,13 @@ type Conversation = {
   end: number
   durationSeconds: number
   spans: ActivitySpan[]
+}
+
+const RANGE_LABELS: Record<string, string> = {
+  today: "today",
+  "7d": "the last 7 days",
+  "30d": "the last 30 days",
+  all: "any date",
 }
 
 function mobileFixtureRequested() {
@@ -357,9 +367,9 @@ function DayTimeline({
           </div>
         </div>
       ))}
-      <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2 text-[0.6rem] text-muted-foreground">
+      <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2 text-[0.7rem] text-muted-foreground tabular-nums">
         <span />
-        <div className="flex justify-between font-mono">
+        <div className="flex justify-between">
           <span>12a</span>
           <span>6a</span>
           <span>12p</span>
@@ -410,7 +420,7 @@ function ConversationRow({
                 ? ` · ${conversation.model}`
                 : ""}
               {` · ${conversation.project} · `}
-              <span className="font-mono">
+              <span className="tabular-nums">
                 {format(new Date(conversation.start), "h:mm a")}–
                 {format(new Date(conversation.end), "h:mm a")}
               </span>
@@ -423,8 +433,8 @@ function ConversationRow({
               Live
             </Badge>
           )}
-          <span className="font-mono text-xs">
-            {formatDuration(conversation.durationSeconds)}
+          <span className="text-xs tabular-nums">
+            {formatHm(conversation.durationSeconds)}
           </span>
           <ChevronDown
             className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
@@ -445,7 +455,7 @@ function ConversationRow({
               {conversation.spans.length === 1 ? "span" : "spans"}
             </p>
           </div>
-          <div className="grid min-w-0 gap-1 border-l pl-3 font-mono text-[0.7rem] text-muted-foreground">
+          <div className="grid min-w-0 gap-1 border-l pl-3 text-xs text-muted-foreground tabular-nums">
             {conversation.spans.map((span, index) => (
               <p key={`${span.start}-${span.end}-${index}`}>
                 {format(new Date(span.start), "MMM d, h:mm:ss a")} –{" "}
@@ -483,8 +493,8 @@ function TimelineDay({
             {conversations.length === 1 ? "conversation" : "conversations"}
           </p>
         </div>
-        <p className="font-mono text-xs">
-          {formatDuration(
+        <p className="text-xs tabular-nums">
+          {formatHm(
             unionSeconds(
               conversations.flatMap((conversation) => conversation.spans)
             )
@@ -537,14 +547,14 @@ function SessionCard({ conversation, className = "", onRemove }: { conversation:
         </div>
         {conversation.live && <Badge variant="secondary" className="text-[0.6rem]">Live</Badge>}
         {onRemove && (
-          <button type="button" aria-label="Remove this chat" title="Remove this chat" className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive" onClick={onRemove} data-testid="agentic-remove-chat">
+          <button type="button" aria-label="Remove this chat" title="Remove this chat" className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:size-9" onClick={onRemove} data-testid="agentic-remove-chat">
             <X className="size-4" />
           </button>
         )}
       </div>
-      <p className="font-mono text-xs"><span className="text-muted-foreground">{format(new Date(conversation.start), "h:mm a")} – {format(new Date(conversation.end), "h:mm a")}</span> · {formatDuration(conversation.durationSeconds)}{conversation.spans.length > 1 && <span className="text-muted-foreground"> · {conversation.spans.length} runs</span>}</p>
+      <p className="text-xs tabular-nums"><span className="text-muted-foreground">{format(new Date(conversation.start), "h:mm a")} – {format(new Date(conversation.end), "h:mm a")}</span> · {formatHm(conversation.durationSeconds)}{conversation.spans.length > 1 && <span className="text-muted-foreground"> · {conversation.spans.length} runs</span>}</p>
       {conversation.spans.length > 1 && (
-        <div className="max-h-48 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 font-mono text-[0.7rem] text-muted-foreground">
+        <div className="max-h-48 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 text-xs text-muted-foreground tabular-nums">
           {conversation.spans.map((span, index) => (
             <p key={`${span.start}-${span.end}-${index}`} className="flex justify-between gap-3 py-0.5">
               <span>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</span>
@@ -623,11 +633,11 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
   return (
     <section className="min-w-0 rounded-xl border" data-testid="agentic-hover-day">
       <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
-        <button type="button" className="flex min-w-0 items-center gap-2 rounded-md text-left hover:text-foreground" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
+        <button type="button" className="flex min-w-0 items-center gap-2 rounded-md text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
           <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`} />
           <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
         </button>
-        <p className="font-mono text-xs">{formatDuration(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
+        <p className="text-xs tabular-nums">{formatHm(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
       </header>
       <div className="px-3 pb-3" onMouseLeave={scheduleClose}>
         <div className="relative grid min-w-0 gap-2" ref={containerRef}>
@@ -666,9 +676,9 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
               </div>
             </div>
           ))}
-          <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2 text-[0.6rem] text-muted-foreground">
+          <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2 text-[0.7rem] text-muted-foreground tabular-nums">
             <span />
-            <div className="flex justify-between font-mono"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+            <div className="flex justify-between"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
           </div>
           {activeConversation && active && (
             <div
@@ -711,12 +721,101 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
           >
             <SourceLogo label={conversation.sourceLabel} className="size-5" />
             <span className="min-w-0 flex-1 truncate text-sm">{conversation.conversationTitle || `${conversation.sourceLabel} coding session`}</span>
-            <span className="shrink-0 font-mono text-[0.7rem] text-muted-foreground">{format(new Date(conversation.start), "h:mm a")}</span>
-            <span className="w-16 shrink-0 text-right font-mono text-xs">{formatDuration(conversation.durationSeconds)}</span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{format(new Date(conversation.start), "h:mm a")}</span>
+            <span className="w-12 shrink-0 text-right text-xs tabular-nums">{formatHm(conversation.durationSeconds)}</span>
           </button>
         ))}
       </div>}
     </section>
+  )
+}
+
+/** Loading, unavailable, nothing recorded, and nothing matching each look different, with the next step offered. */
+function AgenticEmptyState({
+  state,
+  range,
+  filtersActive,
+  hiddenCount,
+  onClearFilters,
+  onShowAllDates,
+  onRestoreHidden,
+  onRetry,
+}: {
+  state: "loading" | "unavailable" | "empty" | "filtered"
+  range: string
+  filtersActive: boolean
+  hiddenCount: number
+  onClearFilters: () => void
+  onShowAllDates: () => void
+  onRestoreHidden: () => void
+  onRetry: () => void
+}) {
+  if (state === "loading") {
+    return (
+      <div role="status" aria-busy="true" aria-label="Loading agentic coding" className="grid gap-4" data-testid="agentic-loading">
+        {[0, 1].map((index) => (
+          <div key={index} className="grid gap-2 rounded-xl border p-3">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ))}
+        <span className="sr-only">Loading agentic coding…</span>
+      </div>
+    )
+  }
+  let title: string
+  let detail: string
+  let action: React.ReactNode = null
+  if (state === "unavailable") {
+    title = "Activity unavailable"
+    detail = "Agent Time didn’t respond, so this isn’t the same as no coding time."
+    action = (
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        <RefreshCw data-icon="inline-start" />
+        Retry
+      </Button>
+    )
+  } else if (state === "empty") {
+    title = "No agentic coding recorded yet"
+    detail = "Activity appears here once an Agent Time collector reports it."
+    action = (
+      <Button size="sm" variant="outline" asChild>
+        <Link href="/settings">Check Agent Time settings</Link>
+      </Button>
+    )
+  } else if (filtersActive) {
+    title = "No chats match these filters"
+    detail = "Try a different project, source, or search."
+    action = (
+      <Button size="sm" variant="outline" onClick={onClearFilters} data-testid="agentic-clear-filters">
+        Clear filters
+      </Button>
+    )
+  } else if (hiddenCount > 0) {
+    title = "Every chat here is hidden"
+    detail = `${hiddenCount} hidden ${hiddenCount === 1 ? "chat" : "chats"} in this view.`
+    action = (
+      <Button size="sm" variant="outline" onClick={onRestoreHidden}>
+        Restore hidden chats
+      </Button>
+    )
+  } else {
+    title = `No agentic coding in ${RANGE_LABELS[range] ?? "this range"}`
+    detail = "Earlier activity is still available."
+    action =
+      range !== "all" ? (
+        <Button size="sm" variant="outline" onClick={onShowAllDates}>
+          Show all activity
+        </Button>
+      ) : null
+  }
+  return (
+    <div className="grid justify-items-center gap-1 rounded-xl border border-dashed px-4 py-10 text-center" data-testid={`agentic-${state}`}>
+      <p className="text-sm font-medium">{title}</p>
+      <p className="max-w-sm text-sm text-muted-foreground">{detail}</p>
+      {action && <div className="mt-3">{action}</div>}
+    </div>
   )
 }
 
@@ -809,7 +908,7 @@ function SourceChips({
           key={stat.label}
           type="button"
           data-testid={`agentic-source-${stat.label.toLowerCase().replaceAll(" ", "-")}`}
-          className={`flex shrink-0 items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-colors hover:bg-muted/50 ${selectedSource === stat.label ? "border-foreground/30 bg-muted" : "bg-background"}`}
+          className={`flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors hover:bg-muted/50 ${selectedSource === stat.label ? "border-foreground/30 bg-muted" : "bg-background"}`}
           onClick={() => onSelect(stat.label)}
         >
           <SourceLogo
@@ -817,8 +916,8 @@ function SourceChips({
             className="size-5 rounded-[5px] shadow-none"
           />
           <span className="text-xs font-medium">{stat.label}</span>
-          <span className="font-mono text-[0.65rem] text-muted-foreground">
-            {formatDuration(stat.seconds)}
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {formatHm(stat.seconds)}
           </span>
         </button>
       ))}
@@ -847,7 +946,7 @@ function LedgerLayout({
               A quiet ledger: tool, conversation, project, session, then time.
             </p>
           </div>
-          <span className="font-mono text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground tabular-nums">
             {conversations.length} sessions
           </span>
         </div>
@@ -889,11 +988,11 @@ function LedgerLayout({
               </p>
             </div>
             <p className="truncate text-xs">{conversation.project}</p>
-            <p className="font-mono text-[0.7rem] text-muted-foreground">
+            <p className="text-xs text-muted-foreground tabular-nums">
               {format(new Date(conversation.start), "h:mm a")}
             </p>
-            <p className="text-right font-mono text-xs font-medium">
-              {formatDuration(conversation.durationSeconds)}
+            <p className="text-right text-xs font-medium tabular-nums">
+              {formatHm(conversation.durationSeconds)}
             </p>
           </div>
         ))}
@@ -933,8 +1032,8 @@ function FocusLayout({
               />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium">{stat.label}</span>
-                <span className="font-mono text-[0.65rem] text-muted-foreground">
-                  {formatDuration(stat.seconds)}
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {formatHm(stat.seconds)}
                 </span>
               </span>
               <Badge variant="secondary" className="text-[0.6rem]">
@@ -974,11 +1073,11 @@ function FocusLayout({
                   </p>
                 </div>
               </div>
-              <p className="font-mono text-[0.7rem] text-muted-foreground">
+              <p className="text-xs text-muted-foreground tabular-nums">
                 {format(new Date(conversation.start), "MMM d · h:mm a")}
               </p>
-              <p className="font-mono text-xs sm:text-right">
-                {formatDuration(conversation.durationSeconds)}
+              <p className="text-xs tabular-nums sm:text-right">
+                {formatHm(conversation.durationSeconds)}
               </p>
             </div>
           ))}
@@ -992,6 +1091,7 @@ export default function AgenticCodingPage() {
   const searchParams = useSearchParams()
   const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [project, setProject] = useState("all")
   const [projectOpen, setProjectOpen] = useState(false)
   const [range, setRange] = useState("7d")
@@ -1025,11 +1125,14 @@ export default function AgenticCodingPage() {
       )
       if (!response.ok) throw new Error("Agent Time is not available")
       setAgentTime((await response.json()) as AgentTimeResponse)
+      setLoadError(null)
       if (showToast) toast.success("Agentic coding activity refreshed")
     } catch (error) {
-      toast.error(
+      const message =
         error instanceof Error ? error.message : "Could not load Agent Time"
-      )
+      // The inline notice stays until a load succeeds; the toast only answers a manual refresh.
+      setLoadError(message)
+      if (showToast) toast.error(message)
     } finally {
       setLoading(false)
     }
@@ -1156,6 +1259,35 @@ export default function AgenticCodingPage() {
     [allConversations, hiddenChatKeys]
   )
   const hiddenVisibleCount = allConversations.length - conversations.length
+  const filtersActive =
+    project !== "all" || search.trim() !== "" || effectiveSelectedSource !== "all"
+  const clearFilters = useCallback(() => {
+    setProject("all")
+    setSearch("")
+    setSelectedSource("all")
+  }, [])
+  const restoreHidden = useCallback(
+    () =>
+      updateHiddenChats(
+        hiddenChatKeys.filter(
+          (key) =>
+            !allConversations.some((conversation) => conversation.key === key)
+        )
+      ),
+    [allConversations, hiddenChatKeys, updateHiddenChats]
+  )
+  // Which of the four states the page is in: still loading, unavailable, nothing recorded, or nothing matching.
+  const viewState: "loading" | "unavailable" | "empty" | "filtered" | "ready" =
+    !agentTime
+      ? loadError
+        ? "unavailable"
+        : "loading"
+      : conversations.length > 0
+        ? "ready"
+        : activities.length === 0
+          ? "empty"
+          : "filtered"
+  const totalsKnown = !!agentTime
   const totalSeconds = useMemo(
     () => unionSeconds(conversations.flatMap((conversation) => conversation.spans)),
     [conversations]
@@ -1208,7 +1340,7 @@ export default function AgenticCodingPage() {
       />
 
       <Card className="mb-6 rounded-lg">
-        <CardContent className="grid min-w-0 gap-4 py-4 lg:grid-cols-[180px_minmax(0,240px)_minmax(0,1fr)] lg:items-end">
+        <CardContent className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[180px_minmax(0,240px)_minmax(0,1fr)] lg:items-end">
           <div className="grid min-w-0 gap-2">
             <Label htmlFor="agent-range">Date range</Label>
             <Select value={range} onValueChange={setRange}>
@@ -1228,10 +1360,11 @@ export default function AgenticCodingPage() {
             </Select>
           </div>
           <div className="grid min-w-0 gap-2">
-            <Label>Project</Label>
+            <Label htmlFor="agent-project">Project</Label>
             <Popover open={projectOpen} onOpenChange={setProjectOpen}>
               <PopoverTrigger asChild>
                 <Button
+                  id="agent-project"
                   data-testid="agentic-project-picker"
                   variant="outline"
                   role="combobox"
@@ -1286,7 +1419,7 @@ export default function AgenticCodingPage() {
               </PopoverContent>
             </Popover>
           </div>
-          <div className="grid min-w-0 gap-2">
+          <div className="grid min-w-0 gap-2 sm:col-span-2 lg:col-span-1">
             <Label htmlFor="agent-search">Search chats</Label>
             <Input
               id="agent-search"
@@ -1300,49 +1433,105 @@ export default function AgenticCodingPage() {
         </CardContent>
       </Card>
 
-      <Card className="mb-6 rounded-lg">
-        <CardHeader>
-          <div>
-            <CardTitle className="text-sm font-medium">
-              Unique coding time
-            </CardTitle>
-            <p
-              data-testid="agentic-total"
-              className="mt-1 font-mono text-2xl font-semibold"
-            >
-              {formatDuration(totalSeconds)}
-            </p>
-          </div>
-        </CardHeader>
-        <div className="border-t px-6 py-3 text-xs font-medium text-muted-foreground">
-          Coding by source
+      {loadError && (
+        <div
+          role="alert"
+          data-testid="agentic-load-error"
+          className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm"
+        >
+          <AlertTriangle aria-hidden className="size-4 shrink-0 text-destructive" />
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">
+              {agentTime ? "Couldn’t refresh Agent Time." : "Agent Time is unavailable."}
+            </span>{" "}
+            <span className="text-muted-foreground">
+              {agentTime
+                ? `Showing activity from ${agentTime.fetchedAt ? format(new Date(agentTime.fetchedAt), "h:mm a") : "the last successful load"}, which may be out of date.`
+                : "Totals are unknown until it reconnects, not zero. Check that the Agent Time service is running."}
+            </span>
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void loadAgentTime(true)}
+            disabled={loading}
+            data-testid="agentic-retry"
+          >
+            <RefreshCw className={loading ? "animate-spin" : undefined} data-icon="inline-start" />
+            Retry
+          </Button>
         </div>
-        <CardContent className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {sourceStats.map((stat) => (
-            <button
-              key={stat.label}
-              type="button"
-              data-testid={`agentic-source-${stat.label.toLowerCase().replaceAll(" ", "-")}`}
-              className={`flex min-w-0 cursor-pointer items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/30 ${effectiveSelectedSource === stat.label ? "border-foreground/35 bg-muted/35" : ""}`}
-              onClick={() =>
-                setSelectedSource((current) =>
-                  current === stat.label ? "all" : stat.label
-                )
-              }
-            >
-              <SourceLogo label={stat.label} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">
-                  {stat.label}
-                </span>
-                <span className="block font-mono text-xs text-muted-foreground">
-                  {formatDuration(stat.seconds)}
-                </span>
-              </span>
-            </button>
-          ))}
-        </CardContent>
-      </Card>
+      )}
+
+      <StatGrid className="mb-6">
+        <StatCard
+          label="Unique coding time"
+          value={
+            <span data-testid="agentic-total">
+              {totalsKnown ? formatHm(totalSeconds) : "—"}
+            </span>
+          }
+          hint="Overlaps count once"
+        />
+        <StatCard
+          label="Chats"
+          value={totalsKnown ? conversations.length : "—"}
+          hint={
+            totalsKnown
+              ? `${dayGroups.length} active ${dayGroups.length === 1 ? "day" : "days"}`
+              : "Waiting for Agent Time"
+          }
+        />
+        <div
+          className="col-span-2 grid min-w-0 content-start gap-2 rounded-lg bg-card p-3 ring-1 ring-foreground/10 sm:p-4"
+          role="group"
+          aria-label="Coding by source"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-muted-foreground sm:text-sm">
+              By source
+            </p>
+            {effectiveSelectedSource !== "all" && (
+              <Button variant="ghost" size="xs" onClick={() => setSelectedSource("all")}>
+                Show all
+              </Button>
+            )}
+          </div>
+          {sourceStats.length > 0 ? (
+            <div className="flex min-w-0 flex-wrap gap-2">
+              {sourceStats.map((stat) => (
+                <button
+                  key={stat.label}
+                  type="button"
+                  data-testid={`agentic-source-${stat.label.toLowerCase().replaceAll(" ", "-")}`}
+                  aria-pressed={effectiveSelectedSource === stat.label}
+                  title={`Show only ${stat.label}`}
+                  className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-md border py-1 pr-2.5 pl-1 text-left transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:py-1.5 ${effectiveSelectedSource === stat.label ? "border-foreground/35 bg-muted/50" : "bg-background"}`}
+                  onClick={() =>
+                    setSelectedSource((current) =>
+                      current === stat.label ? "all" : stat.label
+                    )
+                  }
+                >
+                  <SourceLogo label={stat.label} className="size-6 shadow-none" />
+                  <span className="truncate text-sm font-medium">{stat.label}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {formatHm(stat.seconds)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {viewState === "loading"
+                ? "Loading…"
+                : viewState === "unavailable"
+                  ? "—"
+                  : "No sources in this view"}
+            </p>
+          )}
+        </div>
+      </StatGrid>
 
       {variant === "calm" && (
         <LedgerLayout
@@ -1365,16 +1554,23 @@ export default function AgenticCodingPage() {
         />
       )}
       {variant === "hover" && (
-        loading && !agentTime ? (
-          <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Loading agentic coding…</div>
-        ) : dayGroups.length === 0 ? (
-          <div className="px-4 py-12 text-center text-sm text-muted-foreground">No agentic coding matches these filters.</div>
+        viewState !== "ready" ? (
+          <AgenticEmptyState
+            state={viewState}
+            range={range}
+            filtersActive={filtersActive}
+            hiddenCount={hiddenVisibleCount}
+            onClearFilters={clearFilters}
+            onShowAllDates={() => setRange("all")}
+            onRestoreHidden={restoreHidden}
+            onRetry={() => void loadAgentTime(true)}
+          />
         ) : (
           <div className="grid min-w-0 gap-4">
             {hiddenVisibleCount > 0 && (
               <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
                 <span>{hiddenVisibleCount} hidden</span>
-                <Button variant="ghost" size="xs" onClick={() => updateHiddenChats(hiddenChatKeys.filter((key) => !allConversations.some((conversation) => conversation.key === key)))} data-testid="agentic-restore-hidden">Restore</Button>
+                <Button variant="ghost" size="xs" onClick={restoreHidden} data-testid="agentic-restore-hidden">Restore</Button>
               </div>
             )}
             {dayGroups.map(([date, dayConversations]) => (
@@ -1407,15 +1603,17 @@ export default function AgenticCodingPage() {
               )}
             </CardHeader>
             <CardContent className="min-w-0 p-0">
-              {loading && !agentTime ? (
-                <div className="flex items-center justify-center gap-2 px-4 py-12 text-sm text-muted-foreground">
-                  <LoaderCircle className="size-4 animate-spin" />
-                  Loading agentic coding…
-                </div>
-              ) : dayGroups.length === 0 ? (
-                <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                  No agentic coding matches these filters.
-                </div>
+              {viewState !== "ready" ? (
+                <AgenticEmptyState
+                  state={viewState}
+                  range={range}
+                  filtersActive={filtersActive}
+                  hiddenCount={hiddenVisibleCount}
+                  onClearFilters={clearFilters}
+                  onShowAllDates={() => setRange("all")}
+                  onRestoreHidden={restoreHidden}
+                  onRetry={() => void loadAgentTime(true)}
+                />
               ) : (
                 <div className="grid min-w-0 gap-5 p-3 sm:p-4">
                   {dayGroups.map(([date, dayConversations]) => (
@@ -1431,10 +1629,17 @@ export default function AgenticCodingPage() {
           </Card>
         </>
       )}
-      {!loading && conversations.length === 0 && variant !== "timeline" && variant !== "hover" && (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          No agentic coding matches these filters.
-        </p>
+      {viewState !== "ready" && variant !== "timeline" && variant !== "hover" && (
+        <AgenticEmptyState
+          state={viewState}
+          range={range}
+          filtersActive={filtersActive}
+          hiddenCount={hiddenVisibleCount}
+          onClearFilters={clearFilters}
+          onShowAllDates={() => setRange("all")}
+          onRestoreHidden={restoreHidden}
+          onRetry={() => void loadAgentTime(true)}
+        />
       )}
       <PrototypeSwitcher
         variant={variant}
