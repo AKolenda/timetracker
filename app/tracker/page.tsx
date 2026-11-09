@@ -426,7 +426,7 @@ function MachineList({ names }: { names: string[] }) {
     <span className="truncate" title={first}>{first}</span>
     {rest.length > 0 && <Popover>
       <PopoverTrigger asChild>
-        <button type="button" className="shrink-0 cursor-pointer rounded-md px-1 tabular-nums hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring max-sm:relative max-sm:after:absolute max-sm:after:-inset-x-2.5 max-sm:after:-top-2.5 max-sm:after:-bottom-[18px]" aria-label={`${rest.length} more ${rest.length === 1 ? "machine" : "machines"}: ${rest.join(", ")}`}>+{rest.length}</button>
+        <button type="button" className="shrink-0 cursor-pointer rounded-md px-1 tabular-nums hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={`${rest.length} more ${rest.length === 1 ? "machine" : "machines"}: ${rest.join(", ")}`}>+{rest.length}</button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto max-w-64 p-2 text-xs">
         <p className="mb-1 font-medium">Machines</p>
@@ -436,11 +436,11 @@ function MachineList({ names }: { names: string[] }) {
   </span>
 }
 
-/** A stacked row's project and machine line on phones and tablets: one line, truncating, so the "+N" machines button keeps its tap area. */
+/** Phones show the project alone; machine details remain in the entry chats. */
 function MetaLine({ project, machines }: { project?: string; machines: string[] }) {
   return <p className="break-words sm:line-clamp-2 max-sm:flex max-sm:min-w-0 max-sm:items-center max-sm:whitespace-nowrap">
     <span className="max-sm:min-w-0 max-sm:truncate" title={project}>{project ?? "—"}</span>
-    {machines.length > 0 && <><span className="shrink-0 max-sm:px-1">{" · "}</span><MachineList names={machines} /></>}
+    {machines.length > 0 && <span className="max-sm:hidden">{" · "}<MachineList names={machines} /></span>}
   </p>
 }
 
@@ -1276,8 +1276,8 @@ export default function TrackerPage() {
   // On stacked rows (below lg) the row actions sit beside the title, so the second line can use the full width.
   // The title stops 8px short of the actions so its chat chevron isn't a near-miss for Resume.
   // Phones fold the actions into one 44px ⋯ menu, so the title only reserves room for that.
-  const rowTitleClass = "max-lg:flex max-lg:min-h-9 max-lg:items-center max-lg:pr-29 max-sm:min-h-11 max-sm:pr-12"
-  const rowActionsClass = "max-lg:absolute max-lg:top-2 max-lg:right-2 max-lg:p-0 max-lg:pointer-fine:top-3.5 max-sm:top-2! max-sm:right-0"
+  const rowTitleClass = "max-lg:flex max-lg:min-h-9 max-lg:items-center max-lg:pr-29 max-sm:min-h-11 max-sm:pr-12 max-sm:gap-2 [&>[data-testid=entry-chat-menu]]:min-w-0 [&>[data-testid=entry-chat-menu]]:flex-1"
+  const rowActionsClass = "max-lg:absolute max-lg:top-2 max-lg:right-2 max-lg:p-0 max-lg:pointer-fine:top-3.5 max-sm:right-4! max-sm:top-2.5!"
   const rowActionGroupClass = "justify-end max-lg:[&>div]:gap-0"
   // Utilities that open dialogs: outline buttons from lg up, one labelled menu on phones and tablets.
   const reviewTools = [
@@ -1338,17 +1338,17 @@ export default function TrackerPage() {
                   </PopoverContent>
                 </Popover>
                 <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-10 shrink-0 items-center gap-2 max-sm:h-11">
+                  <Label htmlFor="timer-billable" className="flex h-10 shrink-0 items-center gap-2 max-sm:min-h-11 max-sm:pr-2">
                     <Checkbox
                       data-testid="timer-billable"
                       id="timer-billable"
                       checked={timerBillable}
                       onCheckedChange={(v) => setTimerBillable(v === true)}
                     />
-                    <Label htmlFor="timer-billable" className="text-sm font-normal text-muted-foreground">
+                    <span className="text-sm font-normal text-muted-foreground">
                       Billable
-                    </Label>
-                  </div>
+                    </span>
+                  </Label>
                   <Button
                     data-testid="timer-start"
                     onClick={handleStart}
@@ -1371,7 +1371,7 @@ export default function TrackerPage() {
                   <div className="ml-auto flex flex-wrap gap-2 max-sm:grid max-sm:w-full max-sm:grid-cols-[1fr_1fr_auto]">
                     {timer.pausedAt ? <Button variant="outline" className="max-sm:h-11" onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline" className="max-sm:h-11"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
                     <Button className="max-sm:h-11" onClick={() => handleStop(timer.id)}><Square className="size-3 fill-current" data-icon="inline-start" />Stop &amp; save</Button>
-                    <Button variant="ghost" aria-label="Discard" title="Discard" className="text-destructive hover:bg-destructive/10 hover:text-destructive max-sm:size-11 max-sm:p-0 dark:hover:bg-destructive/20" onClick={() => handleDiscard(timer.id)}><Trash2 className="size-3.5" data-icon="inline-start" /><span className="max-sm:hidden">Discard</span></Button>
+                    <Button variant="ghost" aria-label="Discard" title="Discard" className="text-destructive hover:bg-destructive/10 hover:text-destructive max-sm:size-11 max-sm:border max-sm:border-input max-sm:bg-background max-sm:shadow-xs max-sm:p-0 dark:hover:bg-destructive/20" onClick={() => handleDiscard(timer.id)}><Trash2 className="size-3.5" data-icon="inline-start" /><span className="max-sm:hidden">Discard</span></Button>
                   </div>
                 </div>
               })}</div>}
@@ -1454,12 +1454,12 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal max-sm:px-4"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {visibleRows.map((row, index) => {
                 const isNewDay = index === 0 || row.date !== visibleRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
-                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal max-sm:px-4"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
@@ -1469,13 +1469,13 @@ export default function TrackerPage() {
                   return <Fragment key={slice.id}>
                     {dayHeader}
                     <TableRow data-testid="agent-draft-row" className="bg-warning/[0.07] hover:bg-warning/[0.12] max-lg:relative">
-                      <TableCell className="font-medium whitespace-normal break-words">
-                        <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /></div>
+                      <TableCell className="font-medium whitespace-normal break-words max-sm:px-4 max-sm:py-2.5">
+                        <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /><span className="shrink-0 text-right text-xs font-normal tabular-nums sm:hidden"><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{amount ? ` · ${money(amount, project?.currency)}` : ""}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</span></div>
                         {draftMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={draftMachines} /></p>}
-                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
+                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden max-sm:flex max-sm:items-center max-sm:justify-between max-sm:gap-2 max-sm:space-y-0 max-sm:[&>p]:flex-1">
                           <MetaLine project={project?.name} machines={draftMachines} />
-                          <div className="flex flex-wrap items-center gap-x-2"><span className="tabular-nums">{range}</span>
-                          <span className="ml-auto tabular-nums"><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                          <div className="flex flex-wrap items-center gap-x-2 max-sm:shrink-0"><span className="tabular-nums">{range}</span>
+                          <span className="ml-auto tabular-nums max-sm:hidden"><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                         </div>
                       </TableCell>
                       <TableCell className="hidden whitespace-normal lg:table-cell"><span className="line-clamp-2 text-xs text-muted-foreground" title={project?.name}>{project?.name ?? "—"}</span></TableCell>
@@ -1502,15 +1502,15 @@ export default function TrackerPage() {
                 return <Fragment key={entry.id}>
                   {dayHeader}
                   <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} data-overlap={overlaps || undefined} aria-label={entry.description || "Untitled time entry"} className={`max-lg:relative ${highlightedEntry === entry.id ? "bg-warning/15 outline-2 -outline-offset-2 outline-warning" : ""}`}>
-                  <TableCell className={`font-medium whitespace-normal break-words ${overlaps ? "shadow-[inset_2px_0_0_var(--destructive)]" : ""}`}>
-                    <div className={rowTitleClass}><EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} /></div>
+                  <TableCell className={`font-medium whitespace-normal break-words max-sm:px-4 max-sm:py-2.5 ${overlaps ? "shadow-[inset_2px_0_0_var(--destructive)]" : ""}`}>
+                    <div className={rowTitleClass}><EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} /><span className="shrink-0 text-right text-xs font-normal tabular-nums sm:hidden">{entryClock(entry.duration)}{amount ? ` · ${money(amount, project?.currency)}` : ""}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</span></div>
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
                     {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block cursor-pointer rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
                     {entryMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={entryMachines} /></p>}
-                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
+                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden max-sm:flex max-sm:items-center max-sm:justify-between max-sm:gap-2 max-sm:space-y-0 max-sm:[&>p]:flex-1">
                       <MetaLine project={project?.name} machines={entryMachines} />
-                      <div className="flex flex-wrap items-center gap-x-2"><span className="inline-flex items-center gap-1"><span className="tabular-nums">{range}</span>{overlapMarker}</span>
-                      <span className="ml-auto tabular-nums"><span className="text-foreground">{entryClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                      <div className="flex flex-wrap items-center gap-x-2 max-sm:shrink-0"><span className="inline-flex items-center gap-1"><span className="tabular-nums">{range}</span>{overlapMarker}</span>
+                      <span className="ml-auto tabular-nums max-sm:hidden"><span className="text-foreground">{entryClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                     </div>
                   </TableCell>
                   <TableCell className="hidden whitespace-normal lg:table-cell">
