@@ -45,6 +45,7 @@ import { Fact, FactBox } from "@/components/fact-list"
 import { PageHeader } from "@/components/page-header"
 import { InvoiceStatusBadge } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
+import { cn } from "@/lib/utils"
 import { useMoney } from "@/lib/display-currency"
 import { INVOICE_CURRENCY } from "@/lib/invoice-currency"
 import type { Client } from "@/lib/types"
@@ -145,28 +146,44 @@ export default function ClientsPage() {
   )
   const currentInvoicePage = Math.min(invoicePage, lastInvoicePage)
 
-  function invoiceRows(invoices: typeof clientInvoices) {
-    return invoices.map((invoice) => (
-      <div
-        key={invoice.id}
-        className="flex items-center justify-between gap-3 border-b py-3 last:border-0"
-      >
-        <div className="min-w-0">
-          <p className="text-sm font-medium break-words tabular-nums">
-            {invoice.invoiceNumber}
-          </p>
-          <p className="text-xs text-muted-foreground tabular-nums">
-            {formatDate(invoice.issueDate)}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <p className="text-sm font-medium tabular-nums">
-            {money(invoice.total)}
-          </p>
-          <InvoiceStatusBadge status={invoice.status} />
-        </div>
-      </div>
-    ))
+  /**
+   * Phones get the /invoices row in one bordered list: number and status chip on
+   * the left of line 1, the amount on the right, the issue date on line 2.
+   */
+  function invoiceRows(invoices: typeof clientInvoices, className?: string) {
+    return (
+      <ul className={cn("max-sm:mt-1.5 max-sm:overflow-hidden max-sm:rounded-lg max-sm:border max-sm:bg-card", className)}>
+        {invoices.map((invoice) => (
+          <li
+            key={invoice.id}
+            className="flex items-center justify-between gap-3 border-b py-3 last:border-0 max-sm:px-4 max-sm:py-2.5"
+          >
+            <div className="min-w-0 max-sm:flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <p className="text-sm font-medium break-words tabular-nums max-sm:min-w-0 max-sm:truncate">
+                  {invoice.invoiceNumber}
+                </p>
+                <span className="shrink-0 sm:hidden">
+                  <InvoiceStatusBadge status={invoice.status} />
+                </span>
+                <p className="ml-auto shrink-0 text-sm font-medium tabular-nums sm:hidden">
+                  {money(invoice.total)}
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground tabular-nums max-sm:mt-0.5">
+                {formatDate(invoice.issueDate)}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1 max-sm:hidden">
+              <p className="text-sm font-medium tabular-nums">
+                {money(invoice.total)}
+              </p>
+              <InvoiceStatusBadge status={invoice.status} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    )
   }
 
   function openCreate() {
@@ -373,17 +390,19 @@ export default function ClientsPage() {
                     type="button"
                     aria-pressed={selected}
                     onClick={() => selectClient(client.id)}
-                    className={`flex w-full items-center justify-between gap-3 border-b border-l-2 px-3 py-4 text-left max-sm:last:border-b-0 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5 ${selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-muted/50"}`}
+                    className={`flex w-full items-center justify-between gap-3 border-b px-4 py-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset max-sm:rounded-none max-sm:last:border-b-0 sm:border-l-2 sm:px-5 sm:py-4 ${selected ? "sm:border-l-primary sm:bg-primary/10" : "hover:bg-muted/50 sm:border-l-transparent"}`}
                   >
-                    <span className="flex min-w-0 items-center gap-3">
+                    {/* Phones: the house row, a small colour dot and no repeated caption. */}
+                    <span className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
                       <span
-                        className="size-8 shrink-0 rounded-md"
+                        aria-hidden
+                        className="size-2.5 shrink-0 rounded-full sm:size-8 sm:rounded-md"
                         style={{
                           backgroundColor: client.color || CLIENT_COLORS[0],
                         }}
                       />
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-semibold">
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium sm:font-semibold">
                           {client.name}
                         </span>
                         {client.email && (
@@ -394,10 +413,10 @@ export default function ClientsPage() {
                       </span>
                     </span>
                     <span className="shrink-0 text-right">
-                      <span className="block text-sm font-semibold tabular-nums">
+                      <span className="block text-sm font-semibold tabular-nums max-sm:font-medium">
                         {money(total)}
                       </span>
-                      <span className="block text-xs text-muted-foreground">
+                      <span className="block text-xs text-muted-foreground max-sm:sr-only">
                         Lifetime invoiced
                       </span>
                     </span>
@@ -462,7 +481,8 @@ export default function ClientsPage() {
                 Recent invoices · {clientInvoices.length} total
               </h3>
               {clientInvoices.length ? (
-                invoiceRows(clientInvoices.slice(0, 5))
+                // The hairline above "View all invoices".
+                invoiceRows(clientInvoices.slice(0, 5), "border-b")
               ) : (
                 <p className="py-6 text-sm text-muted-foreground">
                   No issued invoices yet. Drafts appear on the Invoices page.
@@ -522,7 +542,7 @@ export default function ClientsPage() {
               <FactBox>
                 <Fact label="Lifetime invoiced" value={money(lifetime)} />
                 <Fact label="Paid" value={money(paid)} />
-                <Fact label="Outstanding" value={money(lifetime - paid)} tone="warning" />
+                <Fact label="Outstanding" value={money(lifetime - paid)} tone={lifetime - paid > 0 ? "warning" : "default"} />
                 {selectedClient.email && (
                   <Fact label="Email" value={<span className="break-all">{selectedClient.email}</span>} />
                 )}
@@ -808,21 +828,27 @@ export default function ClientsPage() {
             </div>
             <div className="grid gap-2">
               <Label id="client-color-label">Color</Label>
-              <div role="group" aria-labelledby="client-color-label" className="flex flex-wrap gap-2">
+              {/* On touch each swatch sits in a 44px button, five to a row. */}
+              <div role="group" aria-labelledby="client-color-label" className="flex flex-wrap gap-2 pointer-coarse:-ml-2 pointer-coarse:grid pointer-coarse:w-fit pointer-coarse:grid-cols-5 pointer-coarse:gap-1">
                 {CLIENT_COLORS.map((color, index) => (
                   <button
                     key={color}
                     type="button"
                     aria-label={`Color ${index + 1}`}
                     aria-pressed={form.color === color}
-                    className="size-7 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
-                    style={{
-                      backgroundColor: color,
-                      ["--tw-ring-color" as string]:
-                        form.color === color ? color : "transparent",
-                    }}
+                    className="flex size-7 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring pointer-coarse:size-11 pointer-coarse:focus-visible:outline-offset-0"
                     onClick={() => setForm({ ...form, color })}
-                  />
+                  >
+                    <span
+                      aria-hidden
+                      className="size-7 shrink-0 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all"
+                      style={{
+                        backgroundColor: color,
+                        ["--tw-ring-color" as string]:
+                          form.color === color ? color : "transparent",
+                      }}
+                    />
+                  </button>
                 ))}
               </div>
             </div>

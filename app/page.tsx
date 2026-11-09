@@ -107,7 +107,7 @@ export default function DashboardPage() {
         />
       </StatGrid>
 
-      <div className="mt-4 grid items-start gap-4 sm:mt-6 sm:gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="mt-3 grid grid-cols-1 items-start gap-3 sm:mt-6 sm:gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <Card className="phone-flat max-sm:gap-2">
           <CardHeader>
             <CardTitle className="text-sm font-medium">Quick stats</CardTitle>
@@ -132,7 +132,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="phone-flat max-sm:gap-2">
           <CardHeader>
             <CardTitle className="text-sm font-medium">
               Recent activity
@@ -140,14 +140,15 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {recentEntries.length === 0 ? (
-              <div className="flex flex-col items-center gap-3 py-8 text-center">
+              <div className="flex flex-col items-center gap-3 py-8 text-center max-sm:rounded-lg max-sm:border max-sm:bg-card">
                 <p className="text-sm text-muted-foreground">No time entries yet.</p>
                 <Button asChild size="sm" variant="outline">
                   <Link href="/tracker">Open the tracker</Link>
                 </Button>
               </div>
             ) : (
-              <ul className="divide-y">
+              /* On phones the list is its own bordered box of house rows, like Quick stats. */
+              <ul className="divide-y max-sm:rounded-lg max-sm:border max-sm:bg-card">
                 {recentEntries.map((entry) => {
                   const project = getProject(entry.projectId)
                   const client = project
@@ -159,7 +160,7 @@ export default function DashboardPage() {
                   return (
                     <li
                       key={entry.id}
-                      className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
+                      className="flex items-center justify-between gap-3 py-2.5 max-sm:px-4 sm:first:pt-0 sm:last:pb-0"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">

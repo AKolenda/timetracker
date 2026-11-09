@@ -241,16 +241,17 @@ export default function CalendarPage() {
     <>
       <PageHeader
         title="Calendar & reports"
-        center={<div className="flex w-full min-w-0 items-center">
+        center={<div className="flex min-w-0 items-center">
           <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Previous month" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}><ChevronLeft /></Button>
-          <Button variant="ghost" className="h-11 min-w-0 flex-1 px-0 text-xs" aria-label={`Today · ${format(currentMonth, "MMMM yyyy")}`} title="Go to today" onClick={selectToday}>
+          {/* The name starts with the visible text so voice control can say it. */}
+          <Button variant="ghost" className="h-11 min-w-0 flex-none px-2 text-[14px] font-medium" aria-label={`${format(currentMonth, "MMM yyyy")}, go to today`} title="Go to today" onClick={selectToday}>
             <span className="truncate">{format(currentMonth, "MMM yyyy")}</span>
           </Button>
           <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Next month" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}><ChevronRight /></Button>
         </div>}
       />
 
-      <StatGrid className="mb-6">
+      <StatGrid className="mb-3 sm:mb-6">
         <StatCard
           label="Month earnings"
           icon={DollarSign}
@@ -275,8 +276,8 @@ export default function CalendarPage() {
         />
       </StatGrid>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-stretch">
-        <Card className="flex flex-col lg:col-span-2 lg:min-h-[calc(100dvh-20rem)]">
+      <div className="grid grid-cols-1 gap-3 sm:gap-6 lg:grid-cols-3 lg:items-stretch">
+        <Card className="phone-flat flex flex-col lg:col-span-2 lg:min-h-[calc(100dvh-20rem)]">
           <CardHeader className="flex flex-row items-center justify-between pb-2 max-sm:hidden">
             <CardTitle className="text-sm font-medium">
               {format(currentMonth, "MMMM yyyy")}
@@ -401,9 +402,9 @@ export default function CalendarPage() {
           </CardContent>
         </Card>
 
-        <div className="space-y-6">
+        <div className="space-y-3 sm:space-y-6">
           {/* Day Detail */}
-          <Card>
+          <Card className="phone-flat max-sm:gap-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">
                 {selectedDate
@@ -576,7 +577,7 @@ export default function CalendarPage() {
           </Card>
 
           {/* Upcoming Payments */}
-          <Card>
+          <Card className="phone-flat max-sm:gap-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">
                 Payment schedule
@@ -588,30 +589,34 @@ export default function CalendarPage() {
                   No upcoming payments
                 </p>
               ) : (
-                <div className="space-y-2">
+                // Phones: one bordered list of /invoices rows (number and chip, amount
+                // right; client and due date below). From sm up: a card per invoice.
+                <ul className="space-y-2 max-sm:space-y-0 max-sm:divide-y max-sm:overflow-hidden max-sm:rounded-lg max-sm:border max-sm:bg-card">
                   {upcomingPayments.map((inv) => (
-                    <div
+                    <li
                       key={inv.id}
-                      className="flex items-center justify-between gap-2 rounded-md border p-2"
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 max-sm:gap-x-3 max-sm:px-4 max-sm:py-2.5 sm:rounded-md sm:border sm:p-2"
                     >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium tabular-nums">
-                            {inv.invoiceNumber}
-                          </span>
-                          <InvoiceStatusBadge status={inv.status} />
-                        </div>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {inv.client?.name ?? "Unknown"} &middot; Due{" "}
-                          {format(new Date(inv.dueDate), "MMM d")}
-                        </p>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate text-xs font-medium tabular-nums max-sm:text-sm">
+                          {inv.invoiceNumber}
+                        </span>
+                        <InvoiceStatusBadge status={inv.status} />
                       </div>
-                      <span className="shrink-0 text-sm font-semibold tabular-nums">
+                      <span className="shrink-0 text-sm font-semibold tabular-nums sm:row-span-2">
                         {money(inv.total)}
                       </span>
-                    </div>
+                      <p className="mt-0.5 flex min-w-0 items-center text-xs text-muted-foreground max-sm:col-span-2 max-sm:gap-2">
+                        {inv.client && (
+                          <span aria-hidden className="size-2 shrink-0 rounded-full sm:hidden" style={{ backgroundColor: inv.client.color }} />
+                        )}
+                        <span className="min-w-0 truncate max-sm:flex-1">{inv.client?.name ?? "Unknown"}</span>
+                        <span className="whitespace-pre max-sm:hidden"> &middot; </span>
+                        <span className="shrink-0 tabular-nums">Due {format(new Date(inv.dueDate), "MMM d")}</span>
+                      </p>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </CardContent>
           </Card>
