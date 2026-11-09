@@ -17,9 +17,10 @@ export function InvoiceEstimateRow({ estimate, onReview, mobile = false }: { est
   // Issued rows show amounts in the display currency with no code, so only name a currency that differs from it.
   const { currency: displayCurrency } = useMoney()
   const currencyCode = estimate.currency !== displayCurrency ? estimate.currency : null
-  if (mobile) return <button type="button" data-testid="invoice-estimate-row" onClick={onReview} aria-label={`Review invoice preview for ${estimate.clientName}`} className={`flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-md border border-warning/25 p-4 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${previewRow}`}>
+  // A row in the phone/tablet invoice list: one line of client and amount, then the preview facts.
+  if (mobile) return <button type="button" data-testid="invoice-estimate-row" onClick={onReview} aria-label={`Review invoice preview for ${estimate.clientName}`} className={`flex w-full min-w-0 cursor-pointer items-center gap-3 px-3 py-2.5 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset ${previewRow}`}>
     <FileText aria-hidden className="size-4 shrink-0 text-warning-foreground" />
-    <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{estimate.clientName}</p><p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground"><span className={previewChip}>Preview</span><span className="tabular-nums">{hoursLabel(estimate.hours)}h</span><span aria-hidden>·</span><span>Before tax</span></p></div>
+    <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{estimate.clientName}</p><p className="mt-1 flex min-w-0 flex-nowrap items-center gap-x-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground"><span className={previewChip}>Preview</span><span className="tabular-nums">{hoursLabel(estimate.hours)}h</span><span aria-hidden className="max-sm:hidden">·</span><span className="max-sm:sr-only">Before tax</span></p></div>
     <div className="shrink-0 text-right"><p className="text-sm font-semibold tabular-nums">{formatCurrency(estimate.subtotal, estimate.currency)}</p>{currencyCode && <p className="text-xs text-muted-foreground">{currencyCode}</p>}</div>
     <Eye aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
   </button>

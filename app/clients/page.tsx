@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { format } from "date-fns"
 import { formatDate } from "@/lib/format"
 import { parseLocalDate } from "@/lib/datetime"
@@ -11,6 +11,7 @@ import {
   Pencil,
   Trash2,
   Users,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -33,7 +34,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
+import { Fact, FactBox } from "@/components/fact-list"
 import { PageHeader } from "@/components/page-header"
 import { InvoiceStatusBadge } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
@@ -88,6 +96,10 @@ export default function ClientsPage() {
   const secondaryCurrency = data.settings.secondaryRemittance?.currency || null
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  // Phones show a client's billing in a bottom sheet instead of the second pane.
+  const [detailOpen, setDetailOpen] = useState(false)
+  const afterDetailClose = useRef<(() => void) | null>(null)
+  const detailRef = useRef<HTMLDivElement>(null)
   const [invoicesOpen, setInvoicesOpen] = useState(false)
   const [invoiceSearch, setInvoiceSearch] = useState("")
   const [invoicePage, setInvoicePage] = useState(0)
@@ -241,6 +253,56 @@ export default function ClientsPage() {
     }
   })()
 
+  function selectClient(id: string) {
+    setSelectedClientId(id)
+    if (window.matchMedia("(width < 40rem)").matches) setDetailOpen(true)
+  }
+
+  /** Closes the phone detail sheet, then runs `action`, so a dialog it opens keeps focus. */
+  function closeDetailThen(action: () => void) {
+    if (!detailOpen) return action()
+    afterDetailClose.current = action
+    setDetailOpen(false)
+  }
+
+  function openAllInvoices() {
+    setInvoiceSearch("")
+    setInvoicePage(0)
+    setInvoicesOpen(true)
+  }
+
+  function clientActionsMenu(client: Client, triggerClassName?: string) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={triggerClassName}
+            aria-label={`Actions for ${client.name}`}
+          >
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem className="max-sm:min-h-11" onClick={() => closeDetailThen(() => openEdit(client))}>
+            <Pencil className="size-4" />
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => closeDetailThen(() => { setDeleteTarget(client); setDeleteOpen(true) })}
+            className="text-destructive focus:text-destructive max-sm:min-h-11"
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
+  const projectCount = selectedClient ? getProjectsByClient(selectedClient.id).length : 0
+
   return (
     <>
       <ConfirmDeleteDialog
@@ -259,6 +321,7 @@ export default function ClientsPage() {
       />
       <PageHeader
         title="Clients"
+        primary={{ label: "New client", icon: Plus, onClick: openCreate, testId: "new-client" }}
         actions={
           <Button size="sm" onClick={openCreate}>
             <Plus className="size-4" data-icon="inline-start" />
@@ -289,7 +352,7 @@ export default function ClientsPage() {
         </Card>
       ) : selectedClient ? (
         <>
-          <div className="mb-4 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+          <div className="mb-4 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground max-sm:hidden">
             <span>
               {data.clients.length}{" "}
               {data.clients.length === 1 ? "client" : "clients"} · Select a
@@ -309,8 +372,8 @@ export default function ClientsPage() {
                     key={client.id}
                     type="button"
                     aria-pressed={selected}
-                    onClick={() => setSelectedClientId(client.id)}
-                    className={`flex w-full items-center justify-between gap-3 border-b border-l-2 px-3 py-4 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5 ${selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-muted/50"}`}
+                    onClick={() => selectClient(client.id)}
+                    className={`flex w-full items-center justify-between gap-3 border-b border-l-2 px-3 py-4 text-left max-sm:last:border-b-0 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5 ${selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-muted/50"}`}
                   >
                     <span className="flex min-w-0 items-center gap-3">
                       <span
@@ -344,7 +407,7 @@ export default function ClientsPage() {
             </div>
             <section
               aria-label="Client billing detail"
-              className="min-w-0 border-t p-4 sm:p-6 lg:border-t-0 lg:border-l"
+              className="min-w-0 border-t p-4 max-sm:hidden sm:p-6 lg:border-t-0 lg:border-l"
             >
               <div className="mb-6 flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -358,30 +421,7 @@ export default function ClientsPage() {
                       : "projects"}
                   </p>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Actions for ${selectedClient.name}`}
-                    >
-                      <MoreHorizontal className="size-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => openEdit(selectedClient)}>
-                      <Pencil className="size-4" />
-                      Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => { setDeleteTarget(selectedClient); setDeleteOpen(true) }}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <Trash2 className="size-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {clientActionsMenu(selectedClient)}
               </div>
               <p className="text-xs text-muted-foreground">Lifetime invoiced</p>
               <p className="mt-1 text-3xl font-semibold tracking-tight break-words tabular-nums sm:text-4xl">
@@ -432,11 +472,7 @@ export default function ClientsPage() {
                 <Button
                   variant="link"
                   className="mt-2 px-0"
-                  onClick={() => {
-                    setInvoiceSearch("")
-                    setInvoicePage(0)
-                    setInvoicesOpen(true)
-                  }}
+                  onClick={openAllInvoices}
                 >
                   View all invoices
                 </Button>
@@ -445,6 +481,93 @@ export default function ClientsPage() {
           </div>
         </>
       ) : null}
+
+      {selectedClient && (
+        <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
+          <SheetContent
+            side="bottom"
+            showCloseButton={false}
+            aria-describedby={undefined}
+            ref={detailRef}
+            data-testid="client-detail-sheet"
+            className="max-h-[85dvh] gap-0 overflow-y-auto overscroll-contain rounded-t-xl pb-[max(1rem,env(safe-area-inset-bottom))] sm:hidden"
+            onOpenAutoFocus={(event) => {
+              // Focus the sheet itself rather than its first button.
+              event.preventDefault()
+              detailRef.current?.focus()
+            }}
+            onCloseAutoFocus={(event) => {
+              const action = afterDetailClose.current
+              if (!action) return
+              afterDetailClose.current = null
+              event.preventDefault()
+              action()
+            }}
+          >
+            <div className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-1 border-b bg-popover pr-1 pl-4">
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="truncate text-sm font-medium">{selectedClient.name}</SheetTitle>
+                <p className="text-xs text-muted-foreground">
+                  {projectCount} {projectCount === 1 ? "project" : "projects"}
+                </p>
+              </div>
+              {clientActionsMenu(selectedClient, "size-11 text-muted-foreground")}
+              <SheetClose asChild>
+                <Button variant="ghost" size="icon" className="size-11" aria-label="Close">
+                  <XIcon />
+                </Button>
+              </SheetClose>
+            </div>
+            <div className="px-4 pt-3">
+              <FactBox>
+                <Fact label="Lifetime invoiced" value={money(lifetime)} />
+                <Fact label="Paid" value={money(paid)} />
+                <Fact label="Outstanding" value={money(lifetime - paid)} tone="warning" />
+                {selectedClient.email && (
+                  <Fact label="Email" value={<span className="break-all">{selectedClient.email}</span>} />
+                )}
+                {selectedClient.phone && <Fact label="Phone" value={selectedClient.phone} />}
+                <Fact
+                  label="Invoicing"
+                  value={
+                    selectedClient.invoiceScheduleEnabled && selectedClient.invoiceScheduleWeeks ? (
+                      <>
+                        Every {selectedClient.invoiceScheduleWeeks}w
+                        {!selectedClient.invoiceScheduleAutoSend && " (draft only)"}
+                        {selectedNextSend &&
+                          ` · next ${format(parseLocalDate(selectedNextSend), "EEE, MMM d")}`}
+                      </>
+                    ) : (
+                      "Manual"
+                    )
+                  }
+                  tone={selectedClient.invoiceScheduleEnabled && selectedClient.invoiceScheduleWeeks ? "success" : "default"}
+                />
+              </FactBox>
+              <p className="mt-1.5 text-xs text-muted-foreground">All time · USD · Drafts excluded</p>
+              <h3 className="mt-4 text-xs text-muted-foreground">
+                Recent invoices · {clientInvoices.length} total
+              </h3>
+              {clientInvoices.length ? (
+                invoiceRows(clientInvoices.slice(0, 5))
+              ) : (
+                <p className="py-6 text-sm text-muted-foreground">
+                  No issued invoices yet. Drafts appear on the Invoices page.
+                </p>
+              )}
+              {clientInvoices.length > 0 && (
+                <Button
+                  variant="outline"
+                  className="mt-2 h-11 w-full"
+                  onClick={() => closeDetailThen(openAllInvoices)}
+                >
+                  View all invoices
+                </Button>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
 
       <Dialog open={invoicesOpen} onOpenChange={setInvoicesOpen}>
         <DialogContent>
