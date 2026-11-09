@@ -46,6 +46,8 @@ import { PageHeader } from "@/components/page-header"
 import type { AgentTimeBlock, AgentTimeImportData } from "@/lib/agent-time"
 import { PERSONAL_AGENT_PROJECT, resolveAgentMappings } from "@/lib/agent-import-projects"
 import { occupiedProjectRanges } from "@/lib/agent-time-overlap"
+import { conversationKey } from "@/lib/agent-time-chats"
+import { normalizeBillFactor } from "@/lib/billing"
 import {
   LEFT_OPEN_SECONDS,
   buildJournal,
@@ -240,7 +242,7 @@ function LedgerRow({
         </span>
         <span className="text-right tabular-nums">
           {hasUntracked && project ? (
-            <span className="font-semibold">{formatCurrency((row.untrackedSeconds / 3600) * project.rate, project.currency)}</span>
+            <span className="font-semibold">{formatCurrency((row.billableUntrackedSeconds / 3600) * project.rate, project.currency)}</span>
           ) : (
             <span className="text-sm text-muted-foreground">{project ? formatCurrency(0, project.currency) : "—"}</span>
           )}
@@ -446,6 +448,8 @@ export default function AgenticCodingPage() {
     return start.getTime()
   }, [range, fetchedAt])
 
+  const savedChatFactors = data.settings.agentTimeChatBillFactors
+  const chatFactors = useMemo(() => savedChatFactors || {}, [savedChatFactors])
   const liveThreads = useMemo(
     () => new Set((agentTime?.live ?? []).flatMap((block) =>
       (block.sourceIntervals ?? []).map((source) => `${source.hostUrl ?? ""}|${source.conversationId || block.id}|${Date.parse(source.start)}`))),
@@ -473,10 +477,11 @@ export default function AgenticCodingPage() {
             leftOpen: (end - start) / 1000 > LEFT_OPEN_SECONDS,
             // Only the running turn itself is live, not the thread's earlier turns.
             live: liveThreads.has(`${threadKey}|${start}`),
+            billFactor: normalizeBillFactor(chatFactors[conversationKey(source)] ?? 1),
           }]
         })
       ) ?? [],
-    [agentTime, liveThreads]
+    [agentTime, liveThreads, chatFactors]
   )
 
   const turns = useMemo(() => {

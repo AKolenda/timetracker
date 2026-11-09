@@ -14,6 +14,8 @@ export type InsightTurn = {
   /** True when the whole turn, not just its visible part, ran past LEFT_OPEN_SECONDS. */
   leftOpen: boolean
   live: boolean
+  /** The chat's saved billing factor (1 = full rate), as the import applies it. */
+  billFactor: number
 }
 
 export type Billing = { kind: "project"; projectId: string } | { kind: "personal" } | { kind: "none" }
@@ -99,6 +101,8 @@ export type ProjectLedger = {
   trackedSeconds: number
   /** Working time no tracker entry covers yet. */
   untrackedSeconds: number
+  /** Untracked time weighted by each chat's billing factor; what the rate applies to. */
+  billableUntrackedSeconds: number
   threads: ThreadSummary[]
 }
 
@@ -121,7 +125,18 @@ export function buildProjectLedger(
   return [...byProject].map(([projectId, projectTurns]) => {
     const { working, workingSeconds, leftOpenSeconds } = splitTime(projectTurns)
     // Measured against working time only, so search and project filters move both columns together.
-    const untrackedSeconds = uncoveredSeconds(working, occupied(projectId))
+    const tracked = occupied(projectId)
+    const untrackedSeconds = uncoveredSeconds(working, tracked)
+    // Weight by each turn's own untracked time, like the import's sourcesBillFactor.
+    let untrackedTurnSeconds = 0
+    let weightedSeconds = 0
+    for (const turn of projectTurns) {
+      if (turn.leftOpen) continue
+      const seconds = uncoveredSeconds([span(turn)], tracked)
+      untrackedTurnSeconds += seconds
+      weightedSeconds += seconds * turn.billFactor
+    }
+    const billableUntrackedSeconds = untrackedTurnSeconds > 0 ? untrackedSeconds * (weightedSeconds / untrackedTurnSeconds) : untrackedSeconds
     return {
       projectId,
       workingSeconds,
@@ -129,6 +144,7 @@ export function buildProjectLedger(
       leftOpenTurns: projectTurns.filter((turn) => turn.leftOpen).length,
       trackedSeconds: Math.max(0, workingSeconds - untrackedSeconds),
       untrackedSeconds,
+      billableUntrackedSeconds,
       threads: summarizeThreads(projectTurns),
     }
   }).sort((a, b) => b.untrackedSeconds - a.untrackedSeconds || b.workingSeconds - a.workingSeconds)
