@@ -104,7 +104,8 @@ export type ProjectLedger = {
 
 /**
  * One row per billed project. `occupied` returns the project's tracked ranges (entries and running timers),
- * the same ranges the import flow subtracts, so "not tracked yet" matches what an import could add.
+ * the same ranges the import flow subtracts. The import has no left-open cutoff, so it can still draft
+ * turns this page leaves out; "not tracked yet" covers working time only.
  */
 export function buildProjectLedger(
   turns: InsightTurn[],

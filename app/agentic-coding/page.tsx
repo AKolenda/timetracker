@@ -225,6 +225,7 @@ function LedgerRow({
           </span>
           <span className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
             <span><span className="font-medium text-foreground tabular-nums">{hours(row.workingSeconds)}</span> working</span>
+            <span className="tabular-nums md:hidden">{hours(row.trackedSeconds)} tracked</span>
             {row.leftOpenTurns > 0 && (
               <span className="tabular-nums">+ {hours(row.leftOpenSeconds)} in {row.leftOpenTurns} {row.leftOpenTurns === 1 ? "turn" : "turns"} left open</span>
             )}
@@ -241,7 +242,7 @@ function LedgerRow({
             <span className="text-sm text-muted-foreground">{project ? formatCurrency(0, project.currency) : "—"}</span>
           )}
           <span className="block text-xs font-normal text-muted-foreground md:hidden">
-            {hasUntracked ? `${hours(row.untrackedSeconds)} not tracked` : "All tracked"}, {hours(row.trackedSeconds)} tracked
+            {hasUntracked ? `${hours(row.untrackedSeconds)} not tracked` : "All tracked"}
           </span>
         </span>
       </button>
@@ -708,7 +709,7 @@ export default function AgenticCodingPage() {
                   <span className="font-medium">
                     {leftOpenTurns.length} {leftOpenTurns.length === 1 ? "turn" : "turns"} stayed open over {LEFT_OPEN_HOURS} hours straight, {hours(leftOpenSeconds)} in all.
                   </span>{" "}
-                  <span className="text-muted-foreground">They’re hatched below and not counted as working time. Tracked and invoiced entries aren’t changed.</span>
+                  <span className="text-muted-foreground">They’re hatched below and not counted as working time. The import still offers them, so skip them there. Tracked and invoiced entries aren’t changed.</span>
                 </p>
                 <Button size="sm" variant="outline" onClick={() => setLeftOpenDialog(true)}>
                   Show turns
