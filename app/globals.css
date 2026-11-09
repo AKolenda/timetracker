@@ -176,3 +176,26 @@
     appearance: textfield;
   }
 }
+
+/*
+ * .phone-flat: put it on a wrapper Card whose contents are already boxed
+ * (a list, a fact box, a nested panel). Below `sm` the card loses its ring,
+ * shadow, background and vertical padding, and its header and content lose
+ * their side padding, so the inner box gets the full width back instead of
+ * sitting box-in-a-box. From `sm` up the card is unchanged.
+ * Unlayered on purpose so it outranks the Card's own utility classes.
+ */
+@media (width < 40rem) {
+  .phone-flat {
+    background-color: transparent;
+    box-shadow: none;
+    padding-block: 0;
+    border-radius: 0;
+    overflow: visible;
+  }
+  .phone-flat > [data-slot="card-header"],
+  .phone-flat > [data-slot="card-content"],
+  .phone-flat > [data-slot="card-footer"] {
+    padding-inline: 0;
+  }
+}

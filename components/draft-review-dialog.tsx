@@ -8,6 +8,7 @@ import { Check, ChevronLeft, ChevronRight, Pencil, Search, Trash2 } from "lucide
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { RowActionsMenu } from "@/components/row-actions-menu"
 
 const PAGE_SIZE = 15
 
@@ -98,7 +99,7 @@ export function DraftReviewDialog({ open, onOpenChange, items, totalSeconds, bus
         <span className="text-xs text-muted-foreground tabular-nums">{items.length} · {formatClock(totalSeconds)}</span>
         <DialogDescription className="sr-only">Approve or skip agent drafts. Skipped time can be restored in Import settings.</DialogDescription>
       </DialogHeader>
-      <label className="mx-4 mt-3 flex h-8 shrink-0 items-center gap-2 rounded-md border px-2.5 text-muted-foreground focus-within:ring-2 focus-within:ring-ring/50">
+      <label className="mx-4 mt-3 flex h-8 shrink-0 max-sm:h-11 items-center gap-2 rounded-md border px-2.5 text-muted-foreground focus-within:ring-2 focus-within:ring-ring/50">
         <Search className="size-3.5 shrink-0" />
         <input className="min-w-0 flex-1 bg-transparent text-[16px] text-foreground outline-none placeholder:text-muted-foreground sm:text-sm" aria-label="Search drafts" placeholder="Search by title, project, or date…" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} />
       </label>
@@ -126,11 +127,11 @@ export function DraftReviewDialog({ open, onOpenChange, items, totalSeconds, bus
                 <span className="hidden text-xs whitespace-nowrap text-muted-foreground tabular-nums sm:block">{when}</span>
                 <span className="hidden text-right text-xs text-warning-foreground tabular-nums sm:block">{entryClock(item.durationSeconds)}{item.billed}</span>
                 <span className="hidden text-right text-xs text-muted-foreground tabular-nums sm:block">{item.amount || "—"}</span>
-                <div className="flex items-center gap-0.5 sm:opacity-50 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
-                  <Button variant="ghost" size="icon-xs" data-testid="review-approve-draft" disabled={busy} aria-label="Approve" title="Approve" className="text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground" onClick={() => act(onApprove, [item.id])}><Check className="size-3.5" /></Button>
-                  <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => onEdit(item.id)}><Pencil className="size-3.5" /></Button>
-                  <Button variant="ghost" size="icon-xs" data-testid="review-skip-draft" aria-label="Skip" title="Skip" onClick={() => act(onSkip, [item.id])}><Trash2 className="size-3.5" /></Button>
-                </div>
+                <RowActionsMenu name={item.title || "draft"} className="-my-1 sm:my-0 sm:opacity-50 sm:group-hover:opacity-100 sm:focus-within:opacity-100" items={[
+                  { label: "Approve", icon: Check, testId: "review-approve-draft", disabled: busy, className: "text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground", onSelect: () => act(onApprove, [item.id]) },
+                  { label: "Edit and approve", icon: Pencil, onSelect: () => onEdit(item.id) },
+                  { label: "Skip", icon: Trash2, testId: "review-skip-draft", onSelect: () => act(onSkip, [item.id]) },
+                ]} />
               </div>
             })}
           </section>
@@ -140,15 +141,15 @@ export function DraftReviewDialog({ open, onOpenChange, items, totalSeconds, bus
         {selected.length > 0 ? <>
           <span className="text-sm text-foreground tabular-nums">{selected.length} selected · {formatClock(selectedSeconds)}</span>
           <span className="flex-1" />
-          <Button variant="ghost" size="sm" onClick={() => setPicked(new Set())}>Clear</Button>
-          <Button variant="outline" size="sm" data-testid="review-skip-selected" onClick={() => act(onSkip, selected.map((item) => item.id))}><Trash2 className="size-3.5" data-icon="inline-start" />Skip {selected.length}</Button>
-          <Button size="sm" data-testid="review-approve-selected" disabled={busy} className="bg-warning text-amber-950 hover:bg-warning/85" onClick={() => act(onApprove, selected.map((item) => item.id))}><Check className="size-3.5" data-icon="inline-start" />Approve {selected.length}</Button>
+          <Button variant="ghost" size="sm" className="max-sm:h-11" onClick={() => setPicked(new Set())}>Clear</Button>
+          <Button variant="outline" size="sm" data-testid="review-skip-selected" className="max-sm:h-11" onClick={() => act(onSkip, selected.map((item) => item.id))}><Trash2 className="size-3.5" data-icon="inline-start" />Skip {selected.length}</Button>
+          <Button size="sm" data-testid="review-approve-selected" disabled={busy} className="bg-warning text-amber-950 hover:bg-warning/85 max-sm:h-11" onClick={() => act(onApprove, selected.map((item) => item.id))}><Check className="size-3.5" data-icon="inline-start" />Approve {selected.length}</Button>
         </> : <>
           <span className="tabular-nums">{filtered.length ? `${currentPage * PAGE_SIZE + 1}–${Math.min((currentPage + 1) * PAGE_SIZE, filtered.length)} of ${filtered.length}` : "0 drafts"}</span>
-          <Button variant="ghost" size="icon-xs" aria-label="Previous page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft className="size-3.5" /></Button>
-          <Button variant="ghost" size="icon-xs" aria-label="Next page" disabled={currentPage >= lastPage} onClick={() => setPage(currentPage + 1)}><ChevronRight className="size-3.5" /></Button>
+          <Button variant="ghost" size="icon-xs" className="max-sm:size-11" aria-label="Previous page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft className="size-3.5" /></Button>
+          <Button variant="ghost" size="icon-xs" className="max-sm:size-11" aria-label="Next page" disabled={currentPage >= lastPage} onClick={() => setPage(currentPage + 1)}><ChevronRight className="size-3.5" /></Button>
           <span className="flex-1" />
-          {items.length > 0 && <Button size="sm" data-testid="review-approve-all" disabled={busy} className="bg-warning text-amber-950 hover:bg-warning/85" onClick={onApproveAll}><Check className="size-3.5" data-icon="inline-start" />Approve all {items.length} · <span className="tabular-nums">{formatClock(totalSeconds)}</span></Button>}
+          {items.length > 0 && <Button size="sm" data-testid="review-approve-all" disabled={busy} className="bg-warning text-amber-950 hover:bg-warning/85 max-sm:h-11 max-sm:w-full" onClick={onApproveAll}><Check className="size-3.5" data-icon="inline-start" />Approve all {items.length} · <span className="tabular-nums">{formatClock(totalSeconds)}</span></Button>}
         </>}
       </div>
     </DialogContent>

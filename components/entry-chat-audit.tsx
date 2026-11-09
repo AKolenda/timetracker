@@ -43,12 +43,12 @@ export function SourceLogo({ source, agent, className = "size-6" }: { source: st
 function ChatBillFactor({ factor, onChange }: { factor: number; onChange: (factor: number) => void }) {
   const [custom, setCustom] = useState("")
   const isPreset = BILL_FACTOR_PRESETS.some((option) => Math.abs(option.value - factor) < 0.0001)
-  return <div className="flex items-center gap-1.5 text-xs" data-testid="chat-bill-factor">
+  return <div className="flex items-center gap-1.5 text-xs max-sm:w-full max-sm:gap-2" data-testid="chat-bill-factor">
     <span className="text-muted-foreground">Bill</span>
-    <div className="flex items-center rounded-md border p-0.5">
-      {BILL_FACTOR_PRESETS.map((option) => { const active = Math.abs(option.value - factor) < 0.0001; return <button key={option.label} type="button" className={`h-5 cursor-pointer rounded-[4px] px-1.5 font-medium focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={active} onClick={() => onChange(option.value)}>{option.label}</button> })}
-      <form className="flex items-center" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
-        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-12 rounded-[4px] bg-transparent px-1.5 text-center text-[16px] leading-none font-medium sm:w-11 sm:text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
+    <div className="flex items-center rounded-md border p-0.5 max-sm:flex-1">
+      {BILL_FACTOR_PRESETS.map((option) => { const active = Math.abs(option.value - factor) < 0.0001; return <button key={option.label} type="button" className={`h-5 cursor-pointer rounded-[4px] px-1.5 font-medium max-sm:flex-1 max-sm:text-sm pointer-coarse:h-11 pointer-coarse:min-w-11 focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={active} onClick={() => onChange(option.value)}>{option.label}</button> })}
+      <form className="flex items-center max-sm:flex-1" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
+        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-12 rounded-[4px] bg-transparent px-1.5 max-sm:w-full pointer-coarse:h-11 pointer-coarse:min-w-11 text-center text-[16px] leading-none font-medium sm:w-11 sm:text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
       </form>
     </div>
   </div>
@@ -89,7 +89,7 @@ function MessageRow({ message, placement, source, withDate, needle }: { message:
         // While searching, show the raw text so every match can be marked.
         ? <p className={`mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"}`}>{highlight(message.text, needle)}</p>
         : <div className={`mt-1 min-w-0 break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"} ${long && !expanded ? "max-h-72 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}><ChatMessageBody text={message.text} /></div>}
-      {long && <button type="button" className="mt-1 cursor-pointer rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setExpanded(!expanded)}>{expanded ? "Show less" : `Show full message · ${message.text.length.toLocaleString()} characters`}</button>}
+      {long && <button type="button" className="mt-1 cursor-pointer rounded-md text-xs pointer-coarse:mt-0 pointer-coarse:min-h-11 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setExpanded(!expanded)}>{expanded ? "Show less" : `Show full message · ${message.text.length.toLocaleString()} characters`}</button>}
     </div>
   </article>
 }
@@ -107,7 +107,7 @@ export function T3ThreadId({ id }: { id: string }) {
   return <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground" data-testid="t3-thread-id">
     <span className="shrink-0">T3 thread</span>
     <code className="min-w-0 truncate font-mono" title={id}>{id}</code>
-    <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" aria-label="Copy T3 thread ID" onClick={() => void copy()}><Copy /></Button>
+    <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground pointer-coarse:size-11" aria-label="Copy T3 thread ID" onClick={() => void copy()}><Copy /></Button>
   </p>
 }
 
@@ -203,11 +203,11 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <div className="flex items-center rounded-md border p-0.5 text-xs" role="group" aria-label="Messages to show">
-          {(["entry", "all"] as const).map((value) => <button key={value} type="button" className={`h-5 cursor-pointer rounded-[4px] px-2 font-medium disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring ${effectiveScope === value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={effectiveScope === value} disabled={value === "entry" && !timed} onClick={() => setScope(value)}>{value === "entry" ? "This entry" : "Whole chat"}</button>)}
+        <div className="flex items-center rounded-md border p-0.5 text-xs max-sm:w-full" role="group" aria-label="Messages to show">
+          {(["entry", "all"] as const).map((value) => <button key={value} type="button" className={`h-5 cursor-pointer rounded-[4px] px-2 font-medium max-sm:flex-1 max-sm:text-sm pointer-coarse:h-11 pointer-coarse:min-w-11 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring ${effectiveScope === value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={effectiveScope === value} disabled={value === "entry" && !timed} onClick={() => setScope(value)}>{value === "entry" ? "This entry" : "Whole chat"}</button>)}
         </div>
         {onSetFactor && <ChatBillFactor factor={factor} onChange={onSetFactor} />}
-        <label className="flex h-7 min-w-36 flex-1 items-center gap-1.5 rounded-md px-2 text-muted-foreground focus-within:bg-accent/60 hover:bg-accent/60 sm:ml-auto sm:max-w-56">
+        <label className="flex h-7 min-w-36 flex-1 items-center gap-1.5 rounded-md px-2 pointer-coarse:h-11 max-sm:h-11 max-sm:w-full text-muted-foreground focus-within:bg-accent/60 hover:bg-accent/60 sm:ml-auto sm:max-w-56">
           <Search className="size-3.5 shrink-0" />
           <input className="min-w-0 flex-1 bg-transparent text-[16px] text-foreground outline-none placeholder:text-muted-foreground sm:text-xs" aria-label="Find in chat" placeholder="Find in chat" value={query} onChange={(event) => setQuery(event.target.value)} />
         </label>
@@ -232,7 +232,11 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
   </section>
 }
 
-export function EntryChats({ description, sources, start, end, labels, inferred = false, chatFactors, onSetChatFactor }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean; chatFactors?: Record<string, number>; onSetChatFactor?: (chat: ConversationSource, factor: number) => void }) {
+/**
+ * Opens an entry's chats. On phones a log row can pass `figure` (right of the title) and
+ * `children` (the second line), so the whole two-line row is one opener with the title truncating last.
+ */
+export function EntryChats({ description, sources, start, end, labels, inferred = false, chatFactors, onSetChatFactor, figure, children }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean; chatFactors?: Record<string, number>; onSetChatFactor?: (chat: ConversationSource, factor: number) => void; figure?: ReactNode; children?: ReactNode }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(0)
@@ -247,11 +251,13 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
   const selected = conversations.find((source) => conversationKey(source) === selectedKey) ?? conversations[0] ?? null
   const totalSeconds = conversations.reduce((total, source) => total + source.durationSeconds, 0)
   const factorOf = (source: ConversationSource) => normalizeBillFactor(chatFactors?.[conversationKey(source)] ?? 1)
+  const rowLayout = figure != null || children != null
   const range = Number.isFinite(end) ? `${format(start, "MMM d, HH:mm")}–${format(end, new Date(start).toDateString() === new Date(end).toDateString() ? "HH:mm" : "MMM d, HH:mm")}` : `${format(start, "MMM d, HH:mm")}–now`
 
   return <>
-    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left max-lg:gap-1 focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
+    <button ref={openerRef} type="button" className={`flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left max-lg:gap-1 max-sm:min-h-11 max-sm:items-center max-sm:[&>span:first-child]:truncate max-sm:[&>svg]:mt-0 focus-visible:outline-2 focus-visible:outline-ring ${rowLayout ? "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:content-center max-sm:items-baseline max-sm:gap-x-3 max-sm:gap-y-0.5 max-sm:[&>svg]:hidden" : ""}`} data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
       <span className="min-w-0 flex-1 break-words">{plainTitle(description || "") || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+      {rowLayout && <span className="contents sm:hidden">{figure}{children}</span>}
     </button>
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="flex h-[min(90dvh,56rem)] w-[calc(100vw-1rem)] max-w-none flex-col gap-0 overflow-hidden rounded-md p-0 sm:w-[calc(100vw-4rem)] sm:max-w-6xl" data-testid="entry-chats-dropdown" onCloseAutoFocus={(event) => { event.preventDefault(); openerRef.current?.focus() }}>
@@ -263,7 +269,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
         </DialogHeader>
         <div className="flex min-h-0 flex-1">
           <aside className={`${mobileView === "list" ? "flex" : "hidden"} min-h-0 w-full flex-col bg-muted/40 sm:flex sm:w-72 sm:shrink-0 sm:border-r`} aria-label="Chats in this entry">
-            <label className="mx-2 mt-2 flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground focus-within:bg-accent hover:bg-accent/60">
+            <label className="mx-2 mt-2 flex h-8 max-sm:h-11 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground focus-within:bg-accent hover:bg-accent/60">
               <Search className="size-3.5 shrink-0" />
               <input className="min-w-0 flex-1 bg-transparent text-[16px] text-foreground outline-none placeholder:text-muted-foreground sm:text-sm" aria-label="Search entry chats" placeholder="Search chats" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} />
             </label>
@@ -271,7 +277,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
               {filtered.slice(currentPage * CHAT_PAGE_SIZE, currentPage * CHAT_PAGE_SIZE + CHAT_PAGE_SIZE).map((source) => {
                 const active = selected && conversationKey(selected) === conversationKey(source)
                 const factor = factorOf(source)
-                return <button key={conversationKey(source)} type="button" aria-current={active ? "true" : undefined} className={`flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent" : "hover:bg-accent/60"}`} onClick={() => { setSelectedKey(conversationKey(source)); setMobileView("chat") }}>
+                return <button key={conversationKey(source)} type="button" aria-current={active ? "true" : undefined} className={`flex w-full min-w-0 max-sm:min-h-11 cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent" : "hover:bg-accent/60"}`} onClick={() => { setSelectedKey(conversationKey(source)); setMobileView("chat") }}>
                   <SourceLogo source={source.agent} agent={source.agent} className="mt-0.5 size-4" />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-2" title={`${source.machineLabel} · ${source.model || source.agent || source.source} · ${format(source.spans[0].start, "HH:mm")}–${format(source.spans.at(-1)!.end, "HH:mm")} · ${formatDuration(source.durationSeconds)}`}>

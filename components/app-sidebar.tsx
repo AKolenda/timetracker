@@ -68,7 +68,7 @@ const navSections: NavSection[] = [
 const settingsItem: NavItem = { title: "Settings", href: "/settings", icon: Settings }
 
 const itemClass =
-  "h-7 gap-2.5 px-2 text-sm font-medium text-sidebar-foreground pointer-coarse:h-10 data-active:text-sidebar-accent-foreground [&_svg]:size-3.5 [&_svg]:text-muted-foreground data-active:[&_svg]:text-sidebar-accent-foreground"
+  "h-7 gap-2.5 px-2 text-sm font-medium text-sidebar-foreground pointer-coarse:h-11 data-active:text-sidebar-accent-foreground [&_svg]:size-3.5 [&_svg]:text-muted-foreground data-active:[&_svg]:text-sidebar-accent-foreground"
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/"

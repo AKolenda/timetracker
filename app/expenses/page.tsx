@@ -18,6 +18,7 @@ import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogDescription,
   DialogTitle,
   DialogFooter,
   DialogClose,
@@ -58,6 +59,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { PageHeader } from "@/components/page-header"
+import { RowActionsMenu } from "@/components/row-actions-menu"
 import { StatCard, StatGrid } from "@/components/stat-card"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
@@ -96,6 +98,12 @@ const categoryColors: Record<string, string> = {
   Communication: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
   Marketing: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
   Other: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+}
+
+/** "Nov 28" this year, "Nov 28, 2025" otherwise, for compact phone rows. */
+function shortDate(iso: string): string {
+  const date = parseISO(iso)
+  return format(date, date.getFullYear() === new Date().getFullYear() ? "MMM d" : "MMM d, yyyy")
 }
 
 type FormErrors = { projectId?: string; description?: string; amount?: string }
@@ -216,6 +224,18 @@ export default function ExpensesPage() {
     return <span className="text-xs text-muted-foreground">Not invoiced</span>
   }
 
+  function rowActionsMenu(expense: Expense) {
+    return (
+      <RowActionsMenu
+        name={expense.description || "expense"}
+        items={[
+          { label: "Edit", icon: Pencil, onSelect: () => openEdit(expense) },
+          { label: "Delete", icon: Trash2, destructive: true, onSelect: () => setDeleteTarget(expense) },
+        ]}
+      />
+    )
+  }
+
   function rowActions(expense: Expense) {
     return (
       <div className="flex items-center justify-end gap-1">
@@ -256,6 +276,13 @@ export default function ExpensesPage() {
     <>
       <PageHeader
         title="Expenses"
+        primary={{
+          label: "New expense",
+          icon: Plus,
+          onClick: openCreate,
+          disabled: data.projects.length === 0,
+          testId: "new-expense",
+        }}
         actions={
           <Button
             size="sm"
@@ -268,7 +295,7 @@ export default function ExpensesPage() {
         }
       />
 
-      <StatGrid className="mb-6">
+      <StatGrid className="mb-3 sm:mb-6">
         <StatCard
           label="Total expenses"
           value={money(totalExpenses)}
@@ -324,26 +351,31 @@ export default function ExpensesPage() {
             {sortedExpenses.map((expense) => {
               const project = getProject(expense.projectId)
               return (
-                <li key={expense.id} className="px-4 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-medium break-words">{expense.description}</p>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">
-                        {format(parseISO(expense.date), "MMM d, yyyy")} · {project?.name ?? "No project"}
-                      </p>
-                    </div>
-                    <p className="shrink-0 font-medium tabular-nums">{money(expense.amount)}</p>
-                  </div>
-                  {expense.notes && (
-                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{expense.notes}</p>
-                  )}
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                      {categoryBadge(expense)}
-                      {invoiceLabel(expense)}
-                    </div>
-                    <div className="-mr-1.5 shrink-0">{rowActions(expense)}</div>
-                  </div>
+                <li key={expense.id} className="flex items-center gap-1 pr-0.5 sm:pr-2.5">
+                  {/* Tapping the row edits it; Delete sits in the row's actions. */}
+                  <button
+                    type="button"
+                    onClick={() => openEdit(expense)}
+                    aria-label={`Edit ${expense.description}`}
+                    className="min-w-0 flex-1 py-2.5 pl-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  >
+                    <span className="flex min-w-0 items-baseline justify-between gap-3">
+                      <span className="min-w-0 truncate font-medium">{expense.description}</span>
+                      <span className="shrink-0 font-medium tabular-nums">{money(expense.amount)}</span>
+                    </span>
+                    <span className="mt-0.5 flex min-w-0 items-baseline justify-between gap-3 text-xs text-muted-foreground tabular-nums">
+                      <span className="min-w-0 truncate">
+                        {shortDate(expense.date)} · {project?.name ?? "No project"} · {expense.category}
+                      </span>
+                      <span className={cn("shrink-0", (invoiceNumberFor(expense) || expense.invoiced) && "text-foreground")}>
+                        {invoiceNumberFor(expense) ?? (expense.invoiced ? "Invoiced" : "Not invoiced")}
+                      </span>
+                    </span>
+                    {expense.notes && (
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{expense.notes}</span>
+                    )}
+                  </button>
+                  {rowActionsMenu(expense)}
                 </li>
               )
             })}
@@ -396,18 +428,19 @@ export default function ExpensesPage() {
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-sm:grid-cols-1 max-sm:[&_div]:min-w-0">
           <DialogHeader>
             <DialogTitle>{editTarget ? "Edit Expense" : "New Expense"}</DialogTitle>
+            <DialogDescription className="sr-only">Record the project, amount and date for this expense.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-2">
+          <div className="grid max-sm:grid-cols-1 gap-4 py-2">
             {editTarget && invoiceNumberFor(editTarget) && (
               <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
                 This expense is on {invoiceNumberFor(editTarget)}. Saving
                 changes here does not update that invoice.
               </p>
             )}
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-project">Project</Label>
               <Select
                 value={form.projectId}
@@ -416,7 +449,7 @@ export default function ExpensesPage() {
                   clearError("projectId")
                 }}
               >
-                <SelectTrigger id="expense-project" className="w-full" {...fieldErrorProps("projectId")}>
+                <SelectTrigger id="expense-project" className="w-full max-sm:min-w-0" {...fieldErrorProps("projectId")}>
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -433,7 +466,7 @@ export default function ExpensesPage() {
               </Select>
               <FieldError id="expense-project-error" message={errors.projectId} />
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-desc">Description</Label>
               <Input
                 id="expense-desc"
@@ -484,7 +517,7 @@ export default function ExpensesPage() {
                 </Select>
               </div>
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-date">Date</Label>
               <Popover>
                 <PopoverTrigger asChild>
@@ -492,7 +525,7 @@ export default function ExpensesPage() {
                     id="expense-date"
                     variant="outline"
                     className={cn(
-                      "justify-start text-left font-normal",
+                      "justify-start text-left font-normal max-sm:text-base",
                       !form.date && "text-muted-foreground"
                     )}
                   >
@@ -501,7 +534,7 @@ export default function ExpensesPage() {
                       data-icon="inline-start"
                     />
                     {form.date
-                      ? format(form.date, "PPP")
+                      ? <><span className="sm:hidden">{format(form.date, "MMM d, yyyy")}</span><span className="max-sm:hidden">{format(form.date, "PPP")}</span></>
                       : "Pick a date"}
                   </Button>
                 </PopoverTrigger>
@@ -516,7 +549,7 @@ export default function ExpensesPage() {
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-notes">Notes (optional)</Label>
               <Textarea
                 id="expense-notes"

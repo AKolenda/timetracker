@@ -75,6 +75,8 @@ import { DraftReviewDialog } from "@/components/draft-review-dialog"
 import { EntryChats, type ConversationSource } from "@/components/entry-chat-audit"
 import { LiveAgentIcons } from "@/components/live-agent-icons"
 import { PageHeader } from "@/components/page-header"
+import { SheetAction } from "@/components/more-sheet"
+import { RowActionsMenu } from "@/components/row-actions-menu"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatClock, formatDuration, formatHours, formatTimeRange as timeRange } from "@/lib/format"
@@ -434,10 +436,18 @@ function MachineList({ names }: { names: string[] }) {
   </span>
 }
 
+/** Project and machines under an entry's title on tablets; phones put the project inside the row's chat opener. */
+function MetaLine({ project, machines }: { project?: string; machines: string[] }) {
+  return <p className="break-words line-clamp-2">
+    <span title={project}>{project ?? "—"}</span>
+    {machines.length > 0 && <>{" · "}<MachineList names={machines} /></>}
+  </p>
+}
+
 function ImportProjectPicker({ value, onChange, choices }: { value: string; onChange: (value: string) => void; choices: { value: string; label: string }[] }) {
   const [open, setOpen] = useState(false)
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger asChild><Button variant="outline" role="combobox" aria-expanded={open} className="w-full min-w-0 justify-between"><span className="truncate">{choices.find((choice) => choice.value === value)?.label ?? "Choose client / project"}</span><ChevronsUpDown className="ml-2 size-4 shrink-0" /></Button></PopoverTrigger>
+    <PopoverTrigger asChild><Button variant="outline" role="combobox" aria-expanded={open} className="w-full min-w-0 justify-between max-sm:h-11"><span className="truncate">{choices.find((choice) => choice.value === value)?.label ?? "Choose client / project"}</span><ChevronsUpDown className="ml-2 size-4 shrink-0" /></Button></PopoverTrigger>
     <PopoverContent className="w-[min(24rem,calc(100vw-3rem))] p-1" align="start"><Command><CommandInput placeholder="Search clients and projects…" /><CommandList><CommandEmpty>No matching projects.</CommandEmpty><CommandGroup>{choices.map((choice) => <CommandItem key={choice.value} value={choice.value + " " + choice.label} onSelect={() => { onChange(choice.value); setOpen(false) }}><Check className={`size-4 ${choice.value === value ? "opacity-100" : "opacity-0"}`} /><span className="min-w-0 break-words">{choice.label}</span></CommandItem>)}</CommandGroup></CommandList></Command></PopoverContent>
   </Popover>
 }
@@ -552,6 +562,7 @@ export default function TrackerPage() {
       setGapMinutes(savedGap)
       setAppliedGapMinutes(savedGap)
       setIgnoredAgentRanges(savedIgnoredRanges)
+      // eslint-disable-next-line react-hooks/immutability -- existing pattern, now visible to the React Compiler lint
       void loadAgentTime(true, savedGap)
     }, 0)
     return () => window.clearTimeout(id)
@@ -632,6 +643,7 @@ export default function TrackerPage() {
     toast(`Showing the last ${AGENT_DRAFT_WINDOW_DAYS} days of Agent Time`)
   }
 
+  // eslint-disable-next-line react-hooks/purity -- existing pattern, now visible to the React Compiler lint
   const draftWindowStartDate = localDateString(new Date(Date.now() - AGENT_DRAFT_WINDOW_DAYS * 86_400_000), data.settings.timezone)
   const effectiveAgentTimeStartDate = [HARD_AGENT_TIME_START_DATE, draftWindowStartDate, agentTimeStartDate ?? ""]
     .reduce((latest, date) => (date > latest ? date : latest))
@@ -794,6 +806,7 @@ export default function TrackerPage() {
     }
   }
   const latestLoadAgentTime = useRef(loadAgentTime)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
   latestLoadAgentTime.current = loadAgentTime
 
   function applyGapMinutes() {
@@ -821,8 +834,10 @@ export default function TrackerPage() {
   const importInFlight = useRef(false)
   const importedEntries = useRef<TimeEntry[]>([])
   const latestData = useRef(data)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
   latestData.current = data
   const latestStartTimer = useRef(startTimer)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
   latestStartTimer.current = startTimer
   useEffect(() => {
     const savedIds = new Set(data.timeEntries.map((entry) => entry.id))
@@ -898,6 +913,7 @@ export default function TrackerPage() {
 
   // Keep Agent Time current while the tracker is open, so new and running work shows up without a reload.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/purity -- existing pattern, now visible to the React Compiler lint
     let lastRefresh = Date.now()
     function refresh() {
       if (document.visibilityState !== "visible" || backgroundRefreshBlocked()) return
@@ -1147,6 +1163,13 @@ export default function TrackerPage() {
     [data.timeEntries, todayEntryDate]
   )
 
+  // Phones show each earlier day's saved total in its header band, as Agentic Coding does.
+  const dayTotals = useMemo(() => {
+    const totals = new Map<string, number>()
+    for (const entry of data.timeEntries) totals.set(entry.date, (totals.get(entry.date) ?? 0) + entry.duration)
+    return totals
+  }, [data.timeEntries])
+
   const logRows = useMemo(() => {
     const rows: LogRow[] = data.timeEntries.map((entry) => ({ kind: "entry", entry, date: entry.date, sortKey: `${entry.date}${entry.startTime ?? ""}` }))
     for (const slice of agentImportPreview.slices) {
@@ -1259,9 +1282,14 @@ export default function TrackerPage() {
   })()
   // On stacked rows (below lg) the row actions sit beside the title, so the second line can use the full width.
   // The title stops 8px short of the actions so its chat chevron isn't a near-miss for Resume.
-  const rowTitleClass = "max-lg:flex max-lg:min-h-9 max-lg:items-center max-lg:pr-29"
-  const rowActionsClass = "max-lg:absolute max-lg:top-2 max-lg:right-2 max-lg:p-0 max-lg:pointer-fine:top-3.5"
-  const rowActionGroupClass = "flex items-center justify-end gap-0.5 max-lg:gap-0"
+  // Phones fold the actions into one 44px ⋯ menu, so the title only reserves room for that.
+  const rowTitleClass = "max-lg:flex max-lg:min-h-9 max-lg:items-center max-lg:pr-29 max-sm:min-h-11 max-sm:pr-12 [&>[data-testid=entry-chat-menu]]:min-w-0 [&>[data-testid=entry-chat-menu]]:flex-1"
+  // Phones: title and figure on line 1, project and time on line 2, both right columns ending at the actions button.
+  const rowFigureClass = "text-right text-xs font-normal tabular-nums"
+  const rowMetaClass = "min-w-0 truncate text-xs font-normal text-muted-foreground"
+  const rowTimeClass = "text-right text-xs font-normal tabular-nums text-muted-foreground"
+  const rowActionsClass = "max-lg:absolute max-lg:top-2 max-lg:right-2 max-lg:p-0 max-lg:pointer-fine:top-3.5 max-sm:right-4! max-sm:top-2.5!"
+  const rowActionGroupClass = "justify-end max-lg:[&>div]:gap-0"
   // Utilities that open dialogs: outline buttons from lg up, one labelled menu on phones and tablets.
   const reviewTools = [
     { id: "review-saved-overlaps", label: "Saved conflicts", icon: TriangleAlert, count: overlapIds.size, open: () => setReviewEntryOverlapsOpen(true) },
@@ -1274,9 +1302,14 @@ export default function TrackerPage() {
     <>
       <PageHeader
         title="Tracker"
+        primary={{ label: "Add hours", icon: Plus, onClick: () => setAddHoursOpen(true), testId: "add-hours" }}
+        more={<>
+          {agentImportPreview.slices.length > 0 && <SheetAction icon={ListChecks} label="Review drafts" testId="review-drafts-phone" detail={agentImportPreview.slices.length} onSelect={() => setDraftsOpen(true)} />}
+          {reviewTools.map((tool) => <SheetAction key={tool.id} icon={tool.icon} label={tool.label} testId={`${tool.id}-phone`} detail={tool.count > 0 ? <span className="text-destructive">{tool.count}</span> : undefined} onSelect={tool.open} />)}
+        </>}
       />
 
-      <Card className="mb-6">
+      <Card className="phone-flat mb-6 max-sm:mb-4">
         <CardContent>
           {data.projects.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
@@ -1291,11 +1324,11 @@ export default function TrackerPage() {
                   placeholder="What are you working on?"
                   value={timerDesc}
                   onChange={(e) => setTimerDesc(e.target.value)}
-                  className="h-10 min-w-0 w-full sm:col-span-2 lg:col-span-1"
+                  className="h-10 min-w-0 w-full max-sm:h-11 sm:col-span-2 lg:col-span-1"
                 />
                 <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
                   <PopoverTrigger asChild>
-                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} aria-label={`Project: ${timerProjectLabel ?? "none selected"}`} className="h-10 min-w-0 w-full justify-between font-normal" >
+                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} aria-label={`Project: ${timerProjectLabel ?? "none selected"}`} className="h-10 min-w-0 w-full justify-between font-normal max-sm:h-11" >
                       <span className={`truncate ${timerProjectLabel ? "" : "text-muted-foreground"}`}>{timerProjectLabel ?? "Select project"}</span>
                       <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                     </Button>
@@ -1316,21 +1349,21 @@ export default function TrackerPage() {
                   </PopoverContent>
                 </Popover>
                 <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-10 shrink-0 items-center gap-2">
+                  <Label htmlFor="timer-billable" className="flex h-10 shrink-0 items-center gap-2 max-sm:min-h-11 max-sm:pr-2">
                     <Checkbox
                       data-testid="timer-billable"
                       id="timer-billable"
                       checked={timerBillable}
                       onCheckedChange={(v) => setTimerBillable(v === true)}
                     />
-                    <Label htmlFor="timer-billable" className="text-sm font-normal text-muted-foreground">
+                    <span className="text-sm font-normal text-muted-foreground">
                       Billable
-                    </Label>
-                  </div>
+                    </span>
+                  </Label>
                   <Button
                     data-testid="timer-start"
                     onClick={handleStart}
-                    className="h-10 flex-1 px-4 sm:flex-none"
+                    className="h-10 flex-1 px-4 max-sm:h-11 sm:flex-none"
                   >
                     <Play className="size-3.5" data-icon="inline-start" />
                     Start timer
@@ -1345,10 +1378,11 @@ export default function TrackerPage() {
                   <div className="min-w-[9rem] flex-1"><p className="font-medium break-words">{timer.description || project?.name || "Untitled"}</p><p className="text-xs text-muted-foreground">{project?.name ?? "Unknown project"}</p></div>
                   <LiveTimer startTime={timer.startTime} pausedAt={timer.pausedAt} accumulatedPause={timer.accumulatedPause} />
                   {timer.pausedAt && <Badge variant="secondary" className="animate-pulse text-xs">Paused</Badge>}
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    {timer.pausedAt ? <Button variant="outline" onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
-                    <Button onClick={() => handleStop(timer.id)}><Square className="size-3 fill-current" data-icon="inline-start" />Stop &amp; save</Button>
-                    <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/20" onClick={() => handleDiscard(timer.id)}><Trash2 className="size-3.5" data-icon="inline-start" />Discard</Button>
+                  {/* Phones: Pause and Stop share the row, Discard is icon-only, so nothing wraps at 320. */}
+                  <div className="ml-auto flex flex-wrap gap-2 max-sm:grid max-sm:w-full max-sm:grid-cols-[1fr_1fr_auto]">
+                    {timer.pausedAt ? <Button variant="outline" className="max-sm:h-11" onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline" className="max-sm:h-11"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
+                    <Button className="max-sm:h-11" onClick={() => handleStop(timer.id)}><Square className="size-3 fill-current" data-icon="inline-start" />Stop &amp; save</Button>
+                    <Button variant="ghost" aria-label="Discard" title="Discard" className="text-destructive hover:bg-destructive/10 hover:text-destructive max-sm:size-11 max-sm:border max-sm:border-input max-sm:bg-background max-sm:shadow-xs max-sm:p-0 dark:hover:bg-destructive/20" onClick={() => handleDiscard(timer.id)}><Trash2 className="size-3.5" data-icon="inline-start" /><span className="max-sm:hidden">Discard</span></Button>
                   </div>
                 </div>
               })}</div>}
@@ -1362,31 +1396,32 @@ export default function TrackerPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-sm font-medium">Time Log</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            {agentImportPreview.slices.length > 0 && <Button variant="outline" size="sm" data-testid="review-drafts" onClick={() => setDraftsOpen(true)}>
+      <Card className="phone-flat">
+        {/* Phones: Add hours and the review tools live in the page header; only "Approve N drafts" stays, as one full-width row. */}
+        <CardHeader className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${agentImportPreview.slices.length > 0 ? "" : "max-sm:hidden"}`}>
+          <CardTitle className="text-sm font-medium max-sm:hidden">Time Log</CardTitle>
+          <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
+            {agentImportPreview.slices.length > 0 && <Button variant="outline" size="sm" data-testid="review-drafts" className="max-sm:hidden" onClick={() => setDraftsOpen(true)}>
               <ListChecks className="size-3.5" data-icon="inline-start" />
               Review drafts
             </Button>}
             {agentImportPreview.slices.length > 0 && <Button
               size="sm"
               data-testid="approve-all-drafts"
-              className="bg-warning text-amber-950 hover:bg-warning/85"
+              className="bg-warning text-amber-950 hover:bg-warning/85 max-sm:h-11 max-sm:w-full"
               onClick={() => void approveAllDrafts()}
               disabled={agentTimeLoading || importing}
             >
               <Check className="size-3.5" data-icon="inline-start" />
               Approve {agentImportPreview.slices.length} {agentImportPreview.slices.length === 1 ? "draft" : "drafts"} · <span className="tabular-nums">{formatClock(agentImportPreviewSeconds)}</span>
             </Button>}
-            <Button variant="outline" size="sm" onClick={() => setAddHoursOpen(true)}>
+            <Button variant="outline" size="sm" data-testid="add-hours" className="max-sm:hidden" onClick={() => setAddHoursOpen(true)}>
               <Plus className="size-3.5" data-icon="inline-start" />
               Add hours
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="lg:hidden" data-testid="review-tools-menu">
+                <Button variant="outline" size="sm" className="max-sm:hidden lg:hidden" data-testid="review-tools-menu">
                   Review{overlapIds.size > 0 && <span className="rounded-md bg-destructive/10 px-1.5 text-xs tabular-nums text-destructive">{overlapIds.size}</span>}
                   <ChevronDown className="size-3.5" data-icon="inline-end" />
                 </Button>
@@ -1417,7 +1452,7 @@ export default function TrackerPage() {
           {logRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No time entries yet</p>
           ) : (
-            <div className="overflow-hidden rounded-lg border max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 [&_[data-slot=table-container]]:overflow-x-hidden">
+            <div className="overflow-hidden rounded-lg border [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table>
             <TableHeader className="hidden lg:table-header-group">
               <TableRow>
@@ -1430,12 +1465,12 @@ export default function TrackerPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal max-sm:px-4"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {visibleRows.map((row, index) => {
                 const isNewDay = index === 0 || row.date !== visibleRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
-                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal max-sm:px-4"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{isToday ? dayLabel : <><span className="max-sm:hidden">{dayLabel}</span><span className="sm:hidden">{format(parseLocalDate(row.date), "EEE, MMM d")}</span></>}</span>{isToday ? <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span> : !!dayTotals.get(row.date) && <span className="shrink-0 tabular-nums text-foreground sm:hidden">{entryClock(dayTotals.get(row.date)!)}</span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
@@ -1445,11 +1480,15 @@ export default function TrackerPage() {
                   return <Fragment key={slice.id}>
                     {dayHeader}
                     <TableRow data-testid="agent-draft-row" className="bg-warning/[0.07] hover:bg-warning/[0.12] max-lg:relative">
-                      <TableCell className="font-medium whitespace-normal break-words">
-                        <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} /></div>
+                      <TableCell className="font-medium whitespace-normal break-words max-sm:px-4 max-sm:py-2.5">
+                        <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)}
+                          figure={<span className={rowFigureClass}><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{amount ? ` · ${money(amount, project?.currency)}` : ""}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</span>}>
+                          <span className={rowMetaClass} title={project?.name}>{project?.name ?? "—"}</span>
+                          <span className={rowTimeClass}>{range}</span>
+                        </EntryChats></div>
                         {draftMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={draftMachines} /></p>}
-                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
-                          <p className="line-clamp-2 break-words">{project?.name ?? "—"}{draftMachines.length > 0 && <> · <MachineList names={draftMachines} /></>}</p>
+                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden max-sm:hidden">
+                          <MetaLine project={project?.name} machines={draftMachines} />
                           <div className="flex flex-wrap items-center gap-x-2"><span className="tabular-nums">{range}</span>
                           <span className="ml-auto tabular-nums"><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                         </div>
@@ -1458,11 +1497,11 @@ export default function TrackerPage() {
                       <TableCell className="hidden text-xs tabular-nums lg:table-cell">{range}</TableCell>
                       <TableCell className="hidden text-right text-xs tabular-nums text-warning-foreground lg:table-cell">{entryClock(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
                       <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                      <TableCell className={rowActionsClass}><div className={rowActionGroupClass}>
-                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
-                      </div></TableCell>
+                      <TableCell className={rowActionsClass}><RowActionsMenu name={draftTitle || "draft"} className={rowActionGroupClass} items={[
+                        { label: "Approve", icon: Check, testId: "approve-draft", disabled: importing, className: "text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground", onSelect: () => void approveDraft(slice) },
+                        { label: "Edit and approve", icon: Pencil, onSelect: () => openDraftEdit(slice) },
+                        { label: "Skip", icon: Trash2, testId: "ignore-agent-slice", onSelect: () => ignoreAgentSlice(slice) },
+                      ]} /></TableCell>
                     </TableRow>
                   </Fragment>
                 }
@@ -1478,13 +1517,17 @@ export default function TrackerPage() {
                 return <Fragment key={entry.id}>
                   {dayHeader}
                   <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} data-overlap={overlaps || undefined} aria-label={entry.description || "Untitled time entry"} className={`max-lg:relative ${highlightedEntry === entry.id ? "bg-warning/15 outline-2 -outline-offset-2 outline-warning" : ""}`}>
-                  <TableCell className={`font-medium whitespace-normal break-words ${overlaps ? "shadow-[inset_2px_0_0_var(--destructive)]" : ""}`}>
-                    <div className={rowTitleClass}><EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} /></div>
+                  <TableCell className={`font-medium whitespace-normal break-words max-sm:px-4 max-sm:py-2.5 ${overlaps ? "shadow-[inset_2px_0_0_var(--destructive)]" : ""}`}>
+                    <div className={rowTitleClass}><EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined}
+                      figure={<span className={rowFigureClass}>{entryClock(entry.duration)}{amount ? ` · ${money(amount, project?.currency)}` : ""}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</span>}>
+                      <span className={rowMetaClass} title={project?.name}>{project?.name ?? "—"}</span>
+                      <span className={`${rowTimeClass} inline-flex items-center justify-end gap-1`}>{range}{overlapMarker}</span>
+                    </EntryChats></div>
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
                     {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block cursor-pointer rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
                     {entryMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={entryMachines} /></p>}
-                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden">
-                      <p className="line-clamp-2 break-words">{project?.name ?? "—"}{entryMachines.length > 0 && <> · <MachineList names={entryMachines} /></>}</p>
+                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden max-sm:hidden">
+                      <MetaLine project={project?.name} machines={entryMachines} />
                       <div className="flex flex-wrap items-center gap-x-2"><span className="inline-flex items-center gap-1"><span className="tabular-nums">{range}</span>{overlapMarker}</span>
                       <span className="ml-auto tabular-nums"><span className="text-foreground">{entryClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
                     </div>
@@ -1497,11 +1540,11 @@ export default function TrackerPage() {
                   <TableCell className="hidden text-xs tabular-nums lg:table-cell"><span className="inline-flex items-center gap-1.5">{range}{overlapMarker}</span></TableCell>
                   <TableCell className="hidden text-right text-xs tabular-nums lg:table-cell">{entryClock(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
                   <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                  <TableCell className={rowActionsClass}><div className={rowActionGroupClass}>
-                    <Button variant="ghost" size="icon-xs" aria-label="Resume timer" title="Resume timer" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>
-                    <Button variant="ghost" size="icon-xs" aria-label="Edit entry" title="Edit entry" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
-                    <Button variant="ghost" size="icon-xs" aria-label="Delete entry" title="Delete entry" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
-                  </div></TableCell>
+                  <TableCell className={rowActionsClass}><RowActionsMenu name={entry.description || "untitled time entry"} className={rowActionGroupClass} items={[
+                    { label: "Resume timer", icon: Play, className: "[&_svg]:fill-current", onSelect: () => handleResume(entry) },
+                    { label: "Edit entry", icon: Pencil, onSelect: () => openEdit(entry) },
+                    { label: "Delete entry", icon: Trash2, destructive: true, onSelect: () => setDeleteTarget(entry) },
+                  ]} /></TableCell>
                   </TableRow>
                 </Fragment>
               })}

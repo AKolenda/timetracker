@@ -43,6 +43,8 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader } from "@/components/page-header"
+import { HeaderSearch } from "@/components/header-search"
+import { SheetAction, SheetSection } from "@/components/more-sheet"
 import type { AgentTimeBlock, AgentTimeImportData } from "@/lib/agent-time"
 import { PERSONAL_AGENT_PROJECT, resolveAgentMappings } from "@/lib/agent-import-projects"
 import { occupiedProjectRanges } from "@/lib/agent-time-overlap"
@@ -394,6 +396,8 @@ export default function AgenticCodingPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [project, setProject] = useState("all")
   const [projectOpen, setProjectOpen] = useState(false)
+  // The phone copy of the picker lives in the More sheet, so it keeps its own open state.
+  const [phoneProjectOpen, setPhoneProjectOpen] = useState(false)
   const [range, setRange] = useState("7d")
   const [search, setSearch] = useState("")
   const [openRows, setOpenRows] = useState<Set<string> | null>(null)
@@ -577,11 +581,73 @@ export default function AgenticCodingPage() {
     return next
   }
 
+  // The range and project filters render in the desktop filter card and, on phones, in the More sheet.
+  const rangeSelect = (id: string, testId: string) => (
+    <Select value={range} onValueChange={setRange}>
+      <SelectTrigger id={id} data-testid={testId} className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="today">Today</SelectItem>
+        <SelectItem value="7d">Last 7 days</SelectItem>
+        <SelectItem value="30d">Last 30 days</SelectItem>
+        <SelectItem value="all">All activity</SelectItem>
+      </SelectContent>
+    </Select>
+  )
+  const projectPicker = (id: string, testId: string, open: boolean, setOpen: (open: boolean) => void) => (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          id={id}
+          data-testid={testId}
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full min-w-0 justify-between max-sm:text-[16px]"
+        >
+          <span className="truncate">{project === "all" ? "All projects" : folderTitle(project)}</span>
+          <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-1">
+        <Command>
+          <CommandInput placeholder="Search T3 projects…" />
+          <CommandList>
+            <CommandEmpty>No project found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem value="All projects" onSelect={() => { setProject("all"); setOpen(false) }}>
+                <Check className={`mr-2 size-4 ${project === "all" ? "opacity-100" : "opacity-0"}`} />
+                All projects
+              </CommandItem>
+              {(agentTime?.projects ?? []).map((name) => (
+                <CommandItem key={name} value={`${folderTitle(name)} ${name}`} onSelect={() => { setProject(name); setOpen(false) }}>
+                  <Check className={`mr-2 size-4 ${project === name ? "opacity-100" : "opacity-0"}`} />
+                  <span className="truncate">{folderTitle(name)}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+  const filtersChanged = (range !== "7d" ? 1 : 0) + (project !== "all" ? 1 : 0)
+
   return (
     <>
       <PageHeader
         title="Agentic Coding"
         currencyToggle={false}
+        center={<HeaderSearch value={search} onChange={setSearch} noun="threads" testId="agentic-search-phone" />}
+        primary={{ label: "Review & import time", icon: Download, href: "/tracker?importAgentTime=1", testId: "agentic-import-time" }}
+        moreCount={filtersChanged}
+        onMoreClear={filtersChanged ? () => { setRange("7d"); setProject("all") } : undefined}
+        more={<>
+          <SheetSection label="Date range">{rangeSelect("agent-range-phone", "agentic-range-phone")}</SheetSection>
+          <SheetSection label="T3 project">{projectPicker("agent-project-phone", "agentic-project-picker-phone", phoneProjectOpen, setPhoneProjectOpen)}</SheetSection>
+          <SheetAction icon={RefreshCw} label={loading ? "Refreshing…" : "Refresh"} disabled={loading} onSelect={() => void loadAgentTime(true)} />
+        </>}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm">
@@ -602,59 +668,15 @@ export default function AgenticCodingPage() {
         }
       />
 
-      <Card className="mb-6 rounded-lg">
+      <Card className="mb-6 rounded-lg max-sm:hidden">
         <CardContent className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[180px_minmax(0,240px)_minmax(0,1fr)] lg:items-end">
           <div className="grid min-w-0 gap-2">
             <Label htmlFor="agent-range">Date range</Label>
-            <Select value={range} onValueChange={setRange}>
-              <SelectTrigger id="agent-range" data-testid="agentic-range" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="7d">Last 7 days</SelectItem>
-                <SelectItem value="30d">Last 30 days</SelectItem>
-                <SelectItem value="all">All activity</SelectItem>
-              </SelectContent>
-            </Select>
+            {rangeSelect("agent-range", "agentic-range")}
           </div>
           <div className="grid min-w-0 gap-2">
             <Label htmlFor="agent-project">T3 project</Label>
-            <Popover open={projectOpen} onOpenChange={setProjectOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  id="agent-project"
-                  data-testid="agentic-project-picker"
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={projectOpen}
-                  className="w-full min-w-0 justify-between"
-                >
-                  <span className="truncate">{project === "all" ? "All projects" : folderTitle(project)}</span>
-                  <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-1">
-                <Command>
-                  <CommandInput placeholder="Search T3 projects…" />
-                  <CommandList>
-                    <CommandEmpty>No project found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem value="All projects" onSelect={() => { setProject("all"); setProjectOpen(false) }}>
-                        <Check className={`mr-2 size-4 ${project === "all" ? "opacity-100" : "opacity-0"}`} />
-                        All projects
-                      </CommandItem>
-                      {(agentTime?.projects ?? []).map((name) => (
-                        <CommandItem key={name} value={`${folderTitle(name)} ${name}`} onSelect={() => { setProject(name); setProjectOpen(false) }}>
-                          <Check className={`mr-2 size-4 ${project === name ? "opacity-100" : "opacity-0"}`} />
-                          <span className="truncate">{folderTitle(name)}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            {projectPicker("agent-project", "agentic-project-picker", projectOpen, setProjectOpen)}
           </div>
           <div className="grid min-w-0 gap-2 sm:col-span-2 lg:col-span-1">
             <Label htmlFor="agent-search">Search threads</Label>
