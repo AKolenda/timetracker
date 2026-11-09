@@ -76,7 +76,7 @@ export function LiveAgentIcons({ work, renderProjectPicker }: { work: LiveAgentW
             type="button"
             data-testid="live-agent-icon"
             aria-label={`${item.title}: ${agent} working on ${projectLabel}${item.projectName ? "" : ", not linked to a project"}`}
-            className={`relative grid size-10 shrink-0 place-items-center rounded-md border bg-muted/30 transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none data-[state=open]:bg-muted ${item.projectName ? "" : "border-warning/60"}`}
+            className={`relative grid size-10 shrink-0 max-sm:size-11 place-items-center rounded-md border bg-muted/30 transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none data-[state=open]:bg-muted ${item.projectName ? "" : "border-warning/60"}`}
             onPointerEnter={(event) => hoverOpen(item.key, event.pointerType)}
             onPointerLeave={(event) => hoverClose(event.pointerType)}
             onClick={(event) => {
