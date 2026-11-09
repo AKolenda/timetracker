@@ -17,6 +17,7 @@ import { formatCurrency, formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
 import { Button } from "@/components/ui/button"
 import { StatCard, StatGrid } from "@/components/stat-card"
+import { Fact, FactBox } from "@/components/fact-list"
 import { useExchangeRate } from "@/lib/use-exchange-rate"
 
 export default function DashboardPage() {
@@ -106,23 +107,28 @@ export default function DashboardPage() {
         />
       </StatGrid>
 
-      <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <Card>
+      <div className="mt-4 grid items-start gap-4 sm:mt-6 sm:gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <Card className="phone-flat max-sm:gap-2">
           <CardHeader>
             <CardTitle className="text-sm font-medium">Quick stats</CardTitle>
           </CardHeader>
           <CardContent>
-            <dl className="divide-y">
+            {/* A fact box on phones; from sm up the card itself is the box. */}
+            <FactBox className="sm:rounded-none sm:border-0 sm:bg-transparent">
               {quickStats.map(({ label, icon: Icon, value }) => (
-                <div key={label} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-                  <dt className="flex items-center gap-2 text-sm">
-                    <Icon aria-hidden className="size-4 text-muted-foreground" />
-                    {label}
-                  </dt>
-                  <dd className="text-sm font-medium tabular-nums">{value}</dd>
-                </div>
+                <Fact
+                  key={label}
+                  className="sm:items-center sm:px-0 sm:first:pt-0 sm:last:pb-0 sm:[&>dt]:text-foreground"
+                  label={
+                    <span className="flex items-center gap-2">
+                      <Icon aria-hidden className="size-4 text-muted-foreground max-sm:hidden" />
+                      {label}
+                    </span>
+                  }
+                  value={value}
+                />
               ))}
-            </dl>
+            </FactBox>
           </CardContent>
         </Card>
 
