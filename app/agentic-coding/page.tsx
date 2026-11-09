@@ -604,7 +604,7 @@ export default function AgenticCodingPage() {
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full min-w-0 justify-between"
+          className="w-full min-w-0 justify-between max-sm:text-[16px]"
         >
           <span className="truncate">{project === "all" ? "All projects" : folderTitle(project)}</span>
           <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
