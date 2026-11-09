@@ -34,7 +34,7 @@ export interface FactProps {
 /** One label-left, value-right row inside a `FactBox`. Labels stay sentence case. */
 export function Fact({ label, value, tone = "default", className }: FactProps) {
   return (
-    <div data-slot="fact" className={cn("flex items-baseline justify-between gap-3 px-3 py-2.5 text-sm", className)}>
+    <div data-slot="fact" className={cn("flex items-baseline justify-between gap-3 px-4 py-2.5 text-sm", className)}>
       <dt className="shrink-0 text-muted-foreground">{label}</dt>
       <dd className={cn("min-w-0 text-right font-medium break-words tabular-nums", toneClass[tone])}>{value}</dd>
     </div>
