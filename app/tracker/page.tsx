@@ -754,6 +754,21 @@ export default function TrackerPage() {
     (total, slice) => total + slice.durationSeconds,
     0
   )
+  // "Review & import time" (from Agentic Coding) opens the drafts as soon as Agent Time has loaded.
+  const [importRequested, setImportRequested] = useState(false)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("importAgentTime") !== "1") return
+    params.delete("importAgentTime")
+    window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`)
+    setImportRequested(true) // eslint-disable-line react-hooks/set-state-in-effect -- reads the URL once on mount
+  }, [])
+  useEffect(() => {
+    if (!importRequested || !agentTime || agentTimeLoading) return
+    setImportRequested(false) // eslint-disable-line react-hooks/set-state-in-effect -- one-shot hand-off once Agent Time arrives
+    if (agentImportPreview.slices.length > 0) setDraftsOpen(true)
+    else toast.info("No new agent time to import. Everything is already in the log or skipped.")
+  }, [importRequested, agentTime, agentTimeLoading, agentImportPreview.slices.length])
   const unmappedAgentProjects = agentImportPreview.unmappedProjects
   const agentProjectChoices = [{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]
   // T3 Code projects show their T3 name when it differs from the folder (e.g. "invoicer" for timetracker).
@@ -846,7 +861,9 @@ export default function TrackerPage() {
   const [importing, setImporting] = useState(false)
   const overlapDetails = useMemo(() => entryOverlapDetails(data.timeEntries, data.activeTimers), [data.timeEntries, data.activeTimers])
   const entryOverlapKeys = new Map([...overlapDetails].map(([id, details]) => [id, details.reviewKey]))
-  const overlapIds = new Set([...entryOverlapKeys].filter(([, key]) => !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
+  // Invoiced entries are settled, so their overlaps are no longer worth flagging.
+  const invoicedTimeIds = useMemo(() => invoicedSourceIds(data.invoices, "time"), [data.invoices])
+  const overlapIds = new Set([...entryOverlapKeys].filter(([id, key]) => !invoicedTimeIds.has(id) && !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
 
   async function importDraftEntries(entries: Omit<TimeEntry, "id">[], generateTitles = true) {
     if (importInFlight.current) return false
@@ -1398,9 +1415,13 @@ export default function TrackerPage() {
 
       <Card className="phone-flat">
         {/* Phones: Add hours and the review tools live in the page header; only "Approve N drafts" stays, as one full-width row. */}
-        <CardHeader className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${agentImportPreview.slices.length > 0 ? "" : "max-sm:hidden"}`}>
+        <CardHeader className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${agentImportPreview.slices.length > 0 || (agentTimeLoading && !agentTime) ? "" : "max-sm:hidden"}`}>
           <CardTitle className="text-sm font-medium max-sm:hidden">Time Log</CardTitle>
           <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
+            {agentTimeLoading && !agentTime && <span data-testid="agent-drafts-loading" role="status" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground max-sm:min-h-11">
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+              Loading agent drafts…
+            </span>}
             {agentImportPreview.slices.length > 0 && <Button variant="outline" size="sm" data-testid="review-drafts" className="max-sm:hidden" onClick={() => setDraftsOpen(true)}>
               <ListChecks className="size-3.5" data-icon="inline-start" />
               Review drafts
