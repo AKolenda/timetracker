@@ -82,6 +82,31 @@ export async function GET(request: NextRequest) {
               },
             ],
           },
+          {
+            id: "fixture-agent-time-live-unlinked",
+            start: new Date(Date.now() - 4 * 60_000).toISOString(),
+            end: new Date().toISOString(),
+            project: "fixture-side-project",
+            agents: ["Claude"],
+            sources: ["T3 Code"],
+            durationSeconds: 240,
+            activitySeconds: 240,
+            live: true,
+            sourceIntervals: [
+              {
+                start: new Date(Date.now() - 4 * 60_000).toISOString(),
+                end: new Date().toISOString(),
+                durationSeconds: 240,
+                agent: "Claude",
+                source: "T3 Code",
+                model: "claude-opus-5-5",
+                hostUrl: "http://vm.example:8080/api/data",
+                machineLabel: "Development VM",
+                conversationId: "fixture-live-chat-unlinked",
+                conversationTitle: "Sketch a side project",
+              },
+            ],
+          },
         ],
         intervals: [
           {

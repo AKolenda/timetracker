@@ -30,7 +30,7 @@ function sourceDescription(interval: AgentTimeSourceInterval) {
   return `${interval.source || interval.agent} directly`
 }
 
-function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
+export function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
   if (source === "T3 Code") {
     return <Image src="/t3-code-logo.svg" alt="T3 Code" width={32} height={32} className={`shrink-0 rounded-[5px] ${className}`} />
   }
@@ -95,7 +95,7 @@ function MessageRow({ message, placement, source, withDate, needle }: { message:
 }
 
 /** The T3 Code thread a chat came from, so a billed entry can be traced back to it. */
-function T3ThreadId({ id }: { id: string }) {
+export function T3ThreadId({ id }: { id: string }) {
   async function copy() {
     try {
       await navigator.clipboard.writeText(id)
