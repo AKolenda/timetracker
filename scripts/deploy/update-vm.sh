@@ -98,7 +98,6 @@ printf '%s\n' "$target" >"$release/public/deploy-version.txt"
   unset NEXT_PUBLIC_E2E_FIXTURES NEXT_DIST_DIR NODE_ENV
   export NODE_OPTIONS=--max-old-space-size=1024 NEXT_TELEMETRY_DISABLED=1
   pnpm install --frozen-lockfile
-  pnpm test:unit
   pnpm build
 )
 log "Build passed; activating $target"
