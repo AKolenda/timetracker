@@ -203,7 +203,22 @@ export function billingGroupKey(billing: Billing) {
  * Left-open turns are listed on the day they started, drawn up to that day's midnight.
  */
 export function buildJournal(turns: InsightTurn[], billingFor: (folder: string) => Billing): JournalDay[] {
-  const allWorking = turns.filter((turn) => !turn.leftOpen)
+  // Split each group's left-open-only hours across the turns that add them, earliest first, so the
+  // days add up to the ledger rows and folder cards (billed time nets per project, unbilled per folder).
+  const leftOpenShare = new Map<InsightTurn, number>()
+  const nettingKey = (folder: string) => {
+    const billing = billingFor(folder)
+    return billing.kind === "project" ? `project:${billing.projectId}` : `folder:${folder}`
+  }
+  const byGroup = new Map<string, InsightTurn[]>()
+  for (const turn of turns) byGroup.set(nettingKey(turn.folder), [...(byGroup.get(nettingKey(turn.folder)) ?? []), turn])
+  for (const groupTurns of byGroup.values()) {
+    let cover = mergeRanges(groupTurns.filter((turn) => !turn.leftOpen).map(span))
+    for (const turn of groupTurns.filter((t) => t.leftOpen).sort((a, b) => a.start - b.start)) {
+      leftOpenShare.set(turn, uncoveredSeconds([span(turn)], cover))
+      cover = mergeRanges([...cover, span(turn)])
+    }
+  }
   const days = new Map<number, { working: { turn: InsightTurn; range: TimeRange }[]; leftOpen: InsightTurn[] }>()
   const dayFor = (dayStart: number) => {
     let day = days.get(dayStart)
@@ -259,14 +274,7 @@ export function buildJournal(turns: InsightTurn[], billingFor: (folder: string) 
       })).sort((a, b) => b.workingSeconds - a.workingSeconds),
       leftOpen: {
         turns: day.leftOpen.length,
-        // Netted against working time in the same folder, like the ledger and folder cards.
-        seconds: [...new Set(day.leftOpen.map((turn) => turn.folder))].reduce(
-          (total, folder) => total + leftOpenOnlySeconds(
-            day.leftOpen.filter((turn) => turn.folder === folder),
-            allWorking.filter((turn) => turn.folder === folder)
-          ),
-          0
-        ),
+        seconds: day.leftOpen.reduce((total, turn) => total + (leftOpenShare.get(turn) ?? 0), 0),
         spans: mergeRanges(day.leftOpen.map((turn) => ({ start: turn.start, end: Math.min(turn.end, dayEnd) }))),
         closedTogether: together && together[1] > 1 ? { end: together[0], turns: together[1] } : null,
       },

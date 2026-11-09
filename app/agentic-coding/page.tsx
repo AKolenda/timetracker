@@ -316,7 +316,7 @@ function JournalDayCard({
         <span className="font-medium">{format(new Date(day.dayStart), "EEE, MMM d")}</span>
         <span className="order-last flex basis-full flex-wrap gap-1.5 pl-7 sm:order-none sm:flex-1 sm:basis-auto sm:pl-0">
           {groups.map(([key, seconds]) => (
-            <span key={key} className={`rounded-md px-1.5 py-px text-xs ${key === "unbilled" ? "bg-muted text-muted-foreground" : "bg-primary/15 text-foreground"}`}>
+            <span key={key} className={`max-w-full truncate rounded-md px-1.5 py-px text-xs ${key === "unbilled" ? "bg-muted text-muted-foreground" : "bg-primary/15 text-foreground"}`}>
               {groupLabel(key)} <span className="tabular-nums">{hours(seconds)}</span>
             </span>
           ))}
@@ -444,7 +444,7 @@ export default function AgenticCodingPage() {
 
   const liveThreads = useMemo(
     () => new Set((agentTime?.live ?? []).flatMap((block) =>
-      (block.sourceIntervals ?? []).map((source) => `${source.hostUrl ?? ""}|${source.conversationId || block.id}`))),
+      (block.sourceIntervals ?? []).map((source) => `${source.hostUrl ?? ""}|${source.conversationId || block.id}|${Date.parse(source.start)}`))),
     [agentTime]
   )
 
@@ -467,7 +467,8 @@ export default function AgenticCodingPage() {
             start,
             end,
             leftOpen: (end - start) / 1000 > LEFT_OPEN_SECONDS,
-            live: liveThreads.has(threadKey),
+            // Only the running turn itself is live, not the thread's earlier turns.
+            live: liveThreads.has(`${threadKey}|${start}`),
           }]
         })
       ) ?? [],
