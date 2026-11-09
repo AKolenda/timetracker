@@ -35,12 +35,28 @@ export function rangeSeconds(ranges: TimeRange[]) {
 
 const span = (turn: InsightTurn): TimeRange => ({ start: turn.start, end: turn.end })
 
+/** Seconds inside `ranges` that `cover` does not reach. */
+function uncoveredSeconds(ranges: TimeRange[], cover: TimeRange[]) {
+  return mergeRanges(ranges)
+    .flatMap((range) => subtractRanges(range, cover))
+    .reduce((total, gap) => total + (gap.end - gap.start) / 1000, 0)
+}
+
+/**
+ * Hours only turns left open account for: time no working turn covers. The banner, ledger, folders
+ * and journal all use this, so overlapping or parallel turns count once everywhere.
+ */
+export function leftOpenOnlySeconds(turns: InsightTurn[], cover: InsightTurn[] = turns) {
+  return uncoveredSeconds(
+    turns.filter((turn) => turn.leftOpen).map(span),
+    cover.filter((turn) => !turn.leftOpen).map(span)
+  )
+}
+
 /** Working seconds, plus the extra seconds only covered by turns left open. */
 function splitTime(turns: InsightTurn[]) {
   const working = turns.filter((turn) => !turn.leftOpen).map(span)
-  const workingSeconds = rangeSeconds(working)
-  const allSeconds = rangeSeconds(turns.map(span))
-  return { working, workingSeconds, leftOpenSeconds: Math.max(0, allSeconds - workingSeconds) }
+  return { working, workingSeconds: rangeSeconds(working), leftOpenSeconds: leftOpenOnlySeconds(turns) }
 }
 
 export type ThreadSummary = {
@@ -79,7 +95,7 @@ export type ProjectLedger = {
   workingSeconds: number
   leftOpenSeconds: number
   leftOpenTurns: number
-  /** Time already in the tracker for this project inside the range, from any source. */
+  /** Working time a tracker entry or running timer already covers. */
   trackedSeconds: number
   /** Working time no tracker entry covers yet. */
   untrackedSeconds: number
@@ -93,8 +109,7 @@ export type ProjectLedger = {
 export function buildProjectLedger(
   turns: InsightTurn[],
   billingFor: (folder: string) => Billing,
-  occupied: (projectId: string) => TimeRange[],
-  range: TimeRange
+  occupied: (projectId: string) => TimeRange[]
 ): ProjectLedger[] {
   const byProject = new Map<string, InsightTurn[]>()
   for (const turn of turns) {
@@ -104,17 +119,14 @@ export function buildProjectLedger(
   }
   return [...byProject].map(([projectId, projectTurns]) => {
     const { working, workingSeconds, leftOpenSeconds } = splitTime(projectTurns)
-    const tracked = occupied(projectId)
-    const clippedTracked = tracked.map((r) => ({ start: Math.max(r.start, range.start), end: Math.min(r.end, range.end) }))
-    const untrackedSeconds = mergeRanges(working)
-      .flatMap((workingRange) => subtractRanges(workingRange, tracked))
-      .reduce((total, gap) => total + (gap.end - gap.start) / 1000, 0)
+    // Measured against working time only, so search and project filters move both columns together.
+    const untrackedSeconds = uncoveredSeconds(working, occupied(projectId))
     return {
       projectId,
       workingSeconds,
       leftOpenSeconds,
       leftOpenTurns: projectTurns.filter((turn) => turn.leftOpen).length,
-      trackedSeconds: rangeSeconds(clippedTracked),
+      trackedSeconds: Math.max(0, workingSeconds - untrackedSeconds),
       untrackedSeconds,
       threads: summarizeThreads(projectTurns),
     }
@@ -191,6 +203,7 @@ export function billingGroupKey(billing: Billing) {
  * Left-open turns are listed on the day they started, drawn up to that day's midnight.
  */
 export function buildJournal(turns: InsightTurn[], billingFor: (folder: string) => Billing): JournalDay[] {
+  const allWorking = turns.filter((turn) => !turn.leftOpen)
   const days = new Map<number, { working: { turn: InsightTurn; range: TimeRange }[]; leftOpen: InsightTurn[] }>()
   const dayFor = (dayStart: number) => {
     let day = days.get(dayStart)
@@ -246,7 +259,14 @@ export function buildJournal(turns: InsightTurn[], billingFor: (folder: string) 
       })).sort((a, b) => b.workingSeconds - a.workingSeconds),
       leftOpen: {
         turns: day.leftOpen.length,
-        seconds: day.leftOpen.reduce((total, turn) => total + (turn.end - turn.start) / 1000, 0),
+        // Netted against working time in the same folder, like the ledger and folder cards.
+        seconds: [...new Set(day.leftOpen.map((turn) => turn.folder))].reduce(
+          (total, folder) => total + leftOpenOnlySeconds(
+            day.leftOpen.filter((turn) => turn.folder === folder),
+            allWorking.filter((turn) => turn.folder === folder)
+          ),
+          0
+        ),
         spans: mergeRanges(day.leftOpen.map((turn) => ({ start: turn.start, end: Math.min(turn.end, dayEnd) }))),
         closedTogether: together && together[1] > 1 ? { end: together[0], turns: together[1] } : null,
       },

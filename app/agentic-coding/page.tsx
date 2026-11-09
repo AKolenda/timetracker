@@ -43,7 +43,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader } from "@/components/page-header"
-import type { AgentTimeImportData } from "@/lib/agent-time"
+import type { AgentTimeBlock, AgentTimeImportData } from "@/lib/agent-time"
 import { PERSONAL_AGENT_PROJECT, resolveAgentMappings } from "@/lib/agent-import-projects"
 import { occupiedProjectRanges } from "@/lib/agent-time-overlap"
 import {
@@ -86,6 +86,9 @@ function mobileFixtureRequested() {
 }
 
 const hours = (seconds: number) => `${formatClock(seconds)} h`
+
+/** `live` lists only the turns still running; `intervals` marks a whole merged block live if any turn in it is. */
+type AgentTimeResponse = AgentTimeImportData & { live?: AgentTimeBlock[] }
 
 type ViewState = "loading" | "unavailable" | "empty" | "filtered" | "ready"
 
@@ -168,6 +171,7 @@ function AgenticEmptyState({
 function LiveDot({ className = "" }: { className?: string }) {
   return (
     <span
+      role="img"
       title="Running now"
       aria-label="Running now"
       className={`inline-block size-1.5 shrink-0 rounded-full bg-emerald-500 ring-3 ring-emerald-500/20 ${className}`}
@@ -237,7 +241,7 @@ function LedgerRow({
             <span className="text-sm text-muted-foreground">{project ? formatCurrency(0, project.currency) : "—"}</span>
           )}
           <span className="block text-xs font-normal text-muted-foreground md:hidden">
-            {hasUntracked ? `${hours(row.untrackedSeconds)} not tracked` : "All tracked"}
+            {hasUntracked ? `${hours(row.untrackedSeconds)} not tracked` : "All tracked"}, {hours(row.trackedSeconds)} tracked
           </span>
         </span>
       </button>
@@ -250,7 +254,7 @@ function LedgerRow({
                 <span className="truncate" title={`${thread.title || "Untitled thread"}\nT3 thread ${thread.threadId}`}>
                   {thread.title || "Untitled thread"}
                 </span>
-                {folders.size > 1 && <span className="shrink-0 rounded-md bg-muted px-1.5 py-px text-xs text-muted-foreground">{folderTitle(thread.folder)}</span>}
+                {folders.size > 1 && <span className="max-w-32 shrink-0 truncate rounded-md bg-muted px-1.5 py-px text-xs text-muted-foreground">{folderTitle(thread.folder)}</span>}
               </span>
               <span className="col-start-1 row-start-2 text-xs text-muted-foreground md:col-start-auto md:row-start-auto md:text-right">
                 {thread.leftOpenTurns > 0 ? `+ ${hours(thread.leftOpenSeconds)} left open (${thread.leftOpenTurns})` : ""}
@@ -324,10 +328,10 @@ function JournalDayCard({
       </button>
       {open && (
         <div className="border-t px-3 pt-1 pb-2.5 sm:px-4">
-          <div className="hidden grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem] gap-4 pt-1 text-[11px] text-muted-foreground sm:grid">
-            <span />
+          <div className="grid grid-cols-1 gap-4 pt-1 text-[11px] text-muted-foreground sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]" aria-hidden>
+            <span className="hidden sm:block" />
             <span className="flex justify-between"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></span>
-            <span />
+            <span className="hidden sm:block" />
           </div>
           {threads.map((thread) => {
             const tag = folderTag(thread.folder)
@@ -335,7 +339,7 @@ function JournalDayCard({
               <div key={thread.key} className="grid grid-cols-[minmax(0,1fr)_4rem] items-center gap-x-4 gap-y-1 py-1.5 text-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]">
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate" title={`${thread.title || "Untitled thread"}\nT3 thread ${thread.threadId}`}>{thread.title || "Untitled thread"}</span>
-                  <span className={`shrink-0 rounded-md px-1.5 py-px text-xs ${tag.billed ? "bg-primary/15 text-foreground" : "bg-muted text-muted-foreground"}`}>{tag.label}</span>
+                  <span className={`max-w-28 shrink-0 truncate rounded-md px-1.5 py-px text-xs sm:max-w-40 ${tag.billed ? "bg-primary/15 text-foreground" : "bg-muted text-muted-foreground"}`}>{tag.label}</span>
                   {thread.live && <LiveDot />}
                 </span>
                 <span className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-auto">
@@ -379,7 +383,7 @@ function JournalDayCard({
 
 export default function AgenticCodingPage() {
   const { data } = useStore()
-  const [agentTime, setAgentTime] = useState<AgentTimeImportData | null>(null)
+  const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [project, setProject] = useState("all")
@@ -406,10 +410,10 @@ export default function AgenticCodingPage() {
     try {
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
       const response = await fetch(
-        `/api/agent-time?gapMinutes=0&includeLive=true&t3Only=true&from=${AGENT_TIME_START_DATE}${fixture}`
+        `/api/agent-time?gapMinutes=0&includeLive=true&withLive=true&t3Only=true&from=${AGENT_TIME_START_DATE}${fixture}`
       )
       if (!response.ok) throw new Error("Agent Time is not available")
-      setAgentTime((await response.json()) as AgentTimeImportData)
+      setAgentTime((await response.json()) as AgentTimeResponse)
       setLoadError(null)
       if (showToast) toast.success("Agentic coding activity refreshed")
     } catch (error) {
@@ -427,14 +431,22 @@ export default function AgenticCodingPage() {
     return () => window.clearTimeout(id)
   }, [loadAgentTime])
 
+  // Counted from when Agent Time was last read, so a tab left open rolls over at the next refresh.
+  const fetchedAt = agentTime?.fetchedAt
   const rangeStart = useMemo(() => {
     if (range === "all") return new Date(`${AGENT_TIME_START_DATE}T00:00:00`).getTime()
-    const start = new Date()
+    const start = fetchedAt ? new Date(fetchedAt) : new Date(0)
     start.setHours(0, 0, 0, 0)
     if (range === "7d") start.setDate(start.getDate() - 6)
     if (range === "30d") start.setDate(start.getDate() - 29)
     return start.getTime()
-  }, [range])
+  }, [range, fetchedAt])
+
+  const liveThreads = useMemo(
+    () => new Set((agentTime?.live ?? []).flatMap((block) =>
+      (block.sourceIntervals ?? []).map((source) => `${source.hostUrl ?? ""}|${source.conversationId || block.id}`))),
+    [agentTime]
+  )
 
   // Each T3 Code turn, clipped to the range. Fixture data mixes in other sources, which are never billed.
   const allTurns = useMemo<InsightTurn[]>(
@@ -446,19 +458,20 @@ export default function AgenticCodingPage() {
           const end = Date.parse(source.end)
           if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return []
           const threadId = source.conversationId || block.id
+          const threadKey = `${source.hostUrl ?? ""}|${threadId}`
           return [{
             folder: block.project,
-            threadKey: `${source.hostUrl ?? ""}|${threadId}`,
+            threadKey,
             title: (source.conversationSummary || source.conversationTitle || "").trim(),
             threadId,
             start,
             end,
             leftOpen: (end - start) / 1000 > LEFT_OPEN_SECONDS,
-            live: block.live === true,
+            live: liveThreads.has(threadKey),
           }]
         })
       ) ?? [],
-    [agentTime]
+    [agentTime, liveThreads]
   )
 
   const turns = useMemo(() => {
@@ -478,8 +491,8 @@ export default function AgenticCodingPage() {
   const folderTitle = useCallback((folder: string) => folderTitles.get(folder) ?? folder, [folderTitles])
 
   const mappings = useMemo(
-    () => resolveAgentMappings(agentTime?.projects ?? [], data.projects, localMappings),
-    [agentTime, data.projects, localMappings]
+    () => resolveAgentMappings([...(agentTime?.projects ?? []), ...allTurns.map((turn) => turn.folder)], data.projects, localMappings),
+    [agentTime, allTurns, data.projects, localMappings]
   )
   const projectsById = useMemo(() => new Map(data.projects.map((p) => [p.id, p])), [data.projects])
   const clientsById = useMemo(() => new Map(data.clients.map((c) => [c.id, c])), [data.clients])
@@ -498,16 +511,17 @@ export default function AgenticCodingPage() {
       buildProjectLedger(
         turns,
         billingFor,
-        (projectId) => occupiedProjectRanges(projectId, data.timeEntries, data.activeTimers),
-        // Tracked time counts up to when Agent Time was read, so running timers stay finite.
-        { start: rangeStart, end: Date.parse(agentTime?.fetchedAt ?? "") || Math.max(rangeStart, ...turns.map((turn) => turn.end)) }
+        (projectId) => occupiedProjectRanges(projectId, data.timeEntries, data.activeTimers)
       ),
-    [turns, billingFor, data.timeEntries, data.activeTimers, rangeStart, agentTime]
+    [turns, billingFor, data.timeEntries, data.activeTimers]
   )
   const unbilled = useMemo(() => summarizeUnbilledFolders(turns, billingFor), [turns, billingFor])
   const journal = useMemo(() => buildJournal(turns, billingFor), [turns, billingFor])
   const leftOpenTurns = useMemo(() => turns.filter((turn) => turn.leftOpen).sort((a, b) => b.start - a.start), [turns])
-  const leftOpenSeconds = leftOpenTurns.reduce((total, turn) => total + (turn.end - turn.start) / 1000, 0)
+  // The sum of what the ledger rows and folder cards show, so the banner matches them.
+  const leftOpenSeconds =
+    ledger.reduce((total, row) => total + row.leftOpenSeconds, 0) +
+    unbilled.reduce((total, folder) => total + folder.leftOpenSeconds, 0)
   const runningThreads = useMemo(() => new Set(turns.filter((turn) => turn.live).map((turn) => turn.threadKey)).size, [turns])
   const scaleSeconds = Math.max(1, ...ledger.map((row) => row.workingSeconds + row.leftOpenSeconds))
 
@@ -706,7 +720,7 @@ export default function AgenticCodingPage() {
                 <div className="hidden grid-cols-[1rem_minmax(0,1.2fr)_minmax(0,2fr)_6rem_7rem_7rem] gap-x-3 border-b px-4 py-2 text-xs text-muted-foreground md:grid">
                   <span />
                   <span>Client</span>
-                  <span>Working time, {RANGE_LABELS[range]}</span>
+                  <span>Working time, {range === "all" ? "all activity" : RANGE_LABELS[range]}</span>
                   <span className="text-right">Tracked</span>
                   <span className="text-right">Not tracked yet</span>
                   <span className="text-right">At rate</span>
@@ -782,10 +796,10 @@ export default function AgenticCodingPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid">
-            {leftOpenTurns.map((turn) => {
+            {leftOpenTurns.map((turn, index) => {
               const tag = folderTag(turn.folder)
               return (
-                <div key={`${turn.threadKey}:${turn.start}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-b border-dashed py-2 text-sm last:border-b-0">
+                <div key={`${turn.threadKey}:${turn.start}:${index}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-b border-dashed py-2 text-sm last:border-b-0">
                   <span className="min-w-0">
                     <span className="block truncate" title={`T3 thread ${turn.threadId}`}>{turn.title || "Untitled thread"}</span>
                     <span className="block text-xs text-muted-foreground">
