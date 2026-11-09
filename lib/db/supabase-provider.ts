@@ -13,6 +13,7 @@ import { defaultSettings } from "../types"
 import type { DataProvider } from "./provider"
 import { parseAgentTimeHosts, parseAgentTimeHostLabels } from "../agent-time-hosts"
 import { normalizeBillFactor } from "../billing"
+import { parseWeekendSendRule } from "../invoice-schedule"
 import { parseSecondaryRemittance } from "../invoice-currency"
 
 function rowToClient(row: Record<string, unknown>): Client {
@@ -43,6 +44,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     currency: row.currency as string,
     status: row.status as Project["status"],
     color: (row.color as string) ?? "",
+    agentFolders: Array.isArray(row.agent_folders) ? (row.agent_folders as string[]) : [],
     createdAt: row.created_at as string,
   }
 }
@@ -106,6 +108,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     emailFromAddress: (row.email_from_address as string) ?? "",
     timezone: (row.timezone as string) ?? "",
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
+    invoiceWeekendRule: parseWeekendSendRule(row.invoice_weekend_rule),
     displayCurrency: (row.display_currency as string) ?? "",
     secondaryRemittance: parseSecondaryRemittance(row.secondary_remittance),
     agentTimeHosts: parseAgentTimeHosts(row.agent_time_hosts),
@@ -258,6 +261,8 @@ export class SupabaseProvider implements DataProvider {
         currency: project.currency,
         status: project.status,
         color: project.color ?? "",
+        // Only sent when used, so creating projects still works before migration 014.
+        ...(project.agentFolders?.length ? { agent_folders: project.agentFolders } : {}),
       })
       .select()
       .single()
@@ -273,6 +278,7 @@ export class SupabaseProvider implements DataProvider {
     if (updates.currency !== undefined) row.currency = updates.currency
     if (updates.status !== undefined) row.status = updates.status
     if (updates.color !== undefined) row.color = updates.color
+    if (updates.agentFolders !== undefined) row.agent_folders = updates.agentFolders
     const { error } = await this.db.from("projects").update(row).eq("id", id)
     if (error) throw error
   }
@@ -442,6 +448,8 @@ export class SupabaseProvider implements DataProvider {
     if (updates.timezone !== undefined) row.timezone = updates.timezone
     if (updates.defaultInvoiceDueDays !== undefined)
       row.default_invoice_due_days = updates.defaultInvoiceDueDays
+    if (updates.invoiceWeekendRule !== undefined)
+      row.invoice_weekend_rule = parseWeekendSendRule(updates.invoiceWeekendRule)
     if (updates.displayCurrency !== undefined)
       row.display_currency = updates.displayCurrency
     if (updates.secondaryRemittance !== undefined)

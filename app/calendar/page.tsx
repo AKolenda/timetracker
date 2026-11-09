@@ -15,18 +15,21 @@ import {
   isToday,
   addDays,
 } from "date-fns"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { CalendarClock, ChevronLeft, ChevronRight, Clock, DollarSign, Receipt } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { Fact, FactBox } from "@/components/fact-list"
 import { PageHeader } from "@/components/page-header"
+import { StatCard, StatGrid } from "@/components/stat-card"
+import { InvoiceStatusBadge } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
 import { cn } from "@/lib/utils"
+import { scheduledSendsUntil } from "@/lib/invoice-schedule"
 
 interface DayData {
   earnings: number
@@ -40,6 +43,29 @@ interface DayData {
     color: string
     autoSend: boolean
   }[]
+}
+
+type MarkerKind = "earned" | "spent" | "due" | "send"
+
+const markerNames: Record<MarkerKind, string> = {
+  earned: "Earned",
+  spent: "Spent",
+  due: "Payment due",
+  send: "Invoice email",
+}
+
+const markerDot: Record<MarkerKind, string> = {
+  earned: "bg-success",
+  spent: "bg-destructive",
+  due: "bg-info",
+  send: "bg-warning",
+}
+
+const markerChip: Record<MarkerKind, string> = {
+  earned: "bg-success/10 text-success-foreground",
+  spent: "bg-destructive/10 text-destructive",
+  due: "bg-info/10 text-info",
+  send: "bg-warning/15 text-warning-foreground",
 }
 
 function emptyDay(): DayData {
@@ -57,7 +83,7 @@ export default function CalendarPage() {
   const { money } = useMoney()
   const { data, getProject, getClient } = useStore()
   const [currentMonth, setCurrentMonth] = useState(new Date())
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+  const [selectedDate, setSelectedDate] = useState<Date | null>(() => new Date())
 
   const monthStart = startOfMonth(currentMonth)
   const monthEnd = endOfMonth(currentMonth)
@@ -102,43 +128,45 @@ export default function CalendarPage() {
 
     const horizonStart = startOfWeek(startOfMonth(currentMonth))
     const horizonEnd = endOfWeek(endOfMonth(addMonths(currentMonth, 6)))
-    const ONE_DAY = 86_400_000
+    const horizonStartKey = format(horizonStart, "yyyy-MM-dd")
+    const horizonEndKey = format(horizonEnd, "yyyy-MM-dd")
+    const { invoiceWeekendRule, timezone } = data.settings
     for (const client of data.clients) {
-      if (!client.invoiceScheduleEnabled || !client.invoiceScheduleWeeks) continue
-      const weeks = client.invoiceScheduleWeeks
-      let next: Date | null = null
-      if (client.lastInvoiceSent) {
-        next = new Date(
-          new Date(client.lastInvoiceSent).getTime() + weeks * 7 * ONE_DAY
-        )
-      } else if (client.invoiceScheduleAnchor) {
-        next = new Date(client.invoiceScheduleAnchor)
-      }
-      if (!next) continue
-      while (next <= horizonEnd) {
-        if (next >= horizonStart) {
-          const key = format(next, "yyyy-MM-dd")
-          const existing = map.get(key) ?? emptyDay()
-          existing.scheduledSends.push({
-            clientId: client.id,
-            clientName: client.name,
-            color: client.color,
-            autoSend: client.invoiceScheduleAutoSend,
-          })
-          map.set(key, existing)
-        }
-        next = new Date(next.getTime() + weeks * 7 * ONE_DAY)
+      if (!client.invoiceScheduleEnabled) continue
+      const sends = scheduledSendsUntil(
+        {
+          weeks: client.invoiceScheduleWeeks,
+          anchor: client.invoiceScheduleAnchor,
+          lastSent: client.lastInvoiceSent,
+        },
+        invoiceWeekendRule,
+        horizonEndKey,
+        timezone
+      )
+      for (const key of sends) {
+        if (key < horizonStartKey) continue
+        const existing = map.get(key) ?? emptyDay()
+        existing.scheduledSends.push({
+          clientId: client.id,
+          clientName: client.name,
+          color: client.color,
+          autoSend: client.invoiceScheduleAutoSend,
+        })
+        map.set(key, existing)
       }
     }
 
     return map
-  }, [data.timeEntries, data.expenses, data.invoices, data.clients, getProject, currentMonth])
+  }, [data.timeEntries, data.expenses, data.invoices, data.clients, data.settings, getProject, currentMonth])
 
   const monthTotals = useMemo(() => {
+    const monthStart = startOfMonth(currentMonth)
+    const monthEnd = endOfMonth(currentMonth)
     let earnings = 0
     let expenses = 0
     let hours = 0
     let pendingPayments = 0
+    let dueCount = 0
 
     for (const [key, day] of dayMap) {
       const d = new Date(key)
@@ -147,11 +175,12 @@ export default function CalendarPage() {
         expenses += day.expenses
         hours += day.hours
         pendingPayments += day.paymentsDue.reduce((s, p) => s + p.total, 0)
+        dueCount += day.paymentsDue.length
       }
     }
 
-    return { earnings, expenses, hours, pendingPayments }
-  }, [dayMap, monthStart, monthEnd])
+    return { earnings, expenses, hours, pendingPayments, dueCount }
+  }, [dayMap, currentMonth])
 
   const selectedDayData = useMemo(() => {
     if (!selectedDate) return null
@@ -202,66 +231,54 @@ export default function CalendarPage() {
       })
   }, [data.invoices, getClient])
 
+  const selectToday = () => {
+    const today = new Date()
+    setCurrentMonth(today)
+    setSelectedDate(today)
+  }
+
   return (
     <>
       <PageHeader
-        title="Calendar & Reports"
+        title="Calendar & reports"
+        center={<div className="flex min-w-0 items-center">
+          <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Previous month" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}><ChevronLeft /></Button>
+          {/* The name starts with the visible text so voice control can say it. */}
+          <Button variant="ghost" className="h-11 min-w-0 flex-none px-2 text-[14px] font-medium" aria-label={`${format(currentMonth, "MMM yyyy")}, go to today`} title="Go to today" onClick={selectToday}>
+            <span className="truncate">{format(currentMonth, "MMM yyyy")}</span>
+          </Button>
+          <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Next month" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}><ChevronRight /></Button>
+        </div>}
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Month Earnings
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-              {money(monthTotals.earnings)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Month Expenses
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold text-red-600 dark:text-red-400">
-              {money(monthTotals.expenses)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Hours Worked
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {formatHours(monthTotals.hours)}h
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Payments Expected
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold text-blue-600 dark:text-blue-400">
-              {money(monthTotals.pendingPayments)}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <StatGrid className="mb-3 sm:mb-6">
+        <StatCard
+          label="Month earnings"
+          icon={DollarSign}
+          value={money(monthTotals.earnings)}
+          hint="Billable time"
+        />
+        <StatCard
+          label="Month expenses"
+          icon={Receipt}
+          value={money(monthTotals.expenses)}
+        />
+        <StatCard
+          label="Hours worked"
+          icon={Clock}
+          value={`${formatHours(monthTotals.hours)}h`}
+        />
+        <StatCard
+          label="Payments expected"
+          icon={CalendarClock}
+          value={money(monthTotals.pendingPayments)}
+          hint={`${monthTotals.dueCount} unpaid ${monthTotals.dueCount === 1 ? "invoice" : "invoices"} due`}
+        />
+      </StatGrid>
 
-      <div className="grid gap-6 lg:grid-cols-3 lg:items-stretch">
-        <Card className="flex flex-col lg:col-span-2 lg:min-h-[calc(100dvh-20rem)]">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
+      <div className="grid grid-cols-1 gap-3 sm:gap-6 lg:grid-cols-3 lg:items-stretch">
+        <Card className="phone-flat flex flex-col lg:col-span-2 lg:min-h-[calc(100dvh-20rem)]">
+          <CardHeader className="flex flex-row items-center justify-between pb-2 max-sm:hidden">
             <CardTitle className="text-sm font-medium">
               {format(currentMonth, "MMMM yyyy")}
             </CardTitle>
@@ -269,6 +286,8 @@ export default function CalendarPage() {
               <Button
                 variant="ghost"
                 size="icon-xs"
+                aria-label="Previous month"
+                title="Previous month"
                 onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
               >
                 <ChevronLeft className="size-4" />
@@ -276,28 +295,30 @@ export default function CalendarPage() {
               <Button
                 variant="ghost"
                 size="xs"
-                onClick={() => setCurrentMonth(new Date())}
+                onClick={selectToday}
               >
                 Today
               </Button>
               <Button
                 variant="ghost"
                 size="icon-xs"
+                aria-label="Next month"
+                title="Next month"
                 onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
               >
                 <ChevronRight className="size-4" />
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="flex flex-1 flex-col">
+          <CardContent className="flex flex-1 flex-col gap-3 max-sm:px-2">
             <div
-              className="grid flex-1 grid-cols-7 gap-px"
+              className="grid flex-1 grid-cols-7 gap-px max-sm:-mx-3 max-sm:gap-0"
               style={{ gridTemplateRows: `auto repeat(${Math.ceil(days.length / 7)}, minmax(0, 1fr))` }}
             >
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                 <div
                   key={d}
-                  className="py-2 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                  className="py-2 text-center text-xs font-medium text-muted-foreground"
                 >
                   {d}
                 </div>
@@ -306,64 +327,84 @@ export default function CalendarPage() {
                 const key = format(day, "yyyy-MM-dd")
                 const dayData = dayMap.get(key)
                 const inMonth = isSameMonth(day, currentMonth)
-                const selected = selectedDate && isSameDay(day, selectedDate)
+                const selected = !!selectedDate && isSameDay(day, selectedDate)
                 const today_ = isToday(day)
+                const dueTotal = dayData?.paymentsDue.reduce((s, p) => s + p.total, 0) ?? 0
+                const markers = dayData
+                  ? [
+                      dayData.earnings > 0 && { kind: "earned" as const, text: `+${money(dayData.earnings)}`, label: `${money(dayData.earnings)} earned` },
+                      dayData.expenses > 0 && { kind: "spent" as const, text: `-${money(dayData.expenses)}`, label: `${money(dayData.expenses)} spent` },
+                      dayData.paymentsDue.length > 0 && { kind: "due" as const, text: `Due ${money(dueTotal)}`, label: `${money(dueTotal)} due` },
+                      dayData.scheduledSends.length > 0 && {
+                        kind: "send" as const,
+                        text: `${dayData.scheduledSends.length} invoice ${dayData.scheduledSends.length === 1 ? "email" : "emails"}`,
+                        label: `${dayData.scheduledSends.length} scheduled invoice ${dayData.scheduledSends.length === 1 ? "email" : "emails"}`,
+                      },
+                    ].filter((m) => !!m)
+                  : []
+                const dayLabel = [format(day, "EEEE, MMMM d"), ...markers.map((m) => m.label)].join(", ")
 
                 return (
                   <button
                     key={key}
                     type="button"
                     onClick={() => setSelectedDate(day)}
+                    aria-label={dayLabel}
+                    aria-pressed={selected}
+                    aria-current={today_ ? "date" : undefined}
                     className={cn(
-                    "relative min-h-[56px] rounded-lg border p-1 text-left transition-colors hover:bg-muted/50 sm:min-h-[72px] sm:p-1.5 lg:min-h-0",
-                      !inMonth && "opacity-30",
-                      selected && "ring-2 ring-foreground",
-                      today_ && "border-foreground/30"
+                      "relative flex min-h-[52px] flex-col items-start rounded-md border p-1 text-left transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:min-h-[72px] sm:p-1.5 lg:min-h-0",
+                      !inMonth && "opacity-40",
+                      today_ && "border-primary/40",
+                      selected && "bg-primary/5 ring-2 ring-primary"
                     )}
                   >
                     <span
                       className={cn(
-                        "text-xs font-medium",
-                        today_ &&
-                          "inline-flex size-5 items-center justify-center rounded-full bg-foreground text-background"
+                        "inline-flex size-5 items-center justify-center rounded-full text-xs font-medium tabular-nums",
+                        today_ && "bg-primary text-primary-foreground"
                       )}
                     >
                       {format(day, "d")}
                     </span>
-                    {dayData && (
-                      <div className="mt-1 space-y-0.5">
-                        {dayData.earnings > 0 && (
-                          <div className="truncate rounded bg-emerald-500/10 px-1 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">
-                            +{money(dayData.earnings)}
-                          </div>
-                        )}
-                        {dayData.expenses > 0 && (
-                          <div className="truncate rounded bg-red-500/10 px-1 text-[9px] font-medium text-red-600 dark:text-red-400">
-                            -{money(dayData.expenses)}
-                          </div>
-                        )}
-                        {dayData.paymentsDue.length > 0 && (
-                          <div className="truncate rounded bg-blue-500/10 px-1 text-[9px] font-medium text-blue-600 dark:text-blue-400">
-                            Due: {money(dayData.paymentsDue.reduce((s, p) => s + p.total, 0))}
-                          </div>
-                        )}
-                        {dayData.scheduledSends.length > 0 && (
-                          <div className="truncate rounded bg-amber-500/15 px-1 text-[9px] font-medium text-amber-700 dark:text-amber-400">
-                            ✉ Auto-send ({dayData.scheduledSends.length})
-                          </div>
-                        )}
-                      </div>
+                    {markers.length > 0 && (
+                      <>
+                        <div aria-hidden className="mt-auto flex flex-wrap gap-1 pb-0.5 pl-0.5 sm:hidden">
+                          {markers.map((m) => (
+                            <span key={m.kind} className={cn("size-1.5 rounded-full", markerDot[m.kind])} />
+                          ))}
+                        </div>
+                        <div aria-hidden className="mt-1 hidden w-full min-w-0 space-y-0.5 sm:block">
+                          {markers.map((m) => (
+                            <div
+                              key={m.kind}
+                              title={m.label}
+                              className={cn("truncate rounded-sm px-1 text-[11px] leading-4 font-medium tabular-nums", markerChip[m.kind])}
+                            >
+                              {m.text}
+                            </div>
+                          ))}
+                        </div>
+                      </>
                     )}
                   </button>
                 )
               })}
             </div>
+            <ul aria-label="Legend" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {(Object.keys(markerNames) as MarkerKind[]).map((kind) => (
+                <li key={kind} className="flex items-center gap-1.5">
+                  <span aria-hidden className={cn("size-1.5 rounded-full", markerDot[kind])} />
+                  {markerNames[kind]}
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
 
-        <div className="space-y-6">
+        <div className="space-y-3 sm:space-y-6">
           {/* Day Detail */}
-          <Card>
+          <Card className="phone-flat max-sm:gap-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">
                 {selectedDate
@@ -374,7 +415,7 @@ export default function CalendarPage() {
             <CardContent>
               {!selectedDate ? (
                 <p className="py-4 text-center text-sm text-muted-foreground">
-                  Click a day to see details
+                  Select a day to see details
                 </p>
               ) : !selectedDayData &&
                 selectedDayEntries.length === 0 &&
@@ -385,34 +426,55 @@ export default function CalendarPage() {
               ) : (
                 <div className="space-y-3">
                   {selectedDayData && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-md bg-emerald-500/10 p-2 text-center">
-                        <p className="text-[10px] font-medium text-muted-foreground">
+                    <>
+                    <FactBox className="sm:hidden">
+                      <Fact label="Earned" value={money(selectedDayData.earnings)} tone="success" />
+                      <Fact label="Spent" value={money(selectedDayData.expenses)} tone="destructive" />
+                    </FactBox>
+                    <div className="hidden grid-cols-2 gap-2 sm:grid">
+                      <div className="rounded-md bg-success/10 p-2 text-center">
+                        <p className="text-xs font-medium text-muted-foreground">
                           Earned
                         </p>
-                        <p className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                        <p className="text-sm font-semibold tabular-nums text-success-foreground">
                           {money(selectedDayData.earnings)}
                         </p>
                       </div>
-                      <div className="rounded-md bg-red-500/10 p-2 text-center">
-                        <p className="text-[10px] font-medium text-muted-foreground">
+                      <div className="rounded-md bg-destructive/10 p-2 text-center">
+                        <p className="text-xs font-medium text-muted-foreground">
                           Spent
                         </p>
-                        <p className="font-mono text-sm font-bold text-red-600 dark:text-red-400">
+                        <p className="text-sm font-semibold tabular-nums text-destructive">
                           {money(selectedDayData.expenses)}
                         </p>
                       </div>
                     </div>
+                    </>
                   )}
 
                   {selectedDayEntries.length > 0 && (
                     <>
-                      <Separator />
+                      <Separator className="max-sm:hidden" />
                       <div>
-                        <p className="mb-1 text-xs font-medium text-muted-foreground">
-                          Time Entries
+                        <p className="mb-1 text-xs font-medium text-muted-foreground max-sm:mb-2 max-sm:text-sm max-sm:text-foreground">
+                          Time entries
                         </p>
-                        <div className="space-y-1.5">
+
+                        <ul className="divide-y overflow-hidden rounded-lg border bg-card sm:hidden">
+                          {selectedDayEntries.map((e) => (
+                            <li key={e.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium">{e.description || "Untitled"}</p>
+                                <p className="truncate text-xs text-muted-foreground">{e.project?.name ?? "No project"}{e.client && ` · ${e.client.name}`}</p>
+                              </div>
+                              <div className="shrink-0 text-right tabular-nums">
+                                <p className="text-sm font-medium">{formatHours(e.duration)}h</p>
+                                <p className="text-xs text-muted-foreground">{e.billable && e.project ? money((billedSeconds(e) / 3600) * e.project.rate) : e.billable ? "Billable" : "Non-billable"}</p>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="space-y-1.5 max-sm:hidden">
                           {selectedDayEntries.map((e) => (
                             <div
                               key={e.id}
@@ -431,7 +493,7 @@ export default function CalendarPage() {
                                   {e.description || e.project?.name || "Untitled"}
                                 </span>
                               </div>
-                              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                                 {formatHours(e.duration)}h
                               </span>
                             </div>
@@ -443,12 +505,24 @@ export default function CalendarPage() {
 
                   {selectedDayExpenses.length > 0 && (
                     <>
-                      <Separator />
+                      <Separator className="max-sm:hidden" />
                       <div>
-                        <p className="mb-1 text-xs font-medium text-muted-foreground">
+                        <p className="mb-1 text-xs font-medium text-muted-foreground max-sm:mb-2 max-sm:text-sm max-sm:text-foreground">
                           Expenses
                         </p>
-                        <div className="space-y-1.5">
+
+                        <ul className="divide-y overflow-hidden rounded-lg border bg-card sm:hidden">
+                          {selectedDayExpenses.map((e) => (
+                            <li key={e.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium">{e.description}</p>
+                                <p className="truncate text-xs text-muted-foreground">{e.project?.name ?? "No project"}{e.project && getClient(e.project.clientId) && ` · ${getClient(e.project.clientId)?.name}`}</p>
+                              </div>
+                              <p className="shrink-0 text-sm font-medium tabular-nums text-destructive">-{money(e.amount)}</p>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="space-y-1.5 max-sm:hidden">
                           {selectedDayExpenses.map((e) => (
                             <div
                               key={e.id}
@@ -457,7 +531,7 @@ export default function CalendarPage() {
                               <span className="truncate">
                                 {e.description}
                               </span>
-                              <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">
+                              <span className="shrink-0 text-xs tabular-nums text-destructive">
                                 -{money(e.amount)}
                               </span>
                             </div>
@@ -473,17 +547,17 @@ export default function CalendarPage() {
                         <Separator />
                         <div>
                           <p className="mb-1 text-xs font-medium text-muted-foreground">
-                            Payments Due
+                            Payments due
                           </p>
                           {selectedDayData.paymentsDue.map((p) => (
                             <div
                               key={p.invoiceNumber}
                               className="flex items-center justify-between text-sm"
                             >
-                              <span className="font-mono text-xs">
+                              <span className="text-xs font-medium tabular-nums">
                                 {p.invoiceNumber}
                               </span>
-                              <span className="font-mono text-xs font-medium text-blue-600 dark:text-blue-400">
+                              <span className="text-xs font-medium tabular-nums text-info">
                                 {money(p.total)}
                               </span>
                             </div>
@@ -498,13 +572,13 @@ export default function CalendarPage() {
                         <Separator />
                         <div>
                           <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-                            Automated Email Being Sent
+                            Scheduled invoice emails
                           </p>
                           <div className="space-y-1.5">
                             {selectedDayData.scheduledSends.map((s) => (
                               <div
                                 key={s.clientId}
-                                className="flex items-center justify-between gap-2 rounded-md bg-amber-500/10 px-2 py-1.5"
+                                className="flex items-center justify-between gap-2 rounded-md bg-warning/10 px-2 py-1.5"
                               >
                                 <div className="flex min-w-0 items-center gap-2">
                                   <div
@@ -515,7 +589,7 @@ export default function CalendarPage() {
                                     {s.clientName}
                                   </span>
                                 </div>
-                                <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                                <span className="shrink-0 text-xs font-medium text-warning-foreground">
                                   {s.autoSend ? "Auto-send" : "Draft only"}
                                 </span>
                               </div>
@@ -530,10 +604,10 @@ export default function CalendarPage() {
           </Card>
 
           {/* Upcoming Payments */}
-          <Card>
+          <Card className="phone-flat max-sm:gap-2">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">
-                Payment Schedule
+                Payment schedule
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -542,35 +616,34 @@ export default function CalendarPage() {
                   No upcoming payments
                 </p>
               ) : (
-                <div className="space-y-2">
+                // Phones: one bordered list of /invoices rows (number and chip, amount
+                // right; client and due date below). From sm up: a card per invoice.
+                <ul className="space-y-2 max-sm:space-y-0 max-sm:divide-y max-sm:overflow-hidden max-sm:rounded-lg max-sm:border max-sm:bg-card">
                   {upcomingPayments.map((inv) => (
-                    <div
+                    <li
                       key={inv.id}
-                      className="flex items-center justify-between gap-2 rounded-md border p-2"
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 max-sm:gap-x-3 max-sm:px-4 max-sm:py-2.5 sm:rounded-md sm:border sm:p-2"
                     >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-medium">
-                            {inv.invoiceNumber}
-                          </span>
-                          <Badge
-                            variant="secondary"
-                            className="bg-blue-500/10 text-[10px] text-blue-600 dark:text-blue-400"
-                          >
-                            {inv.status}
-                          </Badge>
-                        </div>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {inv.client?.name ?? "Unknown"} &middot; Due{" "}
-                          {format(new Date(inv.dueDate), "MMM d")}
-                        </p>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate text-xs font-medium tabular-nums max-sm:text-sm">
+                          {inv.invoiceNumber}
+                        </span>
+                        <InvoiceStatusBadge status={inv.status} />
                       </div>
-                      <span className="shrink-0 font-mono text-sm font-bold">
+                      <span className="shrink-0 text-sm font-semibold tabular-nums max-sm:font-medium sm:row-span-2">
                         {money(inv.total)}
                       </span>
-                    </div>
+                      <p className="mt-0.5 flex min-w-0 items-center text-xs text-muted-foreground max-sm:col-span-2 max-sm:gap-2">
+                        {inv.client && (
+                          <span aria-hidden className="size-2 shrink-0 rounded-full sm:hidden" style={{ backgroundColor: inv.client.color }} />
+                        )}
+                        <span className="min-w-0 truncate max-sm:flex-1">{inv.client?.name ?? "Unknown"}</span>
+                        <span className="whitespace-pre max-sm:hidden"> &middot; </span>
+                        <span className="shrink-0 tabular-nums">Due {format(new Date(inv.dueDate), "MMM d")}</span>
+                      </p>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </CardContent>
           </Card>

@@ -1,13 +1,17 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
+import { format } from "date-fns"
 import { formatDate } from "@/lib/format"
+import { parseLocalDate } from "@/lib/datetime"
+import { nextScheduledSend } from "@/lib/invoice-schedule"
 import {
   Plus,
   MoreHorizontal,
   Pencil,
   Trash2,
-  FolderKanban,
+  Users,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -30,8 +34,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
+import { Fact, FactBox } from "@/components/fact-list"
 import { PageHeader } from "@/components/page-header"
+import { InvoiceStatusBadge } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
+import { cn } from "@/lib/utils"
 import { useMoney } from "@/lib/display-currency"
 import { INVOICE_CURRENCY } from "@/lib/invoice-currency"
 import type { Client } from "@/lib/types"
@@ -74,17 +88,36 @@ export default function ClientsPage() {
     getProjectsByClient,
   } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
+  // The target outlives the open flag so the dialog keeps its text while it fades out.
+  const [deleteTarget, setDeleteTarget] = useState<Client | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [nameError, setNameError] = useState<string | null>(null)
   const secondaryCurrency = data.settings.secondaryRemittance?.currency || null
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  // Phones show a client's billing in a bottom sheet instead of the second pane.
+  const [detailOpen, setDetailOpen] = useState(false)
+  const afterDetailClose = useRef<(() => void) | null>(null)
+  const detailRef = useRef<HTMLDivElement>(null)
   const [invoicesOpen, setInvoicesOpen] = useState(false)
   const [invoiceSearch, setInvoiceSearch] = useState("")
   const [invoicePage, setInvoicePage] = useState(0)
   const selectedClient =
     data.clients.find((client) => client.id === selectedClientId) ??
     data.clients[0]
+  const selectedNextSend = selectedClient?.invoiceScheduleEnabled
+    ? nextScheduledSend(
+        {
+          weeks: selectedClient.invoiceScheduleWeeks,
+          anchor: selectedClient.invoiceScheduleAnchor,
+          lastSent: selectedClient.lastInvoiceSent,
+        },
+        data.settings.invoiceWeekendRule,
+        data.settings.timezone
+      )
+    : null
   const issuedInvoices = data.invoices.filter(
     (invoice) => invoice.status !== "draft"
   )
@@ -113,32 +146,44 @@ export default function ClientsPage() {
   )
   const currentInvoicePage = Math.min(invoicePage, lastInvoicePage)
 
-  function invoiceRows(invoices: typeof clientInvoices) {
-    return invoices.map((invoice) => (
-      <div
-        key={invoice.id}
-        className="flex items-center justify-between gap-3 border-b py-3 last:border-0"
-      >
-        <div className="min-w-0">
-          <p className="text-sm font-medium break-words">
-            {invoice.invoiceNumber}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {formatDate(invoice.issueDate)}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="text-sm tabular-nums">
-            {money(invoice.total)}
-          </p>
-          <p
-            className={`text-xs capitalize ${invoice.status === "paid" ? "text-emerald-600 dark:text-emerald-400" : invoice.status === "overdue" ? "text-destructive" : "text-muted-foreground"}`}
+  /**
+   * Phones get the /invoices row in one bordered list: number and status chip on
+   * the left of line 1, the amount on the right, the issue date on line 2.
+   */
+  function invoiceRows(invoices: typeof clientInvoices, className?: string) {
+    return (
+      <ul className={cn("max-sm:mt-1.5 max-sm:overflow-hidden max-sm:rounded-lg max-sm:border max-sm:bg-card", className)}>
+        {invoices.map((invoice) => (
+          <li
+            key={invoice.id}
+            className="flex items-center justify-between gap-3 border-b py-3 last:border-0 max-sm:px-4 max-sm:py-2.5"
           >
-            {invoice.status}
-          </p>
-        </div>
-      </div>
-    ))
+            <div className="min-w-0 max-sm:flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <p className="text-sm font-medium break-words tabular-nums max-sm:min-w-0 max-sm:truncate">
+                  {invoice.invoiceNumber}
+                </p>
+                <span className="shrink-0 sm:hidden">
+                  <InvoiceStatusBadge status={invoice.status} />
+                </span>
+                <p className="ml-auto shrink-0 text-sm font-medium tabular-nums sm:hidden">
+                  {money(invoice.total)}
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground tabular-nums max-sm:mt-0.5">
+                {formatDate(invoice.issueDate)}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1 max-sm:hidden">
+              <p className="text-sm font-medium tabular-nums">
+                {money(invoice.total)}
+              </p>
+              <InvoiceStatusBadge status={invoice.status} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    )
   }
 
   function openCreate() {
@@ -147,6 +192,7 @@ export default function ClientsPage() {
       ...emptyForm,
       color: CLIENT_COLORS[Math.floor(Math.random() * CLIENT_COLORS.length)],
     })
+    setNameError(null)
     setDialogOpen(true)
   }
 
@@ -165,12 +211,14 @@ export default function ClientsPage() {
       invoiceScheduleAutoSend: client.invoiceScheduleAutoSend ?? true,
       showSecondaryCurrency: client.showSecondaryCurrency ?? false,
     })
+    setNameError(null)
     setDialogOpen(true)
   }
 
   async function handleSave() {
     if (!form.name.trim()) {
-      toast.error("Client name is required")
+      setNameError("Enter a client name")
+      document.getElementById("name")?.focus()
       return
     }
     const payload = {
@@ -203,14 +251,94 @@ export default function ClientsPage() {
   }
 
   async function handleDelete(client: Client) {
-    await deleteClient(client.id)
-    toast.success("Client deleted")
+    try {
+      await deleteClient(client.id)
+      toast.success("Client deleted")
+    } catch {
+      toast.error("Couldn't delete the client")
+    }
+    setDeleteOpen(false)
   }
+
+  const deleteCounts = (() => {
+    if (!deleteTarget) return null
+    const projectIds = new Set(data.projects.filter((p) => p.clientId === deleteTarget.id).map((p) => p.id))
+    return {
+      projects: projectIds.size,
+      entries: data.timeEntries.filter((t) => projectIds.has(t.projectId)).length,
+      expenses: data.expenses.filter((e) => projectIds.has(e.projectId)).length,
+    }
+  })()
+
+  function selectClient(id: string) {
+    setSelectedClientId(id)
+    if (window.matchMedia("(width < 40rem)").matches) setDetailOpen(true)
+  }
+
+  /** Closes the phone detail sheet, then runs `action`, so a dialog it opens keeps focus. */
+  function closeDetailThen(action: () => void) {
+    if (!detailOpen) return action()
+    afterDetailClose.current = action
+    setDetailOpen(false)
+  }
+
+  function openAllInvoices() {
+    setInvoiceSearch("")
+    setInvoicePage(0)
+    setInvoicesOpen(true)
+  }
+
+  function clientActionsMenu(client: Client, triggerClassName?: string) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={triggerClassName}
+            aria-label={`Actions for ${client.name}`}
+          >
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem className="max-sm:min-h-11" onClick={() => closeDetailThen(() => openEdit(client))}>
+            <Pencil className="size-4" />
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => closeDetailThen(() => { setDeleteTarget(client); setDeleteOpen(true) })}
+            className="text-destructive focus:text-destructive max-sm:min-h-11"
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
+  const projectCount = selectedClient ? getProjectsByClient(selectedClient.id).length : 0
 
   return (
     <>
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${deleteTarget?.name ?? "client"}?`}
+        description={
+          <>
+            This also deletes {deleteCounts?.projects ?? 0} {deleteCounts?.projects === 1 ? "project" : "projects"},{" "}
+            {deleteCounts?.entries ?? 0} time {deleteCounts?.entries === 1 ? "entry" : "entries"} and {deleteCounts?.expenses ?? 0}{" "}
+            {deleteCounts?.expenses === 1 ? "expense" : "expenses"}. This can&apos;t be undone.
+          </>
+        }
+        confirmLabel="Delete client"
+        onConfirm={() => (deleteTarget ? handleDelete(deleteTarget) : undefined)}
+      />
       <PageHeader
         title="Clients"
+        primary={{ label: "New client", icon: Plus, onClick: openCreate, testId: "new-client" }}
         actions={
           <Button size="sm" onClick={openCreate}>
             <Plus className="size-4" data-icon="inline-start" />
@@ -225,21 +353,23 @@ export default function ClientsPage() {
         </p>
       ) : data.clients.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <FolderKanban className="mb-4 size-6 text-muted-foreground" />
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+              <Users className="size-5 text-muted-foreground" />
+            </div>
             <p className="text-sm font-medium">No clients yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Create your first client to get started
             </p>
             <Button size="sm" className="mt-4" onClick={openCreate}>
-              <Plus className="size-4" />
+              <Plus className="size-4" data-icon="inline-start" />
               New Client
             </Button>
           </CardContent>
         </Card>
       ) : selectedClient ? (
         <>
-          <div className="mb-4 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+          <div className="mb-4 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground max-sm:hidden">
             <span>
               {data.clients.length}{" "}
               {data.clients.length === 1 ? "client" : "clients"} · Select a
@@ -259,18 +389,20 @@ export default function ClientsPage() {
                     key={client.id}
                     type="button"
                     aria-pressed={selected}
-                    onClick={() => setSelectedClientId(client.id)}
-                    className={`flex w-full items-center justify-between gap-3 border-b border-l-2 px-3 py-5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5 ${selected ? "border-l-primary bg-primary/10" : "border-l-transparent hover:bg-muted/50"}`}
+                    onClick={() => selectClient(client.id)}
+                    className={`flex w-full items-center justify-between gap-3 border-b px-4 py-2.5 max-sm:items-start text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset max-sm:rounded-none max-sm:last:border-b-0 sm:border-l-2 sm:px-5 sm:py-4 ${selected ? "sm:border-l-primary sm:bg-primary/10" : "hover:bg-muted/50 sm:border-l-transparent"}`}
                   >
-                    <span className="flex min-w-0 items-center gap-3">
+                    {/* Phones: the house row, a small colour dot and no repeated caption. */}
+                    <span className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
                       <span
-                        className="size-8 shrink-0 rounded-md"
+                        aria-hidden
+                        className="size-2.5 shrink-0 rounded-full sm:size-8 sm:rounded-md"
                         style={{
                           backgroundColor: client.color || CLIENT_COLORS[0],
                         }}
                       />
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-semibold">
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium sm:font-semibold">
                           {client.name}
                         </span>
                         {client.email && (
@@ -281,10 +413,10 @@ export default function ClientsPage() {
                       </span>
                     </span>
                     <span className="shrink-0 text-right">
-                      <span className="block text-sm font-semibold tabular-nums">
+                      <span className="block text-sm font-semibold tabular-nums max-sm:font-medium">
                         {money(total)}
                       </span>
-                      <span className="block text-[11px] text-muted-foreground">
+                      <span className="block text-xs text-muted-foreground max-sm:sr-only">
                         Lifetime invoiced
                       </span>
                     </span>
@@ -294,7 +426,7 @@ export default function ClientsPage() {
             </div>
             <section
               aria-label="Client billing detail"
-              className="min-w-0 border-t p-4 sm:p-6 lg:border-t-0 lg:border-l"
+              className="min-w-0 border-t p-4 max-sm:hidden sm:p-6 lg:border-t-0 lg:border-l"
             >
               <div className="mb-6 flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -308,30 +440,7 @@ export default function ClientsPage() {
                       : "projects"}
                   </p>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Actions for ${selectedClient.name}`}
-                    >
-                      <MoreHorizontal className="size-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => openEdit(selectedClient)}>
-                      <Pencil className="size-4" />
-                      Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => handleDelete(selectedClient)}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <Trash2 className="size-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {clientActionsMenu(selectedClient)}
               </div>
               <p className="text-xs text-muted-foreground">Lifetime invoiced</p>
               <p className="mt-1 text-3xl font-semibold tracking-tight break-words tabular-nums sm:text-4xl">
@@ -346,7 +455,7 @@ export default function ClientsPage() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Outstanding</p>
-                  <p className="mt-1 text-lg font-medium break-words text-amber-700 tabular-nums dark:text-amber-300">
+                  <p className="mt-1 text-lg font-medium break-words text-warning-foreground tabular-nums">
                     {money(lifetime - paid)}
                   </p>
                 </div>
@@ -358,9 +467,11 @@ export default function ClientsPage() {
                 {selectedClient.phone && <p>{selectedClient.phone}</p>}
                 {selectedClient.invoiceScheduleEnabled &&
                 selectedClient.invoiceScheduleWeeks ? (
-                  <span className="inline-flex rounded-md bg-emerald-500/10 px-2 py-1 text-emerald-600 dark:text-emerald-400">
+                  <span className="inline-flex rounded-md bg-success/10 px-2 py-1 text-success-foreground">
                     Auto-invoice every {selectedClient.invoiceScheduleWeeks}w
                     {!selectedClient.invoiceScheduleAutoSend && " (draft only)"}
+                    {selectedNextSend &&
+                      ` · next ${format(parseLocalDate(selectedNextSend), "EEE, MMM d")}`}
                   </span>
                 ) : (
                   <p>Manual invoicing</p>
@@ -370,7 +481,8 @@ export default function ClientsPage() {
                 Recent invoices · {clientInvoices.length} total
               </h3>
               {clientInvoices.length ? (
-                invoiceRows(clientInvoices.slice(0, 5))
+                // The hairline above "View all invoices".
+                invoiceRows(clientInvoices.slice(0, 5), "border-b")
               ) : (
                 <p className="py-6 text-sm text-muted-foreground">
                   No issued invoices yet. Drafts appear on the Invoices page.
@@ -380,11 +492,7 @@ export default function ClientsPage() {
                 <Button
                   variant="link"
                   className="mt-2 px-0"
-                  onClick={() => {
-                    setInvoiceSearch("")
-                    setInvoicePage(0)
-                    setInvoicesOpen(true)
-                  }}
+                  onClick={openAllInvoices}
                 >
                   View all invoices
                 </Button>
@@ -394,8 +502,95 @@ export default function ClientsPage() {
         </>
       ) : null}
 
+      {selectedClient && (
+        <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
+          <SheetContent
+            side="bottom"
+            showCloseButton={false}
+            aria-describedby={undefined}
+            ref={detailRef}
+            data-testid="client-detail-sheet"
+            className="max-h-[85dvh] gap-0 overflow-y-auto overscroll-contain rounded-t-xl pb-[max(1rem,env(safe-area-inset-bottom))] sm:hidden"
+            onOpenAutoFocus={(event) => {
+              // Focus the sheet itself rather than its first button.
+              event.preventDefault()
+              detailRef.current?.focus()
+            }}
+            onCloseAutoFocus={(event) => {
+              const action = afterDetailClose.current
+              if (!action) return
+              afterDetailClose.current = null
+              event.preventDefault()
+              action()
+            }}
+          >
+            <div className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-1 border-b bg-popover pr-1 pl-4">
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="truncate text-sm font-medium">{selectedClient.name}</SheetTitle>
+                <p className="text-xs text-muted-foreground">
+                  {projectCount} {projectCount === 1 ? "project" : "projects"}
+                </p>
+              </div>
+              {clientActionsMenu(selectedClient, "size-11 text-muted-foreground")}
+              <SheetClose asChild>
+                <Button variant="ghost" size="icon" className="size-11" aria-label="Close">
+                  <XIcon />
+                </Button>
+              </SheetClose>
+            </div>
+            <div className="px-4 pt-3">
+              <FactBox>
+                <Fact label="Lifetime invoiced" value={money(lifetime)} />
+                <Fact label="Paid" value={money(paid)} />
+                <Fact label="Outstanding" value={money(lifetime - paid)} tone={lifetime - paid > 0 ? "warning" : "default"} />
+                {selectedClient.email && (
+                  <Fact label="Email" value={<span className="break-all">{selectedClient.email}</span>} />
+                )}
+                {selectedClient.phone && <Fact label="Phone" value={selectedClient.phone} />}
+                <Fact
+                  label="Invoicing"
+                  value={
+                    selectedClient.invoiceScheduleEnabled && selectedClient.invoiceScheduleWeeks ? (
+                      <>
+                        Every {selectedClient.invoiceScheduleWeeks}w
+                        {!selectedClient.invoiceScheduleAutoSend && " (draft only)"}
+                        {selectedNextSend &&
+                          ` · next ${format(parseLocalDate(selectedNextSend), "EEE, MMM d")}`}
+                      </>
+                    ) : (
+                      "Manual"
+                    )
+                  }
+                  tone={selectedClient.invoiceScheduleEnabled && selectedClient.invoiceScheduleWeeks ? "success" : "default"}
+                />
+              </FactBox>
+              <p className="mt-1.5 text-xs text-muted-foreground">All time · USD · Drafts excluded</p>
+              <h3 className="mt-4 text-xs text-muted-foreground">
+                Recent invoices{clientInvoices.length > 0 && ` · ${clientInvoices.length} total`}
+              </h3>
+              {clientInvoices.length ? (
+                invoiceRows(clientInvoices.slice(0, 5))
+              ) : (
+                <p className="mt-2 rounded-lg border bg-card px-4 py-6 text-sm text-muted-foreground">
+                  No issued invoices yet. Drafts appear on the Invoices page.
+                </p>
+              )}
+              {clientInvoices.length > 0 && (
+                <Button
+                  variant="outline"
+                  className="mt-2 h-11 w-full"
+                  onClick={() => closeDetailThen(openAllInvoices)}
+                >
+                  View all invoices
+                </Button>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
+
       <Dialog open={invoicesOpen} onOpenChange={setInvoicesOpen}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle className="break-words">
               {selectedClient?.name} invoices
@@ -436,7 +631,7 @@ export default function ClientsPage() {
             >
               Previous
             </Button>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground tabular-nums">
               {currentInvoicePage + 1} / {lastInvoicePage + 1}
             </span>
             <Button
@@ -456,15 +651,25 @@ export default function ClientsPage() {
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Client" : "New Client"}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label htmlFor="name">Name</Label>
               <Input
                 id="name"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value })
+                  setNameError(null)
+                }}
                 placeholder="Acme Corporation"
+                aria-invalid={!!nameError || undefined}
+                aria-describedby={nameError ? "name-error" : undefined}
               />
+              {nameError && (
+                <p id="name-error" className="text-xs text-destructive">
+                  {nameError}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="email">Email</Label>
@@ -507,7 +712,7 @@ export default function ClientsPage() {
               />
             </div>
             <div className="grid gap-3 rounded-md border p-3">
-              <div className="flex items-start gap-3">
+              <label htmlFor="schedule-enabled" className="flex max-sm:min-h-11 pointer-coarse:min-h-11 w-full cursor-pointer items-start gap-3">
                 <Checkbox
                   id="schedule-enabled"
                   checked={form.invoiceScheduleEnabled}
@@ -516,19 +721,18 @@ export default function ClientsPage() {
                   }
                   className="mt-0.5"
                 />
-                <div className="grid gap-0.5">
-                  <Label
-                    htmlFor="schedule-enabled"
+                <span className="grid gap-0.5">
+                  <span
                     className="text-sm font-medium"
                   >
                     Auto-invoice on a schedule
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
+                  </span>
+                  <span className="text-xs font-normal text-muted-foreground">
                     Automatically build an invoice from billable time +
                     uninvoiced expenses on the chosen interval.
-                  </p>
-                </div>
-              </div>
+                  </span>
+                </span>
+              </label>
               {form.invoiceScheduleEnabled && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
@@ -567,7 +771,11 @@ export default function ClientsPage() {
                       />
                     </div>
                   </div>
-                  <div className="flex items-start gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    After the first email, each one counts from the day the last
+                    one went out. Weekend sends follow Settings → Invoicing.
+                  </p>
+                  <label htmlFor="schedule-autosend" className="flex max-sm:min-h-11 pointer-coarse:min-h-11 w-full cursor-pointer items-start gap-3">
                     <Checkbox
                       id="schedule-autosend"
                       checked={form.invoiceScheduleAutoSend}
@@ -576,18 +784,17 @@ export default function ClientsPage() {
                       }
                       className="mt-0.5"
                     />
-                    <div className="grid gap-0.5">
-                      <Label
-                        htmlFor="schedule-autosend"
+                    <span className="grid gap-0.5">
+                      <span
                         className="text-sm font-medium"
                       >
                         Email automatically
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
+                      </span>
+                      <span className="text-xs font-normal text-muted-foreground">
                         Off → invoice is created as a draft for you to review.
-                      </p>
-                    </div>
-                  </div>
+                      </span>
+                    </span>
+                  </label>
                 </>
               )}
             </div>
@@ -618,25 +825,33 @@ export default function ClientsPage() {
               </div>
             </div>
             <div className="grid gap-2">
-              <Label>Color</Label>
-              <div className="flex gap-2">
-                {CLIENT_COLORS.map((color) => (
+              <Label id="client-color-label">Color</Label>
+              {/* On touch each swatch sits in a 44px button, five to a row. */}
+              <div role="group" aria-labelledby="client-color-label" className="flex flex-wrap gap-2 pointer-coarse:-ml-2 pointer-coarse:grid pointer-coarse:w-fit pointer-coarse:grid-cols-5 pointer-coarse:gap-1">
+                {CLIENT_COLORS.map((color, index) => (
                   <button
                     key={color}
                     type="button"
-                    className="size-7 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all"
-                    style={{
-                      backgroundColor: color,
-                      ["--tw-ring-color" as string]:
-                        form.color === color ? color : "transparent",
-                    }}
+                    aria-label={`Color ${index + 1}`}
+                    aria-pressed={form.color === color}
+                    className="flex size-7 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring pointer-coarse:size-11 pointer-coarse:focus-visible:outline-offset-0"
                     onClick={() => setForm({ ...form, color })}
-                  />
+                  >
+                    <span
+                      aria-hidden
+                      className="size-7 shrink-0 rounded-md ring-2 ring-offset-2 ring-offset-background transition-all"
+                      style={{
+                        backgroundColor: color,
+                        ["--tw-ring-color" as string]:
+                          form.color === color ? color : "transparent",
+                      }}
+                    />
+                  </button>
                 ))}
               </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="sticky -bottom-4 bg-popover">
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>

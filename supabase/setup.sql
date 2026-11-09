@@ -177,3 +177,6 @@ alter table public.clients add column if not exists show_secondary_currency bool
 alter table public.invoices add column if not exists fx_currency text;
 alter table public.invoices add column if not exists fx_rate numeric(18,8) check (fx_rate is null or fx_rate > 0);
 alter table public.invoices add column if not exists fx_rate_date date;
+
+-- 014: Agent Time folders linked to a project.
+alter table public.projects add column if not exists agent_folders text[] not null default '{}';

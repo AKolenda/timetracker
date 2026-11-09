@@ -224,6 +224,7 @@ Back up your database, then apply pending files in `supabase/migrations/` in ord
 - `010_agent_time_intervals.sql`: optional maximum entry length.
 - `011_agent_time_title_jobs.sql`: persistent background naming status and guarded title updates.
 - `013_secondary_currency.sql`: a second payment account (such as AUD) and the exchange rate locked on each invoice when it is issued.
+- `014_project_agent_folders.sql`: Agent Time folders linked to each project, so their time imports there on every device.
 
 Update Agent Time on each source machine too, then restart `systemctl --user restart agent-time`. Older collectors can still supply activity, but need current transcript and canonical-session support for chat viewing and duplicate merging. No personal URLs, labels, interval preferences, or historical backfills are seeded by the migrations.
 

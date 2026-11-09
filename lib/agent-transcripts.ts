@@ -6,7 +6,8 @@ import path from "node:path"
 export type TranscriptMessage = { role: "user" | "assistant"; text: string; at: string | null }
 export type Transcript = { source: string; conversationId: string; title: string; messages: TranscriptMessage[] }
 
-const ID_PATTERN = /^[A-Za-z0-9_-]{6,128}$/
+// T3 Code thread ids can also be "mcp:launch:<hash>" or URL-escaped subagent ids; ids never become paths.
+const ID_PATTERN = /^[A-Za-z0-9_.:%-]{6,256}$/
 const MAX_MESSAGE_CHARS = 20_000
 
 export function isTranscriptId(value: string) {

@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import Link from "next/link"
 import {
   Plus,
   Pencil,
@@ -12,11 +13,12 @@ import { toast } from "sonner"
 import { format, parseISO } from "date-fns"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogDescription,
   DialogTitle,
   DialogFooter,
   DialogClose,
@@ -57,6 +59,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { PageHeader } from "@/components/page-header"
+import { RowActionsMenu } from "@/components/row-actions-menu"
+import { StatCard, StatGrid } from "@/components/stat-card"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatCurrency } from "@/lib/format"
@@ -96,11 +100,36 @@ const categoryColors: Record<string, string> = {
   Other: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
 }
 
+/** "Nov 28" this year, "Nov 28, 2025" otherwise, for compact phone rows. */
+function shortDate(iso: string): string {
+  const date = parseISO(iso)
+  return format(date, date.getFullYear() === new Date().getFullYear() ? "MMM d" : "MMM d, yyyy")
+}
+
+type FormErrors = { projectId?: string; description?: string; amount?: string }
+
+const errorFieldIds: Record<keyof FormErrors, string> = {
+  projectId: "expense-project",
+  description: "expense-desc",
+  amount: "expense-amount",
+}
+
+/** Inline message under a field; its id is what the field's aria-describedby points at. */
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null
+  return (
+    <p id={id} className="text-xs text-destructive">
+      {message}
+    </p>
+  )
+}
+
 export default function ExpensesPage() {
   const { money } = useMoney()
   const { data, addExpense, updateExpense, deleteExpense, getProject, getClient } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
+  const [errors, setErrors] = useState<FormErrors>({})
   const [editTarget, setEditTarget] = useState<Expense | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null)
 
@@ -110,6 +139,7 @@ export default function ExpensesPage() {
       ...emptyForm,
       projectId: data.projects[0]?.id ?? "",
     })
+    setErrors({})
     setDialogOpen(true)
   }
 
@@ -123,6 +153,7 @@ export default function ExpensesPage() {
       date: parseISO(expense.date),
       notes: expense.notes,
     })
+    setErrors({})
     setDialogOpen(true)
   }
 
@@ -131,17 +162,16 @@ export default function ExpensesPage() {
   }
 
   async function handleSave() {
-    if (!form.projectId) {
-      toast.error("Select a project")
-      return
-    }
-    if (!form.description.trim()) {
-      toast.error("Description is required")
-      return
-    }
     const amount = parseFloat(form.amount)
-    if (!amount || amount <= 0) {
-      toast.error("Enter a valid amount")
+    const nextErrors: FormErrors = {
+      projectId: form.projectId ? undefined : "Choose a project",
+      description: form.description.trim() ? undefined : "Enter a description",
+      amount: !amount || amount <= 0 ? "Enter an amount greater than 0" : undefined,
+    }
+    const firstInvalid = (Object.keys(errorFieldIds) as (keyof FormErrors)[]).find((key) => nextErrors[key])
+    if (firstInvalid) {
+      setErrors(nextErrors)
+      document.getElementById(errorFieldIds[firstInvalid])?.focus()
       return
     }
     const values = {
@@ -173,14 +203,86 @@ export default function ExpensesPage() {
 
   const totalExpenses = data.expenses.reduce((s, e) => s + e.amount, 0)
   const thisMonth = new Date().toISOString().slice(0, 7)
-  const monthExpenses = data.expenses
-    .filter((e) => e.date.startsWith(thisMonth))
-    .reduce((s, e) => s + e.amount, 0)
+  const monthEntries = data.expenses.filter((e) => e.date.startsWith(thisMonth))
+  const monthExpenses = monthEntries.reduce((s, e) => s + e.amount, 0)
+
+  function fieldErrorProps(field: keyof FormErrors) {
+    return {
+      "aria-invalid": !!errors[field] || undefined,
+      "aria-describedby": errors[field] ? `${errorFieldIds[field]}-error` : undefined,
+    }
+  }
+
+  function clearError(field: keyof FormErrors) {
+    setErrors((current) => (current[field] ? { ...current, [field]: undefined } : current))
+  }
+
+  function invoiceLabel(expense: Expense) {
+    const invoiceNumber = invoiceNumberFor(expense)
+    if (invoiceNumber) return <span className="text-xs font-medium tabular-nums">{invoiceNumber}</span>
+    if (expense.invoiced) return <span className="text-xs">Invoiced</span>
+    return <span className="text-xs text-muted-foreground">Not invoiced</span>
+  }
+
+  function rowActionsMenu(expense: Expense) {
+    return (
+      <RowActionsMenu
+        name={expense.description || "expense"}
+        items={[
+          { label: "Edit", icon: Pencil, onSelect: () => openEdit(expense) },
+          { label: "Delete", icon: Trash2, destructive: true, onSelect: () => setDeleteTarget(expense) },
+        ]}
+      />
+    )
+  }
+
+  function rowActions(expense: Expense) {
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => openEdit(expense)}
+          aria-label={`Edit ${expense.description}`}
+          title="Edit"
+        >
+          <Pencil className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => setDeleteTarget(expense)}
+          aria-label={`Delete ${expense.description}`}
+          title="Delete"
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
+    )
+  }
+
+  function categoryBadge(expense: Expense) {
+    return (
+      <Badge
+        variant="secondary"
+        className={categoryColors[expense.category] ?? categoryColors.Other}
+      >
+        {expense.category}
+      </Badge>
+    )
+  }
 
   return (
     <>
       <PageHeader
         title="Expenses"
+        primary={{
+          label: "New expense",
+          icon: Plus,
+          onClick: openCreate,
+          disabled: data.projects.length === 0,
+          testId: "new-expense",
+        }}
         actions={
           <Button
             size="sm"
@@ -193,56 +295,43 @@ export default function ExpensesPage() {
         }
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Expenses
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {money(totalExpenses)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              This Month
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {money(monthExpenses)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Entries
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {data.expenses.length}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <StatGrid className="mb-3 sm:mb-6">
+        <StatCard
+          label="Total expenses"
+          value={money(totalExpenses)}
+          hint={`${data.expenses.length} ${data.expenses.length === 1 ? "entry" : "entries"}`}
+        />
+        <StatCard
+          label="This month"
+          value={money(monthExpenses)}
+          hint={`${monthEntries.length} ${monthEntries.length === 1 ? "entry" : "entries"}`}
+        />
+      </StatGrid>
 
       {data.projects.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <p className="text-sm text-muted-foreground">
-              Create a client and project first
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+              <Receipt className="size-5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-medium">
+              {data.clients.length === 0 ? "Add a client and project first" : "Add a project first"}
             </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Every expense belongs to a project.
+            </p>
+            <Button size="sm" variant="outline" className="mt-4" asChild>
+              {data.clients.length === 0 ? (
+                <Link href="/clients">Go to Clients</Link>
+              ) : (
+                <Link href="/projects">Go to Projects</Link>
+              )}
+            </Button>
           </CardContent>
         </Card>
       ) : sortedExpenses.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
               <Receipt className="size-5 text-muted-foreground" />
             </div>
@@ -257,111 +346,110 @@ export default function ExpensesPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Description</TableHead>
-                <TableHead>Project</TableHead>
-                <TableHead>Invoice</TableHead>
-                <TableHead>Invoiced</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="w-16" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedExpenses.map((expense) => {
-                const project = getProject(expense.projectId)
-                return (
-                  <TableRow key={expense.id}>
-                    <TableCell>
-                      <div>
+        <Card className="py-0">
+          <ul className="divide-y lg:hidden" aria-label="Expenses">
+            {sortedExpenses.map((expense) => {
+              const project = getProject(expense.projectId)
+              return (
+                <li key={expense.id} className="flex items-center gap-1 pr-0.5 sm:pr-2.5">
+                  {/* Tapping the row edits it; Delete sits in the row's actions. */}
+                  <button
+                    type="button"
+                    onClick={() => openEdit(expense)}
+                    aria-label={`Edit ${expense.description}`}
+                    className="min-w-0 flex-1 py-2.5 pl-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  >
+                    <span className="flex min-w-0 items-baseline justify-between gap-3">
+                      <span className="min-w-0 truncate font-medium">{expense.description}</span>
+                      <span className="shrink-0 font-medium tabular-nums">{money(expense.amount)}</span>
+                    </span>
+                    <span className="mt-0.5 flex min-w-0 items-baseline justify-between gap-3 text-xs text-muted-foreground tabular-nums">
+                      <span className="min-w-0 truncate">
+                        {shortDate(expense.date)} · {project?.name ?? "No project"} · {expense.category}
+                      </span>
+                      <span className={cn("shrink-0", (invoiceNumberFor(expense) || expense.invoiced) && "text-foreground")}>
+                        {invoiceNumberFor(expense) ?? (expense.invoiced ? "Invoiced" : "Not invoiced")}
+                      </span>
+                    </span>
+                    {expense.notes && (
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{expense.notes}</span>
+                    )}
+                  </button>
+                  {rowActionsMenu(expense)}
+                </li>
+              )
+            })}
+          </ul>
+          <div className="hidden lg:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Description</TableHead>
+                  <TableHead>Project</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="w-20 pr-4"><span className="sr-only">Actions</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedExpenses.map((expense) => {
+                  const project = getProject(expense.projectId)
+                  return (
+                    <TableRow key={expense.id}>
+                      <TableCell className="pl-4 whitespace-normal">
                         <span className="font-medium">{expense.description}</span>
                         {expense.notes && (
-                          <p className="mt-0.5 text-xs text-muted-foreground">
+                          <p className="mt-0.5 line-clamp-2 max-w-sm text-xs text-muted-foreground">
                             {expense.notes}
                           </p>
                         )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">{project?.name ?? "—"}</span>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {invoiceNumberFor(expense) ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className={expense.invoiced ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" : ""}>
-                        {expense.invoiced ? "Yes" : "No"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="secondary"
-                        className={
-                          categoryColors[expense.category] ?? categoryColors.Other
-                        }
-                      >
-                        {expense.category}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {format(parseISO(expense.date), "MMM d, yyyy")}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs font-medium">
-                      {money(expense.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => openEdit(expense)}
-                          aria-label={`Edit ${expense.description}`}
-                          title="Edit"
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => setDeleteTarget(expense)}
-                          aria-label={`Delete ${expense.description}`}
-                          title="Delete"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {project?.name ?? "—"}
+                      </TableCell>
+                      <TableCell>{categoryBadge(expense)}</TableCell>
+                      <TableCell>{invoiceLabel(expense)}</TableCell>
+                      <TableCell className="text-muted-foreground tabular-nums">
+                        {format(parseISO(expense.date), "MMM d, yyyy")}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {money(expense.amount)}
+                      </TableCell>
+                      <TableCell className="pr-4">{rowActions(expense)}</TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </Card>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-sm:grid-cols-1 max-sm:[&_div]:min-w-0">
           <DialogHeader>
             <DialogTitle>{editTarget ? "Edit Expense" : "New Expense"}</DialogTitle>
+            <DialogDescription className="sr-only">Record the project, amount and date for this expense.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid max-sm:grid-cols-1 gap-4 py-2">
             {editTarget && invoiceNumberFor(editTarget) && (
               <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
                 This expense is on {invoiceNumberFor(editTarget)}. Saving
                 changes here does not update that invoice.
               </p>
             )}
-            <div className="grid gap-2">
-              <Label>Project</Label>
+            <div className="grid max-sm:grid-cols-1 gap-2">
+              <Label htmlFor="expense-project">Project</Label>
               <Select
                 value={form.projectId}
-                onValueChange={(v) => setForm({ ...form, projectId: v })}
+                onValueChange={(v) => {
+                  setForm({ ...form, projectId: v })
+                  clearError("projectId")
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger id="expense-project" className="w-full max-sm:min-w-0" {...fieldErrorProps("projectId")}>
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -376,20 +464,24 @@ export default function ExpensesPage() {
                   })}
                 </SelectContent>
               </Select>
+              <FieldError id="expense-project-error" message={errors.projectId} />
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-desc">Description</Label>
               <Input
                 id="expense-desc"
                 value={form.description}
-                onChange={(e) =>
+                onChange={(e) => {
                   setForm({ ...form, description: e.target.value })
-                }
+                  clearError("description")
+                }}
                 placeholder="Domain renewal"
+                {...fieldErrorProps("description")}
               />
+              <FieldError id="expense-desc-error" message={errors.description} />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="expense-amount">Amount</Label>
                 <Input
                   id="expense-amount"
@@ -397,19 +489,22 @@ export default function ExpensesPage() {
                   min="0"
                   step="0.01"
                   value={form.amount}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setForm({ ...form, amount: e.target.value })
-                  }
+                    clearError("amount")
+                  }}
                   placeholder="0.00"
+                  {...fieldErrorProps("amount")}
                 />
+                <FieldError id="expense-amount-error" message={errors.amount} />
               </div>
-              <div className="grid gap-2">
-                <Label>Category</Label>
+              <div className="grid content-start gap-2">
+                <Label htmlFor="expense-category">Category</Label>
                 <Select
                   value={form.category}
                   onValueChange={(v) => setForm({ ...form, category: v })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="expense-category" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -422,14 +517,15 @@ export default function ExpensesPage() {
                 </Select>
               </div>
             </div>
-            <div className="grid gap-2">
-              <Label>Date</Label>
+            <div className="grid max-sm:grid-cols-1 gap-2">
+              <Label htmlFor="expense-date">Date</Label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
+                    id="expense-date"
                     variant="outline"
                     className={cn(
-                      "justify-start text-left font-normal",
+                      "justify-start text-left font-normal max-sm:text-base",
                       !form.date && "text-muted-foreground"
                     )}
                   >
@@ -438,7 +534,7 @@ export default function ExpensesPage() {
                       data-icon="inline-start"
                     />
                     {form.date
-                      ? format(form.date, "PPP")
+                      ? <><span className="sm:hidden">{format(form.date, "MMM d, yyyy")}</span><span className="max-sm:hidden">{format(form.date, "PPP")}</span></>
                       : "Pick a date"}
                   </Button>
                 </PopoverTrigger>
@@ -453,7 +549,7 @@ export default function ExpensesPage() {
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-notes">Notes (optional)</Label>
               <Textarea
                 id="expense-notes"
@@ -466,7 +562,7 @@ export default function ExpensesPage() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="sticky -bottom-4 bg-popover">
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>

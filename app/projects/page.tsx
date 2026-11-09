@@ -1,8 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
 import {
   Plus,
+  X,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -34,9 +36,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Badge } from "@/components/ui/badge"
 import {
   Table,
   TableBody,
@@ -45,11 +47,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
 import { PageHeader } from "@/components/page-header"
+import { ProjectStatusBadge, projectStatusLabels } from "@/components/status-badge"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatHours } from "@/lib/format"
+import { formatDistanceToNowStrict } from "date-fns"
 import { billedSeconds } from "@/lib/billing"
+import { agentFolderKey, dedupeAgentFolders, linkAgentFolders, suggestAgentFolders, type AgentFolderActivity } from "@/lib/agent-import-projects"
 import type { Project } from "@/lib/types"
 
 const emptyForm = {
@@ -58,12 +64,13 @@ const emptyForm = {
   rate: "",
   currency: "USD",
   status: "active" as Project["status"],
+  agentFolders: [] as string[],
 }
 
-const statusStyles: Record<Project["status"], string> = {
-  active: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  completed: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  "on-hold": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+function fixtureQuery() {
+  if (process.env.NEXT_PUBLIC_E2E_FIXTURES !== "true" || typeof window === "undefined") return ""
+  const fixture = new URLSearchParams(window.location.search).get("fixture")
+  return fixture === "demo" || fixture === "mobile" ? `&fixture=${fixture}` : ""
 }
 
 export default function ProjectsPage() {
@@ -78,10 +85,65 @@ export default function ProjectsPage() {
     getTimeEntriesByProject,
   } = useStore()
   const [dialogOpen, setDialogOpen] = useState(false)
+  // The target outlives the open flag so the dialog keeps its text while it fades out.
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [editing, setEditing] = useState<Project | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [errors, setErrors] = useState<{ name?: string; clientId?: string }>({})
   const [mergeSource, setMergeSource] = useState<Project | null>(null)
   const [mergeTargetId, setMergeTargetId] = useState("")
+  const [folderQuery, setFolderQuery] = useState("")
+  const [detectedFolders, setDetectedFolders] = useState<AgentFolderActivity[] | null>(null)
+
+  // Folder names come from Agent Time; they're only fetched once a project dialog opens.
+  useEffect(() => {
+    if (!dialogOpen || detectedFolders) return
+    let cancelled = false
+    fetch(`/api/agent-time?foldersOnly=true&t3Only=true${fixtureQuery()}`)
+      .then((response) => (response.ok ? response.json() : { projects: [] }))
+      .then((body: { folders?: unknown; projects?: unknown }) => {
+        if (cancelled) return
+        const folders = Array.isArray(body.folders)
+          ? body.folders.filter((f): f is AgentFolderActivity => typeof f?.name === "string")
+          : Array.isArray(body.projects)
+            ? body.projects.filter((p): p is string => typeof p === "string").map((name) => ({ name, lastActive: "", seconds: 0 }))
+            : []
+        setDetectedFolders(folders)
+      })
+      .catch(() => {
+        if (!cancelled) setDetectedFolders([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dialogOpen, detectedFolders])
+
+  const folderOwners = useMemo(() => {
+    const owners = new Map<string, Project>()
+    for (const project of data.projects) {
+      if (project.id === editing?.id) continue
+      for (const folder of project.agentFolders ?? []) owners.set(agentFolderKey(folder), project)
+    }
+    return owners
+  }, [data.projects, editing])
+
+  const folderSuggestions = suggestAgentFolders(detectedFolders ?? [], {
+    projectName: form.name,
+    query: folderQuery,
+    linked: form.agentFolders,
+    linkedElsewhere: new Set(folderOwners.keys()),
+  })
+
+  function addFolder(folder: string) {
+    if (!folder.trim()) return
+    setForm((current) => ({ ...current, agentFolders: dedupeAgentFolders([...current.agentFolders, folder]) }))
+    setFolderQuery("")
+  }
+
+  function removeFolder(folder: string) {
+    setForm((current) => ({ ...current, agentFolders: current.agentFolders.filter((f) => f !== folder) }))
+  }
 
   function openCreate() {
     setEditing(null)
@@ -89,6 +151,8 @@ export default function ProjectsPage() {
       ...emptyForm,
       clientId: data.clients[0]?.id ?? "",
     })
+    setFolderQuery("")
+    setErrors({})
     setDialogOpen(true)
   }
 
@@ -100,19 +164,25 @@ export default function ProjectsPage() {
       rate: project.rate.toString(),
       currency: project.currency,
       status: project.status,
+      agentFolders: project.agentFolders ?? [],
     })
+    setFolderQuery("")
+    setErrors({})
     setDialogOpen(true)
   }
 
   async function handleSave() {
-    if (!form.name.trim()) {
-      toast.error("Project name is required")
+    const nextErrors = {
+      name: form.name.trim() ? undefined : "Enter a project name",
+      clientId: form.clientId ? undefined : "Choose a client",
+    }
+    if (nextErrors.name || nextErrors.clientId) {
+      setErrors(nextErrors)
+      document.getElementById(nextErrors.name ? "project-name" : "project-client")?.focus()
       return
     }
-    if (!form.clientId) {
-      toast.error("Please select a client")
-      return
-    }
+    // A folder typed but not yet added still counts.
+    const agentFolders = dedupeAgentFolders([...form.agentFolders, folderQuery])
     const payload = {
       clientId: form.clientId,
       name: form.name.trim(),
@@ -121,20 +191,45 @@ export default function ProjectsPage() {
       status: form.status,
       color: "",
     }
-    if (editing) {
-      await updateProject(editing.id, payload)
-      toast.success("Project updated")
-    } else {
-      await addProject(payload)
-      toast.success("Project created")
+    const foldersChanged =
+      agentFolders.join("\n") !== (editing?.agentFolders ?? []).join("\n")
+    try {
+      let projectId = editing?.id
+      if (editing) {
+        // Folders are only written when they change, so other edits work before migration 014.
+        await updateProject(editing.id, foldersChanged ? { ...payload, agentFolders } : payload)
+      } else {
+        projectId = (await addProject({ ...payload, agentFolders })).id
+      }
+      // A folder imports into one project only, so take it off any project that had it.
+      if (foldersChanged) {
+        for (const change of linkAgentFolders(data.projects.filter((p) => p.id !== projectId), projectId ?? null, agentFolders)) {
+          await updateProject(change.id, { agentFolders: change.agentFolders })
+        }
+      }
+      toast.success(editing ? "Project updated" : "Project created")
+      setDialogOpen(false)
+    } catch {
+      toast.error(foldersChanged ? "Couldn't save agent folders. Has migration 014 been applied?" : "Couldn't save the project")
     }
-    setDialogOpen(false)
   }
 
   async function handleDelete(project: Project) {
-    await deleteProject(project.id)
-    toast.success("Project deleted")
+    try {
+      await deleteProject(project.id)
+      toast.success("Project deleted")
+    } catch {
+      toast.error("Couldn't delete the project")
+    }
+    setDeleteOpen(false)
   }
+
+  const deleteCounts = (() => {
+    if (!deleteTarget) return null
+    const entries = data.timeEntries.filter((t) => t.projectId === deleteTarget.id).length
+    const expenses = data.expenses.filter((e) => e.projectId === deleteTarget.id).length
+    return { entries, expenses }
+  })()
 
   async function handleMerge() {
     if (!mergeSource || !mergeTargetId) return
@@ -144,10 +239,78 @@ export default function ProjectsPage() {
     setMergeTargetId("")
   }
 
+  const projectRows = data.projects.map((project) => {
+    const entries = getTimeEntriesByProject(project.id)
+    const totalSecs = entries.reduce((s, e) => s + e.duration, 0)
+    const billableSecs = entries
+      .filter((e) => e.billable)
+      .reduce((s, e) => s + billedSeconds(e), 0)
+    return {
+      project,
+      client: getClient(project.clientId),
+      totalSecs,
+      revenue: (billableSecs / 3600) * project.rate,
+    }
+  })
+
+  function actionsMenu(project: Project, className?: string) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-xs" className={className} aria-label={`Actions for ${project.name}`}>
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem className="max-sm:min-h-11" onClick={() => openEdit(project)}>
+            <Pencil className="size-4" />
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="max-sm:min-h-11"
+            onClick={() => {
+              setMergeSource(project)
+              setMergeTargetId("")
+            }}
+          >
+            <Merge className="size-4" />
+            Merge into…
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" className="max-sm:min-h-11" onClick={() => { setDeleteTarget(project); setDeleteOpen(true) }}>
+            <Trash2 className="size-4" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
   return (
     <>
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${deleteTarget?.name ?? "project"}?`}
+        description={
+          <>
+            This also deletes its {deleteCounts?.entries ?? 0} time {deleteCounts?.entries === 1 ? "entry" : "entries"} and{" "}
+            {deleteCounts?.expenses ?? 0} {deleteCounts?.expenses === 1 ? "expense" : "expenses"}. This can&apos;t be undone. To keep the
+            history, set the project to Completed instead.
+          </>
+        }
+        confirmLabel="Delete project"
+        onConfirm={() => (deleteTarget ? handleDelete(deleteTarget) : undefined)}
+      />
       <PageHeader
         title="Projects"
+        primary={{
+          label: "New project",
+          icon: Plus,
+          onClick: openCreate,
+          disabled: data.clients.length === 0,
+          testId: "new-project",
+        }}
         actions={
           <Button
             size="sm"
@@ -162,15 +325,22 @@ export default function ProjectsPage() {
 
       {data.clients.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <p className="text-sm text-muted-foreground">
-              Create a client first before adding projects
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+              <FolderKanban className="size-5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-medium">Add a client first</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Every project belongs to a client.
             </p>
+            <Button size="sm" variant="outline" className="mt-4" asChild>
+              <Link href="/clients">Go to Clients</Link>
+            </Button>
           </CardContent>
         </Card>
       ) : data.projects.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
               <FolderKanban className="size-5 text-muted-foreground" />
             </div>
@@ -185,97 +355,74 @@ export default function ProjectsPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Project</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead>Rate</TableHead>
-                <TableHead>Hours</TableHead>
-                <TableHead>Revenue</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-10" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.projects.map((project) => {
-                const client = getClient(project.clientId)
-                const entries = getTimeEntriesByProject(project.id)
-                const totalSecs = entries.reduce(
-                  (s, e) => s + e.duration,
-                  0
-                )
-                const billableSecs = entries
-                  .filter((e) => e.billable)
-                  .reduce((s, e) => s + billedSeconds(e), 0)
-                const revenue = (billableSecs / 3600) * project.rate
-
-                return (
+        <Card className="py-0">
+          <ul className="divide-y lg:hidden" aria-label="Projects">
+            {projectRows.map(({ project, client, totalSecs, revenue }) => (
+              <li key={project.id} className="flex items-center gap-1 py-2.5 pr-0.5 pl-4 sm:gap-3 sm:py-3 sm:pr-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 truncate font-medium">{project.name}</p>
+                    <ProjectStatusBadge status={project.status} />
+                    <span className="ml-auto shrink-0 font-medium tabular-nums">{money(revenue, project.currency)}</span>
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">
+                    {client?.name ?? "No client"} · {money(project.rate, project.currency)}/hr · {formatHours(totalSecs)}h
+                  </p>
+                  {!!project.agentFolders?.length && (
+                    <p className="mt-1 truncate text-xs text-muted-foreground max-sm:hidden" title="Agent Time from these folders imports here">
+                      Agent folders: {project.agentFolders.join(", ")}
+                    </p>
+                  )}
+                </div>
+                <div className="shrink-0 sm:-mr-1.5">{actionsMenu(project, "max-sm:size-11 max-sm:text-muted-foreground")}</div>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden lg:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Project</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead className="text-right">Rate</TableHead>
+                  <TableHead className="text-right">Hours</TableHead>
+                  <TableHead className="text-right">Revenue</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-12 pr-4"><span className="sr-only">Actions</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {projectRows.map(({ project, client, totalSecs, revenue }) => (
                   <TableRow key={project.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{project.name}</span>
-                      </div>
+                    <TableCell className="pl-4">
+                      <span className="font-medium">{project.name}</span>
+                      {!!project.agentFolders?.length && (
+                        <p className="mt-0.5 max-w-xs truncate text-xs text-muted-foreground" title={`Agent Time from these folders imports here: ${project.agentFolders.join(", ")}`}>
+                          Agent folders: {project.agentFolders.join(", ")}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {client?.name ?? "—"}
                     </TableCell>
-                    <TableCell className="font-mono text-xs">
+                    <TableCell className="text-right tabular-nums">
                       {money(project.rate, project.currency)}/hr
                     </TableCell>
-                    <TableCell className="font-mono text-xs">
+                    <TableCell className="text-right tabular-nums">
                       {formatHours(totalSecs)}h
                     </TableCell>
-                    <TableCell className="font-mono text-xs">
+                    <TableCell className="text-right font-medium tabular-nums">
                       {money(revenue, project.currency)}
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant="secondary"
-                        className={statusStyles[project.status]}
-                      >
-                        {project.status}
-                      </Badge>
+                      <ProjectStatusBadge status={project.status} />
                     </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon-xs">
-                            <MoreHorizontal className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => openEdit(project)}
-                          >
-                            <Pencil className="size-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setMergeSource(project)
-                              setMergeTargetId("")
-                            }}
-                          >
-                            <Merge className="size-4" />
-                            Merge into…
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleDelete(project)}
-                            className="text-destructive focus:text-destructive"
-                          >
-                            <Trash2 className="size-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+                    <TableCell className="pr-4 text-right">{actionsMenu(project)}</TableCell>
                   </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         </Card>
       )}
 
@@ -286,23 +433,41 @@ export default function ProjectsPage() {
               {editing ? "Edit Project" : "New Project"}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label htmlFor="project-name">Project Name</Label>
               <Input
                 id="project-name"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value })
+                  setErrors((current) => ({ ...current, name: undefined }))
+                }}
                 placeholder="Website Redesign"
+                aria-invalid={!!errors.name || undefined}
+                aria-describedby={errors.name ? "project-name-error" : undefined}
               />
+              {errors.name && (
+                <p id="project-name-error" className="text-xs text-destructive">
+                  {errors.name}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
-              <Label>Client</Label>
+              <Label htmlFor="project-client">Client</Label>
               <Select
                 value={form.clientId}
-                onValueChange={(v) => setForm({ ...form, clientId: v })}
+                onValueChange={(v) => {
+                  setForm({ ...form, clientId: v })
+                  setErrors((current) => ({ ...current, clientId: undefined }))
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger
+                  id="project-client"
+                  className="w-full"
+                  aria-invalid={!!errors.clientId || undefined}
+                  aria-describedby={errors.clientId ? "project-client-error" : undefined}
+                >
                   <SelectValue placeholder="Select client" />
                 </SelectTrigger>
                 <SelectContent>
@@ -313,6 +478,11 @@ export default function ProjectsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {errors.clientId && (
+                <p id="project-client-error" className="text-xs text-destructive">
+                  {errors.clientId}
+                </p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
@@ -328,12 +498,12 @@ export default function ProjectsPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Currency</Label>
+                <Label htmlFor="project-currency">Currency</Label>
                 <Select
                   value={form.currency}
                   onValueChange={(v) => setForm({ ...form, currency: v })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="project-currency" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -347,25 +517,103 @@ export default function ProjectsPage() {
               </div>
             </div>
             <div className="grid gap-2">
-              <Label>Status</Label>
+              <Label htmlFor="project-status">Status</Label>
               <Select
                 value={form.status}
                 onValueChange={(v) =>
                   setForm({ ...form, status: v as Project["status"] })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger id="project-status" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="on-hold">On Hold</SelectItem>
+                  {(Object.keys(projectStatusLabels) as Project["status"][]).map((status) => (
+                    <SelectItem key={status} value={status}>{projectStatusLabels[status]}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="agent-folder">Agent folders</Label>
+              <p className="-mt-1 text-xs text-muted-foreground">
+                Agent time from these folders imports into this project. Names match in any case.
+              </p>
+              {form.agentFolders.length > 0 && (
+                <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto" data-testid="agent-folders">
+                  {form.agentFolders.map((folder) => {
+                    const owner = folderOwners.get(agentFolderKey(folder))
+                    return (
+                      <span key={folder} className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/50 py-0.5 pl-2 pr-0.5 text-xs">
+                        <span className="truncate">{folder}</span>
+                        {owner && <span className="shrink-0 text-muted-foreground">· moves from {owner.name}</span>}
+                        <Button type="button" variant="ghost" size="icon-xs" className="size-5" aria-label={`Remove ${folder}`} onClick={() => removeFolder(folder)}>
+                          <X className="size-3" />
+                        </Button>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  id="agent-folder"
+                  value={folderQuery}
+                  onChange={(e) => setFolderQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      addFolder(folderQuery)
+                    }
+                  }}
+                  placeholder="Folder name"
+                  autoComplete="off"
+                />
+                <Button type="button" variant="outline" onClick={() => addFolder(folderQuery)} disabled={!folderQuery.trim()}>
+                  Add
+                </Button>
+              </div>
+              {detectedFolders === null ? (
+                <p className="text-xs text-muted-foreground">Looking for folders in Agent Time…</p>
+              ) : folderSuggestions.length > 0 ? (
+                <div className="grid gap-1.5" data-testid="agent-folder-suggestions">
+                  <p className="text-xs text-muted-foreground">{folderQuery.trim() ? "Matching folders" : "Suggested folders"}</p>
+                  <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto p-0.5">
+                    {folderSuggestions.map((folder) => {
+                      const owner = folderOwners.get(agentFolderKey(folder.name))
+                      const lastActive = folder.lastActive ? new Date(folder.lastActive) : null
+                      return (
+                        <Button
+                          key={folder.name}
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          className="h-auto max-w-full py-1 font-normal pointer-coarse:min-h-11"
+                          title={lastActive ? `Last agent activity ${lastActive.toLocaleString()}` : "No agent activity recorded yet"}
+                          onClick={() => addFolder(folder.name)}
+                        >
+                          <Plus className="size-3 shrink-0" data-icon="inline-start" />
+                          <span className="truncate">{folder.name}</span>
+                          {folder.seconds > 0 && <span className="shrink-0 text-muted-foreground">· {formatHours(folder.seconds)}h</span>}
+                          {lastActive && !Number.isNaN(+lastActive) && (
+                            <span className="shrink-0 text-muted-foreground">· {formatDistanceToNowStrict(lastActive, { addSuffix: true })}</span>
+                          )}
+                          {owner && <span className="shrink-0 text-muted-foreground">· on {owner.name}</span>}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {folderQuery.trim()
+                    ? "No folder by that name in Agent Time yet. Add still links it, so its time imports once it shows up."
+                    : "No other folders in Agent Time. Type a name to link one before it shows up."}
+                </p>
+              )}
+            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="sticky -bottom-4 bg-popover">
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
@@ -380,7 +628,7 @@ export default function ProjectsPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Merge project</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">Move all time entries and expenses from <span className="font-medium text-foreground">{mergeSource?.name}</span> into another project. The original project will be removed.</p>
-          <div className="grid gap-2 py-2"><Label>Merge into</Label><Select value={mergeTargetId} onValueChange={setMergeTargetId}><SelectTrigger><SelectValue placeholder="Choose a project" /></SelectTrigger><SelectContent>{data.projects.filter((project) => project.id !== mergeSource?.id && project.clientId === mergeSource?.clientId).map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
+          <div className="grid gap-2 py-2"><Label htmlFor="merge-target">Merge into</Label><Select value={mergeTargetId} onValueChange={setMergeTargetId}><SelectTrigger id="merge-target" className="w-full"><SelectValue placeholder="Choose a project" /></SelectTrigger><SelectContent>{data.projects.filter((project) => project.id !== mergeSource?.id && project.clientId === mergeSource?.clientId).map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
           <DialogFooter><Button variant="outline" onClick={() => setMergeSource(null)}>Cancel</Button><Button disabled={!mergeTargetId} onClick={handleMerge}>Merge projects</Button></DialogFooter>
         </DialogContent>
       </Dialog>

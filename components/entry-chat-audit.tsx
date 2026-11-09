@@ -3,9 +3,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import Image from "next/image"
 import { format } from "date-fns"
-import { ArrowLeft, ChevronDown, LoaderCircle, Search } from "lucide-react"
+import { ArrowLeft, ChevronDown, Copy, LoaderCircle, Search } from "lucide-react"
 import { toast } from "sonner"
 
+import { ChatMessageBody, plainTitle } from "@/components/chat-markdown"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -29,7 +30,7 @@ function sourceDescription(interval: AgentTimeSourceInterval) {
   return `${interval.source || interval.agent} directly`
 }
 
-function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
+export function SourceLogo({ source, agent, className = "size-6" }: { source: string; agent: string; className?: string }) {
   if (source === "T3 Code") {
     return <Image src="/t3-code-logo.svg" alt="T3 Code" width={32} height={32} className={`shrink-0 rounded-[5px] ${className}`} />
   }
@@ -42,12 +43,12 @@ function SourceLogo({ source, agent, className = "size-6" }: { source: string; a
 function ChatBillFactor({ factor, onChange }: { factor: number; onChange: (factor: number) => void }) {
   const [custom, setCustom] = useState("")
   const isPreset = BILL_FACTOR_PRESETS.some((option) => Math.abs(option.value - factor) < 0.0001)
-  return <div className="flex items-center gap-1.5 text-xs" data-testid="chat-bill-factor">
+  return <div className="flex items-center gap-1.5 text-xs max-sm:w-full max-sm:gap-2" data-testid="chat-bill-factor">
     <span className="text-muted-foreground">Bill</span>
-    <div className="flex items-center rounded-md border p-0.5">
-      {BILL_FACTOR_PRESETS.map((option) => { const active = Math.abs(option.value - factor) < 0.0001; return <button key={option.label} type="button" className={`h-5 cursor-pointer rounded-[4px] px-1.5 font-medium focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={active} onClick={() => onChange(option.value)}>{option.label}</button> })}
-      <form className="flex items-center" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
-        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-12 rounded-[4px] bg-transparent px-1.5 text-center text-[16px] leading-none font-medium sm:w-11 sm:text-xs outline-none [appearance:textfield] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
+    <div className="flex items-center rounded-md border p-0.5 max-sm:flex-1">
+      {BILL_FACTOR_PRESETS.map((option) => { const active = Math.abs(option.value - factor) < 0.0001; return <button key={option.label} type="button" className={`h-5 cursor-pointer rounded-[4px] px-1.5 font-medium max-sm:flex-1 max-sm:text-sm pointer-coarse:h-11 pointer-coarse:min-w-11 focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={active} onClick={() => onChange(option.value)}>{option.label}</button> })}
+      <form className="flex items-center max-sm:flex-1" onSubmit={(event) => { event.preventDefault(); const percent = Number(custom); if (custom.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) { toast.error("Enter a percentage from 0 to 100"); return } onChange(percent / 100); setCustom("") }}>
+        <input type="number" min={0} max={100} step="any" inputMode="decimal" aria-label="Custom billing percentage" placeholder={isPreset ? "%" : `${Math.round(factor * 1000) / 10}%`} value={custom} onChange={(event) => setCustom(event.target.value)} className={`h-5 w-12 rounded-[4px] bg-transparent px-1.5 max-sm:w-full pointer-coarse:h-11 pointer-coarse:min-w-11 text-center text-[16px] leading-none font-medium sm:w-11 sm:text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${isPreset ? "" : "bg-accent placeholder:text-foreground"}`} />
       </form>
     </div>
   </div>
@@ -73,7 +74,6 @@ function highlight(text: string, needle: string): ReactNode {
 function MessageRow({ message, placement, source, withDate, needle }: { message: TranscriptMessage; placement: MessagePlacement; source: ConversationSource; withDate: boolean; needle: string }) {
   const [expanded, setExpanded] = useState(false)
   const long = message.text.length > COLLAPSED_MESSAGE_CHARS && !needle
-  const text = long && !expanded ? `${message.text.slice(0, COLLAPSED_MESSAGE_CHARS).trimEnd()}…` : message.text
   const outside = placement === "before" || placement === "after"
   const user = message.role === "user"
   return <article className={`flex min-w-0 gap-3 py-3 ${outside ? "opacity-50" : ""}`} data-placement={placement}>
@@ -85,10 +85,30 @@ function MessageRow({ message, placement, source, withDate, needle }: { message:
         <span className="font-medium">{user ? "You" : source.agent || "Agent"}</span>
         <span className="text-xs text-muted-foreground tabular-nums">{message.at ? clock(message.at, withDate) : "No time"}{outside && ` · ${placement === "before" ? "before entry" : "after entry"}`}</span>
       </p>
-      <p className={`mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"}`}>{highlight(text, needle)}</p>
-      {long && <button type="button" className="mt-1 cursor-pointer rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setExpanded(!expanded)}>{expanded ? "Show less" : `Show full message · ${message.text.length.toLocaleString()} characters`}</button>}
+      {needle
+        // While searching, show the raw text so every match can be marked.
+        ? <p className={`mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"}`}>{highlight(message.text, needle)}</p>
+        : <div className={`mt-1 min-w-0 break-words text-sm leading-relaxed ${user ? "text-foreground" : "text-foreground/85"} ${long && !expanded ? "max-h-72 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}><ChatMessageBody text={message.text} /></div>}
+      {long && <button type="button" className="mt-1 cursor-pointer rounded-md text-xs pointer-coarse:mt-0 pointer-coarse:min-h-11 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setExpanded(!expanded)}>{expanded ? "Show less" : `Show full message · ${message.text.length.toLocaleString()} characters`}</button>}
     </div>
   </article>
+}
+
+/** The T3 Code thread a chat came from, so a billed entry can be traced back to it. */
+export function T3ThreadId({ id }: { id: string }) {
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(id)
+      toast.success("T3 thread ID copied")
+    } catch {
+      toast.error("Couldn't copy the thread ID")
+    }
+  }
+  return <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground" data-testid="t3-thread-id">
+    <span className="shrink-0">T3 thread</span>
+    <code className="min-w-0 truncate font-mono" title={id}>{id}</code>
+    <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground pointer-coarse:size-11" aria-label="Copy T3 thread ID" onClick={() => void copy()}><Copy /></Button>
+  </p>
 }
 
 function Boundary({ label }: { label: string }) {
@@ -156,7 +176,6 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
   const transcript = state?.key === key ? state.transcript : undefined
   const messages = useMemo(() => (transcript?.messages ?? []).map((message, index) => ({ index, message, placement: messagePlacement(message.at, entryStart, entryEnd) })), [transcript, entryStart, entryEnd])
   const timed = messages.some((item) => item.placement !== "unknown")
-  const insideCount = messages.filter((item) => item.placement === "inside").length
   const effectiveScope = timed ? scope : "all"
   const needle = query.trim().toLowerCase()
   const visible = messages.filter((item) => (effectiveScope === "all" || item.placement === "inside") && (!needle || item.message.text.toLowerCase().includes(needle)))
@@ -179,19 +198,16 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
       <div className="flex min-w-0 items-start gap-2">
         <Button type="button" variant="ghost" size="icon-xs" className="-ml-1.5 mt-px text-muted-foreground sm:hidden" aria-label="Back to chats" onClick={onBack}><ArrowLeft /></Button>
         <div className="min-w-0 flex-1">
-          <h3 className="text-base font-medium leading-snug break-words">{title}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {source.machineLabel || machineName(source)} · {sourceDescription(source)}{source.model ? ` · ${source.model}` : ""}
-            <span className="block sm:inline"><span className="hidden sm:inline"> · </span><span className="tabular-nums">{formatDuration(source.durationSeconds)}</span> in entry · {loading ? "reading…" : timed ? `${insideCount} of ${total} messages in entry` : "no message times"}</span>
-          </p>
+          <h3 className="text-base font-medium leading-snug break-words" title={`${source.machineLabel || machineName(source)} · ${sourceDescription(source)}${source.model ? ` · ${source.model}` : ""}`}>{plainTitle(title)}</h3>
+          {source.source === "T3 Code" && source.conversationId && <T3ThreadId id={source.conversationId} />}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <div className="flex items-center rounded-md border p-0.5 text-xs" role="group" aria-label="Messages to show">
-          {(["entry", "all"] as const).map((value) => <button key={value} type="button" className={`h-5 cursor-pointer rounded-[4px] px-2 font-medium disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring ${effectiveScope === value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={effectiveScope === value} disabled={value === "entry" && !timed} onClick={() => setScope(value)}>{value === "entry" ? "This entry" : "Whole chat"}</button>)}
+        <div className="flex items-center rounded-md border p-0.5 text-xs max-sm:w-full" role="group" aria-label="Messages to show">
+          {(["entry", "all"] as const).map((value) => <button key={value} type="button" className={`h-5 cursor-pointer rounded-[4px] px-2 font-medium max-sm:flex-1 max-sm:text-sm pointer-coarse:h-11 pointer-coarse:min-w-11 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring ${effectiveScope === value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={effectiveScope === value} disabled={value === "entry" && !timed} onClick={() => setScope(value)}>{value === "entry" ? "This entry" : "Whole chat"}</button>)}
         </div>
         {onSetFactor && <ChatBillFactor factor={factor} onChange={onSetFactor} />}
-        <label className="flex h-7 min-w-36 flex-1 items-center gap-1.5 rounded-md px-2 text-muted-foreground focus-within:bg-accent/60 hover:bg-accent/60 sm:ml-auto sm:max-w-56">
+        <label className="flex h-7 min-w-36 flex-1 items-center gap-1.5 rounded-md px-2 pointer-coarse:h-11 max-sm:h-11 max-sm:w-full text-muted-foreground focus-within:bg-accent/60 hover:bg-accent/60 sm:ml-auto sm:max-w-56">
           <Search className="size-3.5 shrink-0" />
           <input className="min-w-0 flex-1 bg-transparent text-[16px] text-foreground outline-none placeholder:text-muted-foreground sm:text-xs" aria-label="Find in chat" placeholder="Find in chat" value={query} onChange={(event) => setQuery(event.target.value)} />
         </label>
@@ -216,7 +232,11 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
   </section>
 }
 
-export function EntryChats({ description, sources, start, end, labels, inferred = false, chatFactors, onSetChatFactor }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean; chatFactors?: Record<string, number>; onSetChatFactor?: (chat: ConversationSource, factor: number) => void }) {
+/**
+ * Opens an entry's chats. On phones a log row can pass `figure` (right of the title) and
+ * `children` (the second line), so the whole two-line row is one opener with the title truncating last.
+ */
+export function EntryChats({ description, sources, start, end, labels, inferred = false, chatFactors, onSetChatFactor, figure, children }: { description: string; sources: AgentTimeSourceInterval[]; start: number; end: number; labels: Record<string, string>; inferred?: boolean; chatFactors?: Record<string, number>; onSetChatFactor?: (chat: ConversationSource, factor: number) => void; figure?: ReactNode; children?: ReactNode }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(0)
@@ -225,30 +245,31 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
   const openerRef = useRef<HTMLButtonElement>(null)
   const conversations = useMemo(() => open ? groupConversationSources(sources, start, end).map((source) => ({ ...source, machineLabel: machineName(source, labels) })) : [], [open, sources, start, end, labels])
   const needle = query.trim().toLowerCase()
-  const filtered = conversations.filter((source) => `${source.conversationTitle} ${source.conversationSummary || ""} ${source.machineLabel} ${source.source} ${source.model}`.toLowerCase().includes(needle))
+  const filtered = conversations.filter((source) => `${source.conversationTitle} ${source.conversationSummary || ""} ${source.machineLabel} ${source.source} ${source.model} ${source.conversationId}`.toLowerCase().includes(needle))
   const pages = Math.max(1, Math.ceil(filtered.length / CHAT_PAGE_SIZE))
   const currentPage = Math.min(page, pages - 1)
   const selected = conversations.find((source) => conversationKey(source) === selectedKey) ?? conversations[0] ?? null
   const totalSeconds = conversations.reduce((total, source) => total + source.durationSeconds, 0)
   const factorOf = (source: ConversationSource) => normalizeBillFactor(chatFactors?.[conversationKey(source)] ?? 1)
+  const rowLayout = figure != null || children != null
   const range = Number.isFinite(end) ? `${format(start, "MMM d, HH:mm")}–${format(end, new Date(start).toDateString() === new Date(end).toDateString() ? "HH:mm" : "MMM d, HH:mm")}` : `${format(start, "MMM d, HH:mm")}–now`
 
   return <>
-    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
-      <span className="min-w-0 flex-1 break-words">{description || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+    <button ref={openerRef} type="button" className={`flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left max-lg:gap-1 max-sm:min-h-11 max-sm:items-center max-sm:[&>span:first-child]:truncate max-sm:[&>svg]:mt-0 focus-visible:outline-2 focus-visible:outline-ring ${rowLayout ? "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:content-center max-sm:items-baseline max-sm:gap-x-3 max-sm:gap-y-0.5 max-sm:[&>svg]:hidden" : ""}`} data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
+      <span className="min-w-0 flex-1 break-words">{plainTitle(description || "") || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+      {rowLayout && <span className="contents sm:hidden">{figure}{children}</span>}
     </button>
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="flex h-[min(90dvh,56rem)] w-[calc(100vw-1rem)] max-w-none flex-col gap-0 overflow-hidden rounded-md p-0 sm:w-[calc(100vw-4rem)] sm:max-w-6xl" data-testid="entry-chats-dropdown" onCloseAutoFocus={(event) => { event.preventDefault(); openerRef.current?.focus() }}>
         <DialogHeader className="shrink-0 border-b px-5 py-3 pr-12 text-left">
-          <DialogTitle className="truncate text-sm font-medium">{description || "Untitled"}</DialogTitle>
-          <DialogDescription className="text-xs tabular-nums">
-            {range} · {conversations.length} {conversations.length === 1 ? "chat" : "chats"} · {formatDuration(totalSeconds)} active
-            {inferred && <span className="block">Matched from activity logs; older entries did not save chat references.</span>}
+          <DialogTitle className="truncate text-sm font-medium" title={`${range} · ${conversations.length} ${conversations.length === 1 ? "chat" : "chats"} · ${formatDuration(totalSeconds)} active`}>{plainTitle(description || "") || "Untitled"}</DialogTitle>
+          <DialogDescription className={inferred ? "text-xs" : "sr-only"}>
+            {inferred ? "Matched from activity logs; older entries did not save chat references." : `${range} · ${conversations.length} ${conversations.length === 1 ? "chat" : "chats"} · ${formatDuration(totalSeconds)} active`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-h-0 flex-1">
           <aside className={`${mobileView === "list" ? "flex" : "hidden"} min-h-0 w-full flex-col bg-muted/40 sm:flex sm:w-72 sm:shrink-0 sm:border-r`} aria-label="Chats in this entry">
-            <label className="mx-2 mt-2 flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground focus-within:bg-accent hover:bg-accent/60">
+            <label className="mx-2 mt-2 flex h-8 max-sm:h-11 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground focus-within:bg-accent hover:bg-accent/60">
               <Search className="size-3.5 shrink-0" />
               <input className="min-w-0 flex-1 bg-transparent text-[16px] text-foreground outline-none placeholder:text-muted-foreground sm:text-sm" aria-label="Search entry chats" placeholder="Search chats" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} />
             </label>
@@ -256,16 +277,12 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
               {filtered.slice(currentPage * CHAT_PAGE_SIZE, currentPage * CHAT_PAGE_SIZE + CHAT_PAGE_SIZE).map((source) => {
                 const active = selected && conversationKey(selected) === conversationKey(source)
                 const factor = factorOf(source)
-                return <button key={conversationKey(source)} type="button" aria-current={active ? "true" : undefined} className={`flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent" : "hover:bg-accent/60"}`} onClick={() => { setSelectedKey(conversationKey(source)); setMobileView("chat") }}>
+                return <button key={conversationKey(source)} type="button" aria-current={active ? "true" : undefined} className={`flex w-full min-w-0 max-sm:min-h-11 cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent" : "hover:bg-accent/60"}`} onClick={() => { setSelectedKey(conversationKey(source)); setMobileView("chat") }}>
                   <SourceLogo source={source.agent} agent={source.agent} className="mt-0.5 size-4" />
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{source.conversationTitle || source.conversationSummary || "Untitled chat"}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatDuration(source.durationSeconds)}</span>
-                    </span>
-                    <span className="mt-0.5 flex items-baseline gap-2 text-xs text-muted-foreground">
-                      <span className="min-w-0 flex-1 truncate">{source.machineLabel} · {source.model || source.agent || source.source}</span>
-                      <span className="shrink-0 tabular-nums">{format(source.spans[0].start, "HH:mm")}–{format(source.spans.at(-1)!.end, "HH:mm")}{factor !== 1 && ` · ${formatBillFactor(factor)}`}</span>
+                    <span className="flex items-baseline gap-2" title={`${source.machineLabel} · ${source.model || source.agent || source.source} · ${format(source.spans[0].start, "HH:mm")}–${format(source.spans.at(-1)!.end, "HH:mm")} · ${formatDuration(source.durationSeconds)}`}>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{plainTitle(source.conversationTitle || source.conversationSummary || "") || "Untitled chat"}</span>
+                      {factor !== 1 && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatBillFactor(factor)}</span>}
                     </span>
                   </span>
                 </button>

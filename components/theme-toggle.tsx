@@ -11,7 +11,7 @@ export function ThemeToggle() {
     <Button
       variant="ghost"
       size="sm"
-      className="h-7 w-full justify-start gap-2.5 px-2 font-medium text-sidebar-foreground [&_svg]:size-3.5"
+      className="h-7 w-full justify-start gap-2.5 px-2 font-medium text-sidebar-foreground pointer-coarse:h-10 [&_svg]:size-3.5 [&_svg]:text-muted-foreground"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
     >
       <Sun className="dark:hidden" />

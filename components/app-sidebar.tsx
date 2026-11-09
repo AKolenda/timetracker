@@ -41,20 +41,17 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    label: "Tracker",
+    label: "",
     items: [
+      { title: "Dashboard", href: "/", icon: LayoutDashboard },
       { title: "Tracker", href: "/tracker", icon: Timer },
       { title: "Agentic Coding", href: "/agentic-coding", icon: Bot },
+      { title: "Calendar & reports", href: "/calendar", icon: CalendarDays },
     ],
-  },
-  {
-    label: "Overview",
-    items: [{ title: "Dashboard", href: "/", icon: LayoutDashboard }],
   },
   {
     label: "Workspace",
     items: [
-      { title: "Calendar", href: "/calendar", icon: CalendarDays },
       { title: "Projects", href: "/projects", icon: FolderKanban },
       { title: "Clients", href: "/clients", icon: Users },
     ],
@@ -62,15 +59,16 @@ const navSections: NavSection[] = [
   {
     label: "Billing",
     items: [
-      { title: "Expenses", href: "/expenses", icon: Receipt },
       { title: "Invoices", href: "/invoices", icon: FileText },
+      { title: "Expenses", href: "/expenses", icon: Receipt },
     ],
   },
-  {
-    label: "Account",
-    items: [{ title: "Settings", href: "/settings", icon: Settings }],
-  },
 ]
+
+const settingsItem: NavItem = { title: "Settings", href: "/settings", icon: Settings }
+
+const itemClass =
+  "h-7 gap-2.5 px-2 text-sm font-medium text-sidebar-foreground pointer-coarse:h-11 data-active:text-sidebar-accent-foreground [&_svg]:size-3.5 [&_svg]:text-muted-foreground data-active:[&_svg]:text-sidebar-accent-foreground"
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/"
@@ -91,10 +89,12 @@ export function AppSidebar() {
 
       <SidebarContent className="gap-0 px-1 py-1">
         {navSections.map((section) => (
-          <SidebarGroup key={section.label}>
-            <SidebarGroupLabel className="h-7 px-2 text-xs font-medium text-muted-foreground">
-              {section.label}
-            </SidebarGroupLabel>
+          <SidebarGroup key={section.label || "main"}>
+            {section.label && (
+              <SidebarGroupLabel className="h-7 px-2 text-xs font-medium text-muted-foreground">
+                {section.label}
+              </SidebarGroupLabel>
+            )}
             <SidebarGroupContent>
               <SidebarMenu>
                 {section.items.map((item) => (
@@ -102,7 +102,7 @@ export function AppSidebar() {
                     <SidebarMenuButton
                       asChild
                       isActive={isActive(pathname, item.href)}
-                      className="h-7 gap-2.5 px-2 text-sm font-medium text-sidebar-foreground data-active:text-sidebar-accent-foreground [&_svg]:size-3.5 [&_svg]:text-muted-foreground data-active:[&_svg]:text-sidebar-accent-foreground"
+                      className={itemClass}
                     >
                       <Link href={item.href}>
                         <item.icon />
@@ -117,7 +117,17 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
 
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="gap-0.5 px-3 py-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={isActive(pathname, settingsItem.href)} className={itemClass}>
+              <Link href={settingsItem.href}>
+                <settingsItem.icon />
+                <span>{settingsItem.title}</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         <ThemeToggle />
       </SidebarFooter>
     </Sidebar>

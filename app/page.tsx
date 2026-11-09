@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import {
   Clock,
   DollarSign,
@@ -14,7 +15,9 @@ import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
 import { formatCurrency, formatHours } from "@/lib/format"
 import { billedSeconds } from "@/lib/billing"
-import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { StatCard, StatGrid } from "@/components/stat-card"
+import { Fact, FactBox } from "@/components/fact-list"
 import { useExchangeRate } from "@/lib/use-exchange-rate"
 
 export default function DashboardPage() {
@@ -49,190 +52,137 @@ export default function DashboardPage() {
   )
   const weekHours = weekEntries.reduce((sum, e) => sum + e.duration, 0)
 
+  const converted = (amount: number) =>
+    rate && displayCurrency !== currency
+      ? `≈ ${formatCurrency(amount * rate, displayCurrency)}`
+      : undefined
+
+  const quickStats = [
+    { label: "Active clients", icon: Users, value: data.clients.length },
+    { label: "Active projects", icon: FolderKanban, value: data.projects.filter((p) => p.status === "active").length },
+    { label: "Time entries", icon: Clock, value: data.timeEntries.length },
+    {
+      label: "Avg. hourly rate",
+      icon: TrendingUp,
+      value: money(
+        data.projects.length > 0
+          ? data.projects.reduce((s, p) => s + p.rate, 0) / data.projects.length
+          : 0
+      ),
+    },
+  ]
+
   return (
     <>
       <PageHeader
         title="Dashboard"
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Hours
-            </CardTitle>
-            <Clock className="size-4 text-muted-foreground" />
+      <StatGrid>
+        <StatCard
+          label="Total hours"
+          icon={Clock}
+          value={`${formatHours(totalHours)}h`}
+          hint={`${formatHours(weekHours)}h this week`}
+        />
+        <StatCard
+          label="Billable revenue"
+          icon={DollarSign}
+          value={money(totalRevenue)}
+          secondary={converted(totalRevenue)}
+          hint={`${formatHours(billableHours)}h billable`}
+        />
+        <StatCard
+          label="Expenses"
+          icon={Receipt}
+          value={money(totalExpenses)}
+          hint={`${data.expenses.length} ${data.expenses.length === 1 ? "entry" : "entries"}`}
+        />
+        <StatCard
+          label="Total payout"
+          icon={TrendingUp}
+          value={money(totalRevenue + totalExpenses)}
+          secondary={converted(totalRevenue + totalExpenses)}
+          hint="Revenue + expenses"
+        />
+      </StatGrid>
+
+      <div className="mt-3 grid grid-cols-1 items-start gap-3 sm:mt-6 sm:gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <Card className="phone-flat max-sm:gap-2">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Quick stats</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {formatHours(totalHours)}h
-            </div>
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
-              {formatHours(weekHours)}h this week
-            </p>
+            {/* A fact box on phones; from sm up the card itself is the box. */}
+            <FactBox className="sm:rounded-none sm:border-0 sm:bg-transparent">
+              {quickStats.map(({ label, icon: Icon, value }) => (
+                <Fact
+                  key={label}
+                  className="sm:items-center sm:px-0 sm:first:pt-0 sm:last:pb-0 sm:[&>dt]:text-foreground"
+                  label={
+                    <span className="flex items-center gap-2">
+                      <Icon aria-hidden className="size-4 text-muted-foreground max-sm:hidden" />
+                      {label}
+                    </span>
+                  }
+                  value={value}
+                />
+              ))}
+            </FactBox>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Billable Revenue
-            </CardTitle>
-            <DollarSign className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {money(totalRevenue)}
-            </div>
-            {rate && displayCurrency !== currency && (
-              <p className="mt-0.5 font-mono text-sm text-muted-foreground">
-                ≈ {formatCurrency(totalRevenue * rate, displayCurrency)}
-              </p>
-            )}
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
-              {formatHours(billableHours)}h billable
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Expenses
-            </CardTitle>
-            <Receipt className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {money(totalExpenses)}
-            </div>
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
-              {data.expenses.length} entries
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Payout
-            </CardTitle>
-            <TrendingUp className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {money(totalRevenue + totalExpenses)}
-            </div>
-            {rate && displayCurrency !== currency && (
-              <p className="mt-0.5 font-mono text-sm text-muted-foreground">
-                ≈ {formatCurrency((totalRevenue + totalExpenses) * rate, displayCurrency)}
-              </p>
-            )}
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
-              revenue + billable expenses
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium">Quick Stats</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm">
-                  <Users className="size-4 text-muted-foreground" />
-                  <span>Active Clients</span>
-                </div>
-                <span className="font-mono text-sm font-medium">
-                  {data.clients.length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm">
-                  <FolderKanban className="size-4 text-muted-foreground" />
-                  <span>Active Projects</span>
-                </div>
-                <span className="font-mono text-sm font-medium">
-                  {data.projects.filter((p) => p.status === "active").length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm">
-                  <Clock className="size-4 text-muted-foreground" />
-                  <span>Time Entries</span>
-                </div>
-                <span className="font-mono text-sm font-medium">
-                  {data.timeEntries.length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm">
-                  <TrendingUp className="size-4 text-muted-foreground" />
-                  <span>Avg. Hourly Rate</span>
-                </div>
-                <span className="font-mono text-sm font-medium">
-                  {data.projects.length > 0
-                    ? money(
-                        data.projects.reduce((s, p) => s + p.rate, 0) /
-                          data.projects.length
-                      )
-                    : money(0)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
+        <Card className="phone-flat max-sm:gap-2">
           <CardHeader>
             <CardTitle className="text-sm font-medium">
-              Recent Activity
+              Recent activity
             </CardTitle>
           </CardHeader>
           <CardContent>
             {recentEntries.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No time entries yet. Start tracking!
-              </p>
+              <div className="flex flex-col items-center gap-3 py-8 text-center max-sm:rounded-lg max-sm:border max-sm:bg-card">
+                <p className="text-sm text-muted-foreground">No time entries yet.</p>
+                <Button asChild size="sm" variant="outline">
+                  <Link href="/tracker">Open the tracker</Link>
+                </Button>
+              </div>
             ) : (
-              <div className="space-y-3">
+              /* On phones the list is its own bordered box of house rows, like Quick stats. */
+              <ul className="divide-y max-sm:rounded-lg max-sm:border max-sm:bg-card">
                 {recentEntries.map((entry) => {
                   const project = getProject(entry.projectId)
                   const client = project
                     ? getClient(project.clientId)
                     : undefined
+                  const amount = entry.billable && project
+                    ? (billedSeconds(entry) / 3600) * project.rate
+                    : null
                   return (
-                    <div
+                    <li
                       key={entry.id}
-                      className="flex items-center justify-between gap-2"
+                      className="flex items-center justify-between gap-3 py-2.5 max-sm:px-4 sm:first:pt-0 sm:last:pb-0"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">
                           {entry.description || "Untitled"}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
-                          {project?.name}
+                          {project?.name ?? "No project"}
                           {client && ` · ${client.name}`}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {entry.billable && (
-                          <Badge variant="secondary" className="font-mono text-[10px]">
-                            $
-                          </Badge>
-                        )}
-                        <span className="font-mono text-xs text-muted-foreground">
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-medium tabular-nums">
                           {formatHours(entry.duration)}h
-                        </span>
+                        </p>
+                        <p className="text-xs text-muted-foreground tabular-nums">
+                          {amount !== null ? money(amount) : entry.billable ? "Billable" : "Non-billable"}
+                        </p>
                       </div>
-                    </div>
+                    </li>
                   )
                 })}
-              </div>
+              </ul>
             )}
           </CardContent>
         </Card>

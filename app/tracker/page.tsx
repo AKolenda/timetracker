@@ -14,9 +14,15 @@ import {
   CalendarIcon,
   Plus,
   LoaderCircle,
+  ListChecks,
   ChevronsUpDown,
   Check,
   X,
+  TriangleAlert,
+  ChevronDown,
+  EyeOff,
+  FolderInput,
+  Settings2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -62,13 +68,18 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { TrackerReviewDialog } from "@/components/tracker-review-dialog"
+import { DraftReviewDialog } from "@/components/draft-review-dialog"
 import { EntryChats, type ConversationSource } from "@/components/entry-chat-audit"
+import { LiveAgentIcons } from "@/components/live-agent-icons"
 import { PageHeader } from "@/components/page-header"
+import { SheetAction } from "@/components/more-sheet"
+import { RowActionsMenu } from "@/components/row-actions-menu"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
-import { formatDuration, formatHours } from "@/lib/format"
+import { formatClock, formatDuration, formatHours, formatTimeRange as timeRange } from "@/lib/format"
 import { localDateString, parseLocalDate } from "@/lib/datetime"
 import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRange } from "@/lib/agent-time-overlap"
 import { conversationKey, groupConversationSources } from "@/lib/agent-time-chats"
@@ -76,7 +87,7 @@ import { billedSeconds, formatBillFactor, normalizeBillFactor, sourcesBillFactor
 import { invoicedSourceIds } from "@/lib/invoice-estimates"
 import { intervalIsSettled } from "@/lib/summary-jobs"
 import { splitAgentRange } from "@/lib/agent-time-intervals"
-import { PERSONAL_AGENT_PROJECT } from "@/lib/agent-import-projects"
+import { PERSONAL_AGENT_PROJECT, adoptableLocalMappings, linkAgentFolders, resolveAgentMappings } from "@/lib/agent-import-projects"
 import type { ActiveTimer, TimeEntry } from "@/lib/types"
 
 type AgentTimeInterval = {
@@ -110,6 +121,10 @@ type AgentTimeSourceInterval = {
 type AgentTimeResponse = {
   projects: string[]
   intervals: AgentTimeInterval[]
+  /** Turns an agent is still running; they become drafts once they finish. */
+  live?: AgentTimeInterval[]
+  /** Every open T3 Code project; `title` is the name T3 Code shows when it differs from the folder. */
+  t3Projects?: { name: string; title: string }[]
 }
 
 type AgentImportSlice = {
@@ -141,6 +156,10 @@ type IgnoredAgentRange = {
   end: number
 }
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
+/** Agent Time older than this never becomes a draft, so a backlog can't pile up or come back. */
+const AGENT_DRAFT_WINDOW_DAYS = 7
+/** How often an open, visible tracker checks Agent Time for new and running work. */
+const AGENT_TIME_REFRESH_MS = 30_000
 const LOG_PAGE_SIZE = 100
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
 const IGNORED_AGENT_RANGES_KEY = "timetracker-agent-time-ignored-ranges"
@@ -160,6 +179,12 @@ function summaryKey(slice: AgentImportSlice) {
 function draftDescription(slice: AgentImportSlice, summaries: Record<string, string> = {}) {
   const primary = primaryConversation(slice)
   return summaries[summaryKey(slice)] || primary?.conversationTitle.trim() || `Agent Time — ${slice.interval.agents.join(" + ") || "coding"}`
+}
+
+function demoFixtureRequested() {
+  return typeof window !== "undefined" &&
+    process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
+    new URLSearchParams(window.location.search).get("fixture") === "demo"
 }
 
 function mobileFixtureRequested() {
@@ -267,8 +292,9 @@ function buildAgentImportPlan(
       0
     )
     skippedSeconds += Math.floor((sourceEnd - sourceStart) / 1000) - trackedUncoveredSeconds
+    // A skip holds for the project it was billed to, so it survives a folder being renamed or re-read by the collector.
     const ignoredForProject = ignoredRanges
-      .filter((range) => range.agentProject === interval.project)
+      .filter((range) => range.agentProject === interval.project || projectMappings[range.agentProject] === projectId)
       .map((range) => ({ start: range.start, end: range.end }))
     const gaps = trackedGaps.flatMap((gap) => subtractRanges(gap, ignoredForProject))
     const finalUncoveredSeconds = gaps.reduce(
@@ -342,6 +368,7 @@ function LiveTimer({
   )
 }
 
+/** Elapsed time of a running agent turn, ticking from its start. */
 function TodayTotal({
   completedSeconds,
   activeTimers,
@@ -370,20 +397,57 @@ function TodayTotal({
   }, 0)
 
   return (
-    <span data-testid="today-total" className="font-mono text-xs font-semibold tabular-nums text-foreground">
-      {formatDuration(completedSeconds + activeSeconds)}
+    <span data-testid="today-total" className="text-xs font-semibold tabular-nums text-foreground">
+      {activeTimers.some((timer) => !timer.pausedAt) ? formatLiveTotal(completedSeconds + activeSeconds) : entryClock(completedSeconds + activeSeconds)}
     </span>
   )
 }
 
+/** Saved durations as h:mm, with "<0:01" for entries that are real but round down to nothing. */
+function entryClock(seconds: number) {
+  return seconds > 0 && seconds < 60 ? "<0:01" : formatClock(seconds)
+}
+
+/** A total that includes a live timer ticks, so it keeps seconds but drops the leading zero: 1:47:24. */
+function formatLiveTotal(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds))
+  return `${Math.floor(total / 3600)}:${String(Math.floor((total % 3600) / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`
+}
+
 function BilledTime({ seconds, factor, block = false }: { seconds: number; factor: number; block?: boolean }) {
-  return <span data-testid="billed-time" title={`Billed at ${formatBillFactor(factor)} of the tracked time`} className={`font-mono text-[0.7rem] font-normal text-muted-foreground ${block ? "mt-0.5 block" : ""}`}>{block ? "" : " "}bill {formatDuration(seconds)} · {formatBillFactor(factor)}</span>
+  return <span data-testid="billed-time" title={`Billed at ${formatBillFactor(factor)} of the tracked time`} className={`text-xs font-normal tabular-nums text-muted-foreground ${block ? "mt-0.5 block" : ""}`}>{block ? "" : " "}bill {entryClock(seconds)} · {formatBillFactor(factor)}</span>
+}
+
+/** One machine name, with the rest behind a "+N" popover that works by keyboard and touch. */
+function MachineList({ names }: { names: string[] }) {
+  if (!names.length) return null
+  const [first, ...rest] = names
+  return <span className="inline-flex min-w-0 max-w-full items-center gap-1">
+    <span className="truncate" title={first}>{first}</span>
+    {rest.length > 0 && <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="shrink-0 cursor-pointer rounded-md px-1 tabular-nums hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={`${rest.length} more ${rest.length === 1 ? "machine" : "machines"}: ${rest.join(", ")}`}>+{rest.length}</button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto max-w-64 p-2 text-xs">
+        <p className="mb-1 font-medium">Machines</p>
+        <ul className="grid gap-0.5 text-muted-foreground">{names.map((name) => <li key={name}>{name}</li>)}</ul>
+      </PopoverContent>
+    </Popover>}
+  </span>
+}
+
+/** Project and machines under an entry's title on tablets; phones put the project inside the row's chat opener. */
+function MetaLine({ project, machines }: { project?: string; machines: string[] }) {
+  return <p className="break-words line-clamp-2">
+    <span title={project}>{project ?? "—"}</span>
+    {machines.length > 0 && <>{" · "}<MachineList names={machines} /></>}
+  </p>
 }
 
 function ImportProjectPicker({ value, onChange, choices }: { value: string; onChange: (value: string) => void; choices: { value: string; label: string }[] }) {
   const [open, setOpen] = useState(false)
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger asChild><Button variant="outline" role="combobox" aria-expanded={open} className="w-full min-w-0 justify-between"><span className="truncate">{choices.find((choice) => choice.value === value)?.label ?? "Choose client / project"}</span><ChevronsUpDown className="ml-2 size-4 shrink-0" /></Button></PopoverTrigger>
+    <PopoverTrigger asChild><Button variant="outline" role="combobox" aria-expanded={open} className="w-full min-w-0 justify-between max-sm:h-11"><span className="truncate">{choices.find((choice) => choice.value === value)?.label ?? "Choose client / project"}</span><ChevronsUpDown className="ml-2 size-4 shrink-0" /></Button></PopoverTrigger>
     <PopoverContent className="w-[min(24rem,calc(100vw-3rem))] p-1" align="start"><Command><CommandInput placeholder="Search clients and projects…" /><CommandList><CommandEmpty>No matching projects.</CommandEmpty><CommandGroup>{choices.map((choice) => <CommandItem key={choice.value} value={choice.value + " " + choice.label} onSelect={() => { onChange(choice.value); setOpen(false) }}><Check className={`size-4 ${choice.value === value ? "opacity-100" : "opacity-0"}`} /><span className="min-w-0 break-words">{choice.label}</span></CommandItem>)}</CommandGroup></CommandList></Command></PopoverContent>
   </Popover>
 }
@@ -450,10 +514,14 @@ export default function TrackerPage() {
   }, [highlightedEntry])
   const [reviewAgentOverlapsOpen, setReviewAgentOverlapsOpen] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
+  const [draftsOpen, setDraftsOpen] = useState(false)
+  // Editing a draft from the review list swaps to the edit dialog, then comes back to the list.
+  const returnToDrafts = useRef(false)
   const [importSettingsOpen, setImportSettingsOpen] = useState(false)
   const [chatSummaries, setChatSummaries] = useState<Record<string, string>>({})
   const requestedSummaries = useRef(new Set<string>())
-  const [projectMappings, setProjectMappings] = useState<Record<string, string>>(() => {
+  // Choices made in this browser before folders were saved on projects; "Personal" still lives here.
+  const [localMappings, setLocalMappings] = useState<Record<string, string>>(() => {
     if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
     try {
       const saved = typeof window !== "undefined" ? localStorage.getItem("timetracker-agent-time-project-mappings") : null
@@ -494,18 +562,73 @@ export default function TrackerPage() {
       setGapMinutes(savedGap)
       setAppliedGapMinutes(savedGap)
       setIgnoredAgentRanges(savedIgnoredRanges)
+      // eslint-disable-next-line react-hooks/immutability -- existing pattern, now visible to the React Compiler lint
       void loadAgentTime(true, savedGap)
     }, 0)
     return () => window.clearTimeout(id)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function saveProjectMapping(agentProject: string, projectId: string) {
-    setProjectMappings((current) => {
-      const next = { ...current, [agentProject]: projectId }
-      localStorage.setItem("timetracker-agent-time-project-mappings", JSON.stringify(next))
+  function saveLocalMappings(update: (current: Record<string, string>) => Record<string, string>) {
+    setLocalMappings((current) => {
+      const next = update(current)
+      try {
+        localStorage.setItem("timetracker-agent-time-project-mappings", JSON.stringify(next))
+      } catch {
+        // The choice still applies until this page is refreshed.
+      }
       return next
     })
   }
+
+  async function saveProjectMapping(agentProject: string, projectId: string) {
+    const toProject = projectId && projectId !== PERSONAL_AGENT_PROJECT ? projectId : null
+    try {
+      // A project choice is saved on the project, so it holds on every device and shows on the Projects page.
+      for (const change of linkAgentFolders(data.projects, toProject, [agentProject])) {
+        await updateProject(change.id, { agentFolders: change.agentFolders })
+      }
+    } catch {
+      if (toProject) {
+        toast.error("Couldn't link this folder to the project, so it's saved in this browser only")
+        saveLocalMappings((current) => ({ ...current, [agentProject]: projectId }))
+        return
+      }
+    }
+    saveLocalMappings((current) => {
+      const next = { ...current }
+      if (toProject) delete next[agentProject]
+      else next[agentProject] = projectId
+      return next
+    })
+  }
+
+  // Move this browser's older folder choices onto their projects once, so they show up everywhere.
+  const adoptedLocalMappings = useRef(false)
+  useEffect(() => {
+    if (adoptedLocalMappings.current || !data.projects.length || mobileFixtureRequested() || demoFixtureRequested()) return
+    const adoptable = adoptableLocalMappings(data.projects, localMappings)
+    adoptedLocalMappings.current = true
+    if (!adoptable.length) return
+    void (async () => {
+      let projects = data.projects
+      const adopted: string[] = []
+      for (const [folder, projectId] of adoptable) {
+        try {
+          for (const change of linkAgentFolders(projects, projectId, [folder])) {
+            await updateProject(change.id, { agentFolders: change.agentFolders })
+            projects = projects.map((project) => (project.id === change.id ? { ...project, agentFolders: change.agentFolders } : project))
+          }
+          adopted.push(folder)
+        } catch {
+          // Most likely migration 014 isn't applied yet; the browser's choice keeps working meanwhile.
+          break
+        }
+      }
+      if (adopted.length) {
+        saveLocalMappings((current) => Object.fromEntries(Object.entries(current).filter(([folder]) => !adopted.includes(folder))))
+      }
+    })()
+  }, [data.projects]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function startWatchingAgentTimeToday() {
     const today = localDateString(new Date(), data.settings.timezone)
@@ -517,17 +640,28 @@ export default function TrackerPage() {
   function showAllAgentTime() {
     localStorage.removeItem("timetracker-agent-time-start-date")
     setAgentTimeStartDate(null)
-    toast("Showing Agent Time from Aug 30, 2026")
+    toast(`Showing the last ${AGENT_DRAFT_WINDOW_DAYS} days of Agent Time`)
   }
 
-  const effectiveAgentTimeStartDate = agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE
-    ? agentTimeStartDate
-    : HARD_AGENT_TIME_START_DATE
+  // eslint-disable-next-line react-hooks/purity -- existing pattern, now visible to the React Compiler lint
+  const draftWindowStartDate = localDateString(new Date(Date.now() - AGENT_DRAFT_WINDOW_DAYS * 86_400_000), data.settings.timezone)
+  const effectiveAgentTimeStartDate = [HARD_AGENT_TIME_START_DATE, draftWindowStartDate, agentTimeStartDate ?? ""]
+    .reduce((latest, date) => (date > latest ? date : latest))
 
   const agentTimeCutoff = useMemo(() => {
     const cutoff = new Date(`${effectiveAgentTimeStartDate}T00:00:00`).getTime()
     return Number.isNaN(cutoff) ? null : cutoff
   }, [effectiveAgentTimeStartDate])
+
+  const projectMappings = useMemo(
+    () => resolveAgentMappings(
+      // Skipped folders resolve too, so a skip still finds its billing project after the folder disappears.
+      [...(agentTime?.projects ?? []), ...(agentTime?.intervals.map((interval) => interval.project) ?? []), ...ignoredAgentRanges.map((range) => range.agentProject)],
+      data.projects,
+      localMappings
+    ),
+    [agentTime, data.projects, localMappings, ignoredAgentRanges]
+  )
 
   const availableAgentIntervals = useMemo(
     () => agentTime?.intervals.filter((interval) => !agentTimeCutoff || new Date(interval.end).getTime() > agentTimeCutoff) ?? [],
@@ -569,7 +703,7 @@ export default function TrackerPage() {
     return entrySources.get(entry.id) ?? []
   }
   function machineNames(sources: AgentTimeSourceInterval[]) {
-    return [...new Set(sources.map((source) => machineName(source, data.settings.agentTimeHostLabels)))].join(", ") || "—"
+    return [...new Set(sources.map((source) => machineName(source, data.settings.agentTimeHostLabels)))]
   }
 
   const agentImportPreview = useMemo(
@@ -584,6 +718,27 @@ export default function TrackerPage() {
     ),
     [agentTimeCutoff, availableAgentIntervals, data.timeEntries, data.activeTimers, data.settings.agentTimeMaxMinutes, ignoredAgentRanges, projectMappings]
   )
+  // One row per T3 thread an agent is working in right now; personal folders stay hidden.
+  const liveAgentWork = useMemo(() => (agentTime?.live ?? []).flatMap((block) => {
+    const projectId = projectMappings[block.project]
+    if (projectId === PERSONAL_AGENT_PROJECT) return []
+    const threads = new Map<string, AgentTimeSourceInterval[]>()
+    for (const source of block.sourceIntervals ?? []) {
+      const key = `${source.hostUrl ?? ""}|${source.conversationId || block.id}`
+      threads.set(key, [...(threads.get(key) ?? []), source])
+    }
+    return [...threads].map(([key, sources]) => ({
+      key,
+      projectId,
+      folder: block.project,
+      title: sources.find((source) => source.conversationTitle.trim())?.conversationTitle.trim() || `${block.agents.join(" + ") || "Agent"} working`,
+      agents: [...new Set(sources.map((source) => source.agent))],
+      machines: machineNames(sources),
+      threadId: sources.find((source) => source.source === "T3 Code" && source.conversationId)?.conversationId,
+      start: sources.reduce((earliest, source) => (source.start < earliest ? source.start : earliest), sources[0]?.start ?? block.start),
+    }))
+  }).sort((a, b) => a.start.localeCompare(b.start)), [agentTime, projectMappings]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function saveOverlapReviews(kind: "agent" | "entry", keys: string[]) {
     if (kind === "agent") setReviewedAgentOverlaps(keys)
     else setReviewedEntryOverlaps(keys)
@@ -599,16 +754,55 @@ export default function TrackerPage() {
     (total, slice) => total + slice.durationSeconds,
     0
   )
+  // "Review & import time" (from Agentic Coding) opens the drafts as soon as Agent Time has loaded.
+  const [importRequested, setImportRequested] = useState(false)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("importAgentTime") !== "1") return
+    params.delete("importAgentTime")
+    window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`)
+    setImportRequested(true) // eslint-disable-line react-hooks/set-state-in-effect -- reads the URL once on mount
+  }, [])
+  useEffect(() => {
+    if (!importRequested || !agentTime || agentTimeLoading) return
+    setImportRequested(false) // eslint-disable-line react-hooks/set-state-in-effect -- one-shot hand-off once Agent Time arrives
+    if (agentImportPreview.slices.length > 0) setDraftsOpen(true)
+    else toast.info("No new agent time to import. Everything is already in the log or skipped.")
+  }, [importRequested, agentTime, agentTimeLoading, agentImportPreview.slices.length])
   const unmappedAgentProjects = agentImportPreview.unmappedProjects
+  const agentProjectChoices = [{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]
+  // T3 Code projects show their T3 name when it differs from the folder (e.g. "invoicer" for timetracker).
+  const t3ProjectTitles = useMemo(() => new Map((agentTime?.t3Projects ?? [])
+    .filter((project) => project.title && project.title !== project.name)
+    .map((project) => [project.name, project.title])), [agentTime])
   const handledAgentProjects = useMemo(
     () => [...new Set(availableAgentIntervals.map((interval) => interval.project))]
       .filter((project) => !unmappedAgentProjects.includes(project))
       .sort((a, b) => a.localeCompare(b)),
     [availableAgentIntervals, unmappedAgentProjects]
   )
+  // Open T3 Code projects can be linked before they have any activity; unlinked ones come first.
+  const mappingFolders = useMemo(() => {
+    const listed = new Set([...unmappedAgentProjects, ...handledAgentProjects])
+    const idle = (agentTime?.t3Projects ?? []).map((project) => project.name).filter((name) => !listed.has(name))
+    return [
+      ...unmappedAgentProjects,
+      ...idle.filter((name) => !projectMappings[name]).sort((a, b) => a.localeCompare(b)),
+      ...handledAgentProjects,
+      ...idle.filter((name) => projectMappings[name]).sort((a, b) => a.localeCompare(b)),
+    ]
+  }, [agentTime, handledAgentProjects, projectMappings, unmappedAgentProjects])
 
-  async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes) {
-    setAgentTimeLoading(true)
+  const agentTimeRequest = useRef(0)
+  // Any open dialog (drafts, an entry's chats, edits) or a running import holds background refreshes,
+  // so the rows being read or approved never shift underneath; a refresh already in flight is dropped too.
+  function backgroundRefreshBlocked() {
+    return importInFlight.current || document.querySelector('[role="dialog"]') !== null
+  }
+  async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes, background = false) {
+    // Background refreshes don't disable the approve buttons, and a slow one never overwrites a newer answer.
+    const request = ++agentTimeRequest.current
+    if (!background) setAgentTimeLoading(true)
     try {
       const requestedGap = Number(gapOverride)
       const gap = Number.isFinite(requestedGap)
@@ -616,16 +810,19 @@ export default function TrackerPage() {
         : 15
       const demo = process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && new URLSearchParams(window.location.search).get("fixture") === "demo"
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : demo ? "&fixture=demo" : ""
-      const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}${fixture}`)
+      const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}&t3Only=true&withLive=true${fixture}`)
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse
-      setAgentTime(payload)
+      if (request === agentTimeRequest.current && !(background && backgroundRefreshBlocked())) setAgentTime(payload)
     } catch (error) {
       if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
     } finally {
-      setAgentTimeLoading(false)
+      if (!background) setAgentTimeLoading(false)
     }
   }
+  const latestLoadAgentTime = useRef(loadAgentTime)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
+  latestLoadAgentTime.current = loadAgentTime
 
   function applyGapMinutes() {
     const requestedGap = Number(gapMinutes)
@@ -652,7 +849,11 @@ export default function TrackerPage() {
   const importInFlight = useRef(false)
   const importedEntries = useRef<TimeEntry[]>([])
   const latestData = useRef(data)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
   latestData.current = data
+  const latestStartTimer = useRef(startTimer)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
+  latestStartTimer.current = startTimer
   useEffect(() => {
     const savedIds = new Set(data.timeEntries.map((entry) => entry.id))
     importedEntries.current = importedEntries.current.filter((entry) => !savedIds.has(entry.id))
@@ -660,7 +861,9 @@ export default function TrackerPage() {
   const [importing, setImporting] = useState(false)
   const overlapDetails = useMemo(() => entryOverlapDetails(data.timeEntries, data.activeTimers), [data.timeEntries, data.activeTimers])
   const entryOverlapKeys = new Map([...overlapDetails].map(([id, details]) => [id, details.reviewKey]))
-  const overlapIds = new Set([...entryOverlapKeys].filter(([, key]) => !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
+  // Invoiced entries are settled, so their overlaps are no longer worth flagging.
+  const invoicedTimeIds = useMemo(() => invoicedSourceIds(data.invoices, "time"), [data.invoices])
+  const overlapIds = new Set([...entryOverlapKeys].filter(([id, key]) => !invoicedTimeIds.has(id) && !reviewedEntryOverlaps.includes(key)).map(([id]) => id))
 
   async function importDraftEntries(entries: Omit<TimeEntry, "id">[], generateTitles = true) {
     if (importInFlight.current) return false
@@ -692,7 +895,7 @@ export default function TrackerPage() {
           seconds += duration
         }
       }
-      if (seconds) toast.success(`Approved ${formatDuration(seconds)}. Overlapping time excluded.`)
+      if (seconds) toast.success(`Approved ${entryClock(seconds)}. Overlapping time excluded.`)
       else toast.error("No time imported: this time is already tracked or reserved by an active timer.")
       return true
     } catch {
@@ -724,6 +927,29 @@ export default function TrackerPage() {
     const timer = setInterval(() => { void poll().catch(() => undefined) }, 5000)
     return () => { stopped = true; clearInterval(timer) }
   }, [pendingTitleIds, syncAgentTimeTitles])
+
+  // Keep Agent Time current while the tracker is open, so new and running work shows up without a reload.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/purity -- existing pattern, now visible to the React Compiler lint
+    let lastRefresh = Date.now()
+    function refresh() {
+      if (document.visibilityState !== "visible" || backgroundRefreshBlocked()) return
+      lastRefresh = Date.now()
+      void latestLoadAgentTime.current(true, undefined, true)
+    }
+    const timer = window.setInterval(refresh, AGENT_TIME_REFRESH_MS)
+    // Coming back to the tab catches up at once rather than waiting for the next tick.
+    function catchUp() {
+      if (Date.now() - lastRefresh >= 5_000) refresh()
+    }
+    document.addEventListener("visibilitychange", catchUp)
+    window.addEventListener("focus", catchUp)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", catchUp)
+      window.removeEventListener("focus", catchUp)
+    }
+  }, [])
 
   async function setChatBillFactor(chat: ConversationSource, factor: number) {
     const key = conversationKey(chat)
@@ -763,6 +989,11 @@ export default function TrackerPage() {
 
   async function approveDraft(slice: AgentImportSlice) {
     if (!await importDraftEntries([draftEntry(slice)])) return
+  }
+
+  async function approveDrafts(slices: AgentImportSlice[]) {
+    if (!slices.length) return
+    await importDraftEntries(slices.map(draftEntry))
   }
 
   async function approveAllDrafts() {
@@ -815,8 +1046,22 @@ export default function TrackerPage() {
   }
 
   function handleDiscard(id: string) {
+    const timer = data.activeTimers.find((current) => current.id === id)
     clearTimer(id)
-    toast("Timer discarded")
+    if (!timer) return
+    toast("Timer discarded", {
+      description: timer.description || getProject(timer.projectId)?.name,
+      duration: 8000,
+      action: {
+        label: "Undo",
+        // The store's startTimer closes over the timers it rendered with, so use the latest one.
+        onClick: () => {
+          if (latestData.current.activeTimers.some((current) => current.id === timer.id)) return
+          latestStartTimer.current(timer)
+          toast.success("Timer restored")
+        },
+      },
+    })
   }
 
   function handleResume(entry: TimeEntry) {
@@ -912,6 +1157,13 @@ export default function TrackerPage() {
     setEditOpen(false)
     setEditEntry(null)
     setEditDraft(null)
+    backToDrafts()
+  }
+
+  function backToDrafts() {
+    if (!returnToDrafts.current) return
+    returnToDrafts.current = false
+    setDraftsOpen(true)
   }
 
   async function confirmDelete() {
@@ -927,6 +1179,13 @@ export default function TrackerPage() {
       .reduce((total, entry) => total + entry.duration, 0),
     [data.timeEntries, todayEntryDate]
   )
+
+  // Phones show each earlier day's saved total in its header band, as Agentic Coding does.
+  const dayTotals = useMemo(() => {
+    const totals = new Map<string, number>()
+    for (const entry of data.timeEntries) totals.set(entry.date, (totals.get(entry.date) ?? 0) + entry.duration)
+    return totals
+  }, [data.timeEntries])
 
   const logRows = useMemo(() => {
     const rows: LogRow[] = data.timeEntries.map((entry) => ({ kind: "entry", entry, date: entry.date, sortKey: `${entry.date}${entry.startTime ?? ""}` }))
@@ -951,7 +1210,7 @@ export default function TrackerPage() {
     const sources = slice.interval.sourceIntervals || []
     return [slice.id, {
       description: draftDescription(slice, chatSummaries),
-      machines: [...new Set(clipAgentSources(sources, slice.start, slice.end).map((source) => machineName(source, hostLabels)))].join(", ") || "—",
+      machines: [...new Set(clipAgentSources(sources, slice.start, slice.end).map((source) => machineName(source, hostLabels)))],
       billFactor: sourcesBillFactor(sources, slice.start, slice.end, chatFactors),
     }]
   })), [agentImportPreview.slices, chatSummaries, chatFactors, hostLabels])
@@ -984,7 +1243,8 @@ export default function TrackerPage() {
   function restoreVisibleIgnoredAgentRanges() {
     setIgnoredAgentRanges((current) => {
       const next = current.filter((range) => !availableAgentIntervals.some((interval) => {
-        if (interval.project !== range.agentProject) return false
+        const rangeProject = projectMappings[range.agentProject]
+        if (interval.project !== range.agentProject && !(rangeProject && rangeProject === projectMappings[interval.project])) return false
         const intervalStart = new Date(interval.start).getTime()
         const intervalEnd = new Date(interval.end).getTime()
         return Number.isFinite(intervalStart) && Number.isFinite(intervalEnd) && range.end > intervalStart && range.start < intervalEnd
@@ -996,20 +1256,28 @@ export default function TrackerPage() {
   }
 
   function ignoreAgentSlice(slice: AgentImportSlice) {
-    const ignoredRange: IgnoredAgentRange = {
+    skipDrafts([slice])
+  }
+
+  function skipDrafts(slices: AgentImportSlice[]) {
+    if (!slices.length) return
+    const ranges: IgnoredAgentRange[] = slices.map((slice) => ({
       id: `${slice.interval.project}:${slice.start}:${slice.end}`,
       agentProject: slice.interval.project,
       start: slice.start,
       end: slice.end,
-    }
+    }))
     setIgnoredAgentRanges((current) => {
-      if (current.some((range) => range.id === ignoredRange.id)) return current
-      const next = [...current, ignoredRange]
+      const added = ranges.filter((range) => !current.some((existing) => existing.id === range.id))
+      if (!added.length) return current
+      const next = [...current, ...added]
       persistIgnoredAgentRanges(next)
       return next
     })
-    toast("Skipped", {
-      description: `${format(new Date(slice.start), "MMM d, h:mm a")} – ${format(new Date(slice.end), "h:mm a")}`,
+    toast(slices.length === 1 ? "Skipped" : `Skipped ${slices.length} drafts`, {
+      description: slices.length === 1
+        ? `${format(new Date(slices[0].start), "MMM d, h:mm a")} – ${format(new Date(slices[0].end), "h:mm a")}`
+        : "Restore them from Import settings.",
     })
   }
 
@@ -1023,32 +1291,62 @@ export default function TrackerPage() {
     setProjectEdit(null)
   }
 
+  const timerProjectLabel = (() => {
+    const project = timerProject ? getProject(timerProject) : undefined
+    if (!project) return undefined
+    const client = getClient(project.clientId)
+    return `${client?.name ? `${client.name} — ` : ""}${project.name}`
+  })()
+  // On stacked rows (below lg) the row actions sit beside the title, so the second line can use the full width.
+  // The title stops 8px short of the actions so its chat chevron isn't a near-miss for Resume.
+  // Phones fold the actions into one 44px ⋯ menu, so the title only reserves room for that.
+  const rowTitleClass = "max-lg:flex max-lg:min-h-9 max-lg:items-center max-lg:pr-29 max-sm:min-h-11 max-sm:pr-12 [&>[data-testid=entry-chat-menu]]:min-w-0 [&>[data-testid=entry-chat-menu]]:flex-1"
+  // Phones: title and figure on line 1, project and time on line 2, both right columns ending at the actions button.
+  const rowFigureClass = "text-right text-xs font-normal tabular-nums"
+  const rowMetaClass = "min-w-0 truncate text-xs font-normal text-muted-foreground"
+  const rowTimeClass = "text-right text-xs font-normal tabular-nums text-muted-foreground"
+  const rowActionsClass = "max-lg:absolute max-lg:top-2 max-lg:right-2 max-lg:p-0 max-lg:pointer-fine:top-3.5 max-sm:right-4! max-sm:top-2.5!"
+  const rowActionGroupClass = "justify-end max-lg:[&>div]:gap-0"
+  // Utilities that open dialogs: outline buttons from lg up, one labelled menu on phones and tablets.
+  const reviewTools = [
+    { id: "review-saved-overlaps", label: "Saved conflicts", icon: TriangleAlert, count: overlapIds.size, open: () => setReviewEntryOverlapsOpen(true) },
+    { id: "review-agent-overlaps", label: "Excluded time", icon: EyeOff, count: 0, open: () => setReviewAgentOverlapsOpen(true) },
+    { id: "review-agent-projects", label: "Project mappings", icon: FolderInput, count: 0, open: () => setProjectsOpen(true) },
+    { id: "import-settings", label: "Import settings", icon: Settings2, count: 0, open: () => setImportSettingsOpen(true) },
+  ]
+
   return (
     <>
       <PageHeader
-        title="Time Tracker"
+        title="Tracker"
+        primary={{ label: "Add hours", icon: Plus, onClick: () => setAddHoursOpen(true), testId: "add-hours" }}
+        more={<>
+          {agentImportPreview.slices.length > 0 && <SheetAction icon={ListChecks} label="Review drafts" testId="review-drafts-phone" detail={agentImportPreview.slices.length} onSelect={() => setDraftsOpen(true)} />}
+          {reviewTools.map((tool) => <SheetAction key={tool.id} icon={tool.icon} label={tool.label} testId={`${tool.id}-phone`} detail={tool.count > 0 ? <span className="text-destructive">{tool.count}</span> : undefined} onSelect={tool.open} />)}
+        </>}
       />
 
-      <Card className="mb-6">
-        <CardContent className="pt-5">
+      <Card className="phone-flat mb-6 max-sm:mb-4">
+        <CardContent>
           {data.projects.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
               Create a client and project first to start tracking time
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_260px_auto_auto] sm:items-center">
+              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center lg:grid-cols-[minmax(0,1fr)_220px_auto] xl:grid-cols-[minmax(0,1fr)_260px_auto]">
                 <Input
                   data-testid="timer-description"
+                  aria-label="What are you working on?"
                   placeholder="What are you working on?"
                   value={timerDesc}
                   onChange={(e) => setTimerDesc(e.target.value)}
-                  className="h-10 min-w-0 w-full"
+                  className="h-10 min-w-0 w-full max-sm:h-11 sm:col-span-2 lg:col-span-1"
                 />
                 <Popover open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
                   <PopoverTrigger asChild>
-                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} className="h-10 min-w-0 w-full justify-between" >
-                      <span className="truncate">{timerProject ? (() => { const project = getProject(timerProject); const client = project ? getClient(project.clientId) : undefined; return project ? `${client?.name ? `${client.name} — ` : ""}${project.name}` : "Select project" })() : "Select project"}</span>
+                    <Button data-testid="timer-project-picker" variant="outline" role="combobox" aria-expanded={projectPickerOpen} aria-label={`Project: ${timerProjectLabel ?? "none selected"}`} className="h-10 min-w-0 w-full justify-between font-normal max-sm:h-11" >
+                      <span className={`truncate ${timerProjectLabel ? "" : "text-muted-foreground"}`}>{timerProjectLabel ?? "Select project"}</span>
                       <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
@@ -1067,124 +1365,164 @@ export default function TrackerPage() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-                <div className="flex h-10 items-center gap-1.5">
-                  <Checkbox
-                    data-testid="timer-billable"
-                    id="timer-billable"
-                    checked={timerBillable}
-                    onCheckedChange={(v) => setTimerBillable(v === true)}
-                  />
-                  <Label
-                    htmlFor="timer-billable"
-                    className="text-xs text-muted-foreground"
-                  >
-                    Billable
+                <div className="flex min-w-0 items-center gap-3">
+                  <Label htmlFor="timer-billable" className="flex h-10 shrink-0 items-center gap-2 max-sm:min-h-11 max-sm:pr-2">
+                    <Checkbox
+                      data-testid="timer-billable"
+                      id="timer-billable"
+                      checked={timerBillable}
+                      onCheckedChange={(v) => setTimerBillable(v === true)}
+                    />
+                    <span className="text-sm font-normal text-muted-foreground">
+                      Billable
+                    </span>
                   </Label>
+                  <Button
+                    data-testid="timer-start"
+                    onClick={handleStart}
+                    className="h-10 flex-1 px-4 max-sm:h-11 sm:flex-none"
+                  >
+                    <Play className="size-3.5" data-icon="inline-start" />
+                    Start timer
+                  </Button>
                 </div>
-                <Button
-                  data-testid="timer-start"
-                  onClick={handleStart}
-                  className="w-full sm:w-auto"
-                >
-                  <Play className="size-3.5" data-icon="inline-start" />
-                  Start timer
-                </Button>
               </div>
 
-              {activeTimers.length === 0 ? <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"><Clock className="size-5" />No active timers</div> : <div className="grid gap-2">{activeTimers.map((timer) => {
+              {activeTimers.length === 0 ? liveAgentWork.length === 0 && <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"><Clock className="size-5" />No active timers</div> : <div className="grid gap-2">{activeTimers.map((timer) => {
                 const project = getProject(timer.projectId)
-                return <div key={timer.id} data-testid="active-timer" className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                return <div key={timer.id} data-testid="active-timer" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-muted/30 px-4 py-3">
                   <Clock className="size-5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-[9rem] flex-1"><p className="font-medium">{timer.description || project?.name || "Untitled"}</p><p className="text-xs text-muted-foreground">{project?.name ?? "Unknown project"}</p></div>
+                  <div className="min-w-[9rem] flex-1"><p className="font-medium break-words">{timer.description || project?.name || "Untitled"}</p><p className="text-xs text-muted-foreground">{project?.name ?? "Unknown project"}</p></div>
                   <LiveTimer startTime={timer.startTime} pausedAt={timer.pausedAt} accumulatedPause={timer.accumulatedPause} />
                   {timer.pausedAt && <Badge variant="secondary" className="animate-pulse text-xs">Paused</Badge>}
-                  <div className="ml-auto flex gap-2">
-                    <Button variant="outline" onClick={() => handleDiscard(timer.id)}>Discard</Button>
-                    {timer.pausedAt ? <Button onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
-                    <Button variant="destructive" onClick={() => handleStop(timer.id)}><Square className="size-3.5" data-icon="inline-start" />Stop</Button>
+                  {/* Phones: Pause and Stop share the row, Discard is icon-only, so nothing wraps at 320. */}
+                  <div className="ml-auto flex flex-wrap gap-2 max-sm:grid max-sm:w-full max-sm:grid-cols-[1fr_1fr_auto]">
+                    {timer.pausedAt ? <Button variant="outline" className="max-sm:h-11" onClick={() => resumeTimer(timer.id)}><Play className="size-3.5" data-icon="inline-start" />Resume</Button> : <Button onClick={() => pauseTimer(timer.id)} variant="outline" className="max-sm:h-11"><Pause className="size-3.5" data-icon="inline-start" />Pause</Button>}
+                    <Button className="max-sm:h-11" onClick={() => handleStop(timer.id)}><Square className="size-3 fill-current" data-icon="inline-start" />Stop &amp; save</Button>
+                    <Button variant="ghost" aria-label="Discard" title="Discard" className="text-destructive hover:bg-destructive/10 hover:text-destructive max-sm:size-11 max-sm:border max-sm:border-input max-sm:bg-background max-sm:shadow-xs max-sm:p-0 dark:hover:bg-destructive/20" onClick={() => handleDiscard(timer.id)}><Trash2 className="size-3.5" data-icon="inline-start" /><span className="max-sm:hidden">Discard</span></Button>
                   </div>
                 </div>
               })}</div>}
+
+              {liveAgentWork.length > 0 && <LiveAgentIcons
+                work={liveAgentWork.map((work) => ({ ...work, projectName: work.projectId ? getProject(work.projectId)?.name : undefined, folderTitle: t3ProjectTitles.get(work.folder) }))}
+                renderProjectPicker={(work) => <ImportProjectPicker value={projectMappings[work.folder] ?? ""} onChange={(value) => void saveProjectMapping(work.folder, value)} choices={agentProjectChoices} />}
+              />}
             </div>
           )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-sm font-medium">Time Log</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
+      <Card className="phone-flat">
+        {/* Phones: Add hours and the review tools live in the page header; only "Approve N drafts" stays, as one full-width row. */}
+        <CardHeader className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${agentImportPreview.slices.length > 0 || (agentTimeLoading && !agentTime) ? "" : "max-sm:hidden"}`}>
+          <CardTitle className="text-sm font-medium max-sm:hidden">Time Log</CardTitle>
+          <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
+            {agentTimeLoading && !agentTime && <span data-testid="agent-drafts-loading" role="status" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground max-sm:min-h-11">
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+              Loading agent drafts…
+            </span>}
+            {agentImportPreview.slices.length > 0 && <Button variant="outline" size="sm" data-testid="review-drafts" className="max-sm:hidden" onClick={() => setDraftsOpen(true)}>
+              <ListChecks className="size-3.5" data-icon="inline-start" />
+              Review drafts
+            </Button>}
             {agentImportPreview.slices.length > 0 && <Button
               size="sm"
               data-testid="approve-all-drafts"
-              className="bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:hover:bg-amber-300"
+              className="bg-warning text-amber-950 hover:bg-warning/85 max-sm:h-11 max-sm:w-full"
               onClick={() => void approveAllDrafts()}
               disabled={agentTimeLoading || importing}
             >
               <Check className="size-3.5" data-icon="inline-start" />
-              Approve {agentImportPreview.slices.length} {agentImportPreview.slices.length === 1 ? "draft" : "drafts"} · <span className="font-mono">{formatDuration(agentImportPreviewSeconds)}</span>
+              Approve {agentImportPreview.slices.length} {agentImportPreview.slices.length === 1 ? "draft" : "drafts"} · <span className="tabular-nums">{formatClock(agentImportPreviewSeconds)}</span>
             </Button>}
-            <Button variant="outline" size="sm" onClick={() => setAddHoursOpen(true)}>
+            <Button variant="outline" size="sm" data-testid="add-hours" className="max-sm:hidden" onClick={() => setAddHoursOpen(true)}>
               <Plus className="size-3.5" data-icon="inline-start" />
               Add hours
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="max-sm:hidden lg:hidden" data-testid="review-tools-menu">
+                  Review{overlapIds.size > 0 && <span className="rounded-md bg-destructive/10 px-1.5 text-xs tabular-nums text-destructive">{overlapIds.size}</span>}
+                  <ChevronDown className="size-3.5" data-icon="inline-end" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-56">
+                {reviewTools.map((tool) => <DropdownMenuItem key={tool.id} data-testid={`${tool.id}-menu`} onSelect={tool.open}>
+                  <tool.icon className="size-4" />
+                  <span className="flex-1">{tool.label}…</span>
+                  {tool.count > 0 && <span className="text-xs tabular-nums text-destructive">{tool.count}</span>}
+                </DropdownMenuItem>)}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardHeader>
         <CardContent className="pb-4">
-          <div data-testid="agent-time-controls" className="mb-3 flex min-w-0 flex-wrap items-center gap-1 border-b pb-3">
-            <Button type="button" variant="ghost" size="sm" data-testid="review-saved-overlaps" onClick={() => setReviewEntryOverlapsOpen(true)}>Saved conflicts{overlapIds.size > 0 && <span className="ml-1 rounded bg-muted px-1.5 text-xs tabular-nums">{overlapIds.size}</span>}</Button>
-            <Button type="button" variant="ghost" size="sm" data-testid="review-agent-overlaps" onClick={() => setReviewAgentOverlapsOpen(true)}>Excluded time</Button>
-            <Button type="button" variant="ghost" size="sm" data-testid="review-agent-projects" onClick={() => setProjectsOpen(true)}>Projects</Button>
-            <Button type="button" variant="ghost" size="sm" data-testid="import-settings" onClick={() => setImportSettingsOpen(true)}>Import settings</Button>
+          <div data-testid="agent-time-controls" className="mb-3 hidden min-w-0 flex-wrap items-center gap-2 lg:flex">
+            {reviewTools.map((tool) => <Button key={tool.id} type="button" variant="outline" size="sm" data-testid={tool.id} aria-haspopup="dialog" onClick={tool.open}>
+              <tool.icon className="size-3.5 text-muted-foreground" data-icon="inline-start" />
+              {tool.label}
+              {tool.count > 0 && <span className="rounded-md bg-destructive/10 px-1.5 text-xs tabular-nums text-destructive">{tool.count}</span>}
+            </Button>)}
           </div>
+          {overlapIds.size > 0 && <div data-testid="overlap-summary" className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+            <TriangleAlert className="size-4 shrink-0 text-destructive" aria-hidden="true" />
+            <p className="min-w-0 flex-1"><span className="font-medium tabular-nums">{overlapIds.size} saved {overlapIds.size === 1 ? "entry overlaps" : "entries overlap"} other time.</span> <span className="text-muted-foreground max-sm:hidden">They&apos;re marked in red below.</span></p>
+            <Button type="button" variant="outline" size="sm" aria-haspopup="dialog" onClick={() => setReviewEntryOverlapsOpen(true)}>Review conflicts</Button>
+          </div>}
           {logRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No time entries yet</p>
           ) : (
-            <div className="overflow-hidden rounded-xl border [&_[data-slot=table-container]]:overflow-x-hidden">
+            <div className="overflow-hidden rounded-lg border [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table>
-            <TableHeader>
+            <TableHeader className="hidden lg:table-header-group">
               <TableRow>
-                <TableHead className="sm:w-[30%]">Description</TableHead>
-                <TableHead className="hidden sm:table-cell">Machine</TableHead>
-                <TableHead className="hidden w-[18%] sm:table-cell">Project</TableHead>
-                <TableHead className="hidden w-[12%] sm:table-cell">Date</TableHead>
-                <TableHead className="hidden min-w-28 sm:table-cell">Start / End</TableHead>
-                <TableHead className="hidden w-24 sm:table-cell">Duration</TableHead>
-                <TableHead className="hidden w-[6.5rem] sm:table-cell">Amount</TableHead>
-                <TableHead className="w-px sm:w-24" />
+                <TableHead>Description</TableHead>
+                <TableHead className="w-[18%] xl:w-[20%]">Project</TableHead>
+                <TableHead className="w-36 xl:w-40">Time</TableHead>
+                <TableHead className="w-20 text-right xl:w-24">Duration</TableHead>
+                <TableHead className="w-20 text-right xl:w-24">Amount</TableHead>
+                <TableHead className="w-px"><span className="sr-only">Actions</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
+              {logRows[0]?.date !== todayEntryDate && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal max-sm:px-4"><div className="flex min-w-0 items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span>Today</span><span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span></div></TableCell></TableRow>}
               {visibleRows.map((row, index) => {
                 const isNewDay = index === 0 || row.date !== visibleRows[index - 1]?.date
                 const isToday = row.date === todayEntryDate
                 const dayLabel = isToday ? "Today" : format(parseLocalDate(row.date), "EEEE, MMMM d, yyyy")
-                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={8} className="py-2 whitespace-normal"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{dayLabel}</span>{isToday && <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span>}</div></TableCell></TableRow>
+                const dayHeader = isNewDay && <TableRow className="bg-muted/35 hover:bg-muted/35"><TableCell colSpan={6} className="py-2 whitespace-normal max-sm:px-4"><div className="flex w-0 min-w-full items-center justify-between gap-3 text-xs font-semibold text-muted-foreground"><span className="truncate">{isToday ? dayLabel : <><span className="max-sm:hidden">{dayLabel}</span><span className="sm:hidden">{format(parseLocalDate(row.date), "EEE, MMM d")}</span></>}</span>{isToday ? <span className="inline-flex items-center gap-2"><span>Today&apos;s total</span><TodayTotal completedSeconds={todayCompletedSeconds} activeTimers={activeTimers} /></span> : !!dayTotals.get(row.date) && <span className="shrink-0 tabular-nums text-foreground sm:hidden">{entryClock(dayTotals.get(row.date)!)}</span>}</div></TableCell></TableRow>
                 if (row.kind === "draft") {
                   const slice = row.slice
                   const project = getProject(slice.projectId)
                   const { description: draftTitle, machines: draftMachines, billFactor } = draftDetails.get(slice.id)!
                   const amount = project ? (billedSeconds({ duration: slice.durationSeconds, billFactor }) / 3600) * project.rate : 0
+                  const range = timeRange(slice.start, slice.end)
                   return <Fragment key={slice.id}>
                     {dayHeader}
-                    <TableRow data-testid="agent-draft-row" className="bg-amber-500/[0.07] hover:bg-amber-500/[0.11]">
-                      <TableCell className="font-medium whitespace-normal break-words">
-                        <EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />
-                        <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{draftMachines}</p>
-                        <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-amber-700 dark:text-amber-300">{formatDuration(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />} · {project?.name ?? "—"} · {format(new Date(slice.start), "MMM d, h:mm a")}–{format(new Date(slice.end), "h:mm a")}{amount ? ` · ${money(amount, project?.currency)}` : ""}</p>
+                    <TableRow data-testid="agent-draft-row" className="bg-warning/[0.07] hover:bg-warning/[0.12] max-lg:relative">
+                      <TableCell className="font-medium whitespace-normal break-words max-sm:px-4 max-sm:py-2.5">
+                        <div className={rowTitleClass}><EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)}
+                          figure={<span className={rowFigureClass}><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{amount ? ` · ${money(amount, project?.currency)}` : ""}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</span>}>
+                          <span className={rowMetaClass} title={project?.name}>{project?.name ?? "—"}</span>
+                          <span className={rowTimeClass}>{range}</span>
+                        </EntryChats></div>
+                        {draftMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={draftMachines} /></p>}
+                        <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden max-sm:hidden">
+                          <MetaLine project={project?.name} machines={draftMachines} />
+                          <div className="flex flex-wrap items-center gap-x-2"><span className="tabular-nums">{range}</span>
+                          <span className="ml-auto tabular-nums"><span className="text-warning-foreground">{entryClock(slice.durationSeconds)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                        </div>
                       </TableCell>
-                      <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{draftMachines}</TableCell>
-                      <TableCell className="hidden whitespace-normal sm:table-cell"><span className="block text-xs text-muted-foreground">{project?.name ?? "—"}</span></TableCell>
-                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(new Date(slice.start), "MMM d, yyyy")}</TableCell>
-                      <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{format(new Date(slice.start), "h:mm a")} – {format(new Date(slice.end), "h:mm a")}</TableCell>
-                      <TableCell className="hidden font-mono text-xs text-amber-700 sm:table-cell dark:text-amber-300">{formatDuration(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
-                      <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                      <TableCell><div className="flex items-center gap-0.5">
-                        <Button variant="ghost" size="icon-xs" data-testid="approve-draft" disabled={importing} aria-label="Approve" title="Approve" className="text-amber-700 hover:bg-amber-500/20 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200" onClick={() => void approveDraft(slice)}><Check className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon-xs" aria-label="Edit and approve" title="Edit and approve" onClick={() => openDraftEdit(slice)}><Pencil className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon-xs" data-testid="ignore-agent-slice" aria-label="Skip" title="Skip" onClick={() => ignoreAgentSlice(slice)}><Trash2 className="size-3.5" /></Button>
-                      </div></TableCell>
+                      <TableCell className="hidden whitespace-normal lg:table-cell"><span className="line-clamp-2 text-xs text-muted-foreground" title={project?.name}>{project?.name ?? "—"}</span></TableCell>
+                      <TableCell className="hidden text-xs tabular-nums lg:table-cell">{range}</TableCell>
+                      <TableCell className="hidden text-right text-xs tabular-nums text-warning-foreground lg:table-cell">{entryClock(slice.durationSeconds)}{billFactor < 1 && <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} />}</TableCell>
+                      <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
+                      <TableCell className={rowActionsClass}><RowActionsMenu name={draftTitle || "draft"} className={rowActionGroupClass} items={[
+                        { label: "Approve", icon: Check, testId: "approve-draft", disabled: importing, className: "text-warning-foreground hover:bg-warning/20 hover:text-warning-foreground", onSelect: () => void approveDraft(slice) },
+                        { label: "Edit and approve", icon: Pencil, onSelect: () => openDraftEdit(slice) },
+                        { label: "Skip", icon: Trash2, testId: "ignore-agent-slice", onSelect: () => ignoreAgentSlice(slice) },
+                      ]} /></TableCell>
                     </TableRow>
                   </Fragment>
                 }
@@ -1194,34 +1532,40 @@ export default function TrackerPage() {
                 const entryChatSources = sourcesForEntry(entry)
                 const entryMachines = machineNames(entryChatSources)
                 const amount = entry.billable && project ? (billedSeconds(entry) / 3600) * project.rate : 0
+                const overlaps = overlapIds.has(entry.id)
+                const range = entry.endTime ? timeRange(entry.startTime, entry.endTime) : "No exact times"
+                const overlapMarker = overlaps && <span role="img" aria-label="Overlaps other time" title="Overlaps other time. Review it in Saved conflicts." className="inline-flex shrink-0 text-destructive"><TriangleAlert className="size-3.5" aria-hidden="true" /></span>
                 return <Fragment key={entry.id}>
                   {dayHeader}
-                  <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} aria-label={entry.description || "Untitled time entry"} className={highlightedEntry === entry.id ? "bg-amber-500/15 outline-2 -outline-offset-2 outline-amber-500" : overlapIds.has(entry.id) ? "bg-red-500/5 hover:bg-red-500/10" : undefined}>
-                  <TableCell className="font-medium whitespace-normal break-words">
-                    <EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined} />
+                  <TableRow id={`time-entry-${entry.id}`} tabIndex={-1} data-highlighted={highlightedEntry === entry.id || undefined} data-overlap={overlaps || undefined} aria-label={entry.description || "Untitled time entry"} className={`max-lg:relative ${highlightedEntry === entry.id ? "bg-warning/15 outline-2 -outline-offset-2 outline-warning" : ""}`}>
+                  <TableCell className={`font-medium whitespace-normal break-words max-sm:px-4 max-sm:py-2.5 ${overlaps ? "shadow-[inset_2px_0_0_var(--destructive)]" : ""}`}>
+                    <div className={rowTitleClass}><EntryChats description={entry.description} sources={entryChatSources} start={Date.parse(entry.startTime)} end={entry.endTime ? Date.parse(entry.endTime) : NaN} labels={data.settings.agentTimeHostLabels || {}} inferred={!entry.agentTimeSources?.length} chatFactors={chatFactors} onSetChatFactor={entry.agentTimeSources?.length ? (chat, factor) => void setChatBillFactor(chat, factor) : undefined}
+                      figure={<span className={rowFigureClass}>{entryClock(entry.duration)}{amount ? ` · ${money(amount, project?.currency)}` : ""}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</span>}>
+                      <span className={rowMetaClass} title={project?.name}>{project?.name ?? "—"}</span>
+                      <span className={`${rowTimeClass} inline-flex items-center justify-end gap-1`}>{range}{overlapMarker}</span>
+                    </EntryChats></div>
                     {entry.agentTimeTitleStatus === "pending" && <span role="status" data-testid="entry-title-loading" className="mt-1 inline-flex items-center gap-1.5 rounded-md text-xs font-normal text-muted-foreground"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />Naming…</span>}
-                    {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
-
-                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entryMachines}</p>
-                    <p className="mt-1 text-xs font-normal text-muted-foreground sm:hidden">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</p>
-                    {overlapIds.has(entry.id) && <button type="button" className="mt-1 block cursor-pointer text-xs text-red-700 underline underline-offset-4 dark:text-red-300" onClick={() => setReviewEntryOverlapsOpen(true)}>Review overlap</button>}
-                    <p className="mt-0.5 whitespace-normal text-[0.7rem] font-normal text-muted-foreground sm:hidden"><span className="font-mono text-foreground">{formatDuration(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />} · {project?.name ?? "—"} · {format(parseLocalDate(entry.date), "MMM d")}{amount ? ` · ${money(amount, project?.currency)}` : ""}</p>
+                    {entry.agentTimeTitleStatus === "failed" && <button type="button" className="mt-1 block cursor-pointer rounded-md text-xs font-normal text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { void updateTimeEntry(entry.id, { agentTimeTitleStatus: "pending" }).catch(() => toast.error("Could not retry naming")) }}>Naming failed · Retry</button>}
+                    {entryMachines.length > 0 && <p className="mt-0.5 hidden text-xs font-normal text-muted-foreground lg:block"><MachineList names={entryMachines} /></p>}
+                    <div className="mt-0.5 w-0 min-w-full space-y-0.5 text-xs font-normal text-muted-foreground lg:hidden max-sm:hidden">
+                      <MetaLine project={project?.name} machines={entryMachines} />
+                      <div className="flex flex-wrap items-center gap-x-2"><span className="inline-flex items-center gap-1"><span className="tabular-nums">{range}</span>{overlapMarker}</span>
+                      <span className="ml-auto tabular-nums"><span className="text-foreground">{entryClock(entry.duration)}</span>{billFactor < 1 && <BilledTime seconds={billedSeconds(entry)} factor={billFactor} />}{amount ? ` · ${money(amount, project?.currency)}` : ""}</span></div>
+                    </div>
                   </TableCell>
-                  <TableCell className="hidden whitespace-normal text-xs sm:table-cell">{entryMachines}</TableCell>
-                  <TableCell className="hidden whitespace-normal sm:table-cell">
-                    <button className="inline-flex max-w-full items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground" onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
-                      <span>{project?.name ?? "—"}</span><Pencil className="size-3 shrink-0" />
+                  <TableCell className="hidden whitespace-normal lg:table-cell">
+                    <button type="button" className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md text-left text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default" disabled={!project} aria-label={project ? `Edit project ${project.name}` : "Unknown project"} title={project ? `Edit ${project.name}` : undefined} onClick={() => project && setProjectEdit({ id: project.id, name: project.name, rate: String(project.rate) })}>
+                      <span className="line-clamp-2">{project?.name ?? "—"}</span>{project && <Pencil className="size-3 shrink-0 opacity-60" aria-hidden="true" />}
                     </button>
                   </TableCell>
-                  <TableCell className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{format(parseLocalDate(entry.date), "MMM d, yyyy")}</TableCell>
-                  <TableCell className="hidden font-mono text-xs whitespace-normal sm:table-cell">{entry.endTime ? `${format(new Date(entry.startTime), "h:mm a")} – ${format(new Date(entry.endTime), format(new Date(entry.startTime), "yyyy-MM-dd") === format(new Date(entry.endTime), "yyyy-MM-dd") ? "h:mm a" : "MMM d, h:mm a")}` : "No exact times"}</TableCell>
-                  <TableCell className="hidden font-mono text-xs sm:table-cell">{formatDuration(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
-                  <TableCell className="hidden font-mono text-xs sm:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
-                  <TableCell><div className="flex items-center gap-0.5">
-                    <Button variant="ghost" size="icon-xs" onClick={() => handleResume(entry)}><Play className="size-3.5 fill-current" /></Button>
-                    <Button variant="ghost" size="icon-xs" onClick={() => openEdit(entry)}><Pencil className="size-3.5" /></Button>
-                    <Button variant="ghost" size="icon-xs" onClick={() => setDeleteTarget(entry)}><Trash2 className="size-3.5" /></Button>
-                  </div></TableCell>
+                  <TableCell className="hidden text-xs tabular-nums lg:table-cell"><span className="inline-flex items-center gap-1.5">{range}{overlapMarker}</span></TableCell>
+                  <TableCell className="hidden text-right text-xs tabular-nums lg:table-cell">{entryClock(entry.duration)}{billFactor < 1 && <BilledTime block seconds={billedSeconds(entry)} factor={billFactor} />}</TableCell>
+                  <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground lg:table-cell">{amount ? money(amount, project?.currency) : "—"}</TableCell>
+                  <TableCell className={rowActionsClass}><RowActionsMenu name={entry.description || "untitled time entry"} className={rowActionGroupClass} items={[
+                    { label: "Resume timer", icon: Play, className: "[&_svg]:fill-current", onSelect: () => handleResume(entry) },
+                    { label: "Edit entry", icon: Pencil, onSelect: () => openEdit(entry) },
+                    { label: "Delete entry", icon: Trash2, destructive: true, onSelect: () => setDeleteTarget(entry) },
+                  ]} /></TableCell>
                   </TableRow>
                 </Fragment>
               })}
@@ -1248,15 +1592,15 @@ export default function TrackerPage() {
         items={data.timeEntries.filter((entry) => overlapIds.has(entry.id)).map((entry) => {
           const project = getProject(entry.projectId)
           const client = getClient(project?.clientId ?? "")
-          const timeLabel = `${format(new Date(entry.startTime), "MMM d, yyyy h:mm a")} – ${format(new Date(entry.endTime!), "MMM d, h:mm a")}`
+          const timeLabel = `${format(new Date(entry.startTime), "EEE, MMM d, yyyy")} · ${timeRange(entry.startTime, entry.endTime!)}`
           return { id: entry.id, searchText: `${entry.description} ${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="saved-overlap-review-item">
             <div className="flex items-start justify-between gap-3">
               <p className="min-w-0 break-words font-medium">{entry.description || "Untitled"}</p>
               <Button type="button" variant="ghost" size="icon-sm" data-testid="find-conflict-in-log" aria-label="Find entry in time log" title="Find in time log" onClick={() => { jumpToEntry.current = entry.id; revealEntry(entry.id); setHighlightedEntry(entry.id); setReviewEntryOverlapsOpen(false) }}><ArrowUpRight className="size-4" /></Button>
             </div>
-            <p data-testid="overlap-minutes" className="mb-1 text-sm font-medium tabular-nums text-red-700 dark:text-red-300">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format((overlapDetails.get(entry.id)?.overlapMilliseconds ?? 0) / 60_000)} min overlapping</p>
+            <p data-testid="overlap-minutes" className="mb-1 text-sm font-medium tabular-nums text-destructive">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format((overlapDetails.get(entry.id)?.overlapMilliseconds ?? 0) / 60_000)} min overlapping</p>
             <p className="break-words text-xs text-muted-foreground">{client?.name} / {project?.name ?? "Unknown project"}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{timeLabel}</p>
+            <p className="mt-1 text-xs tabular-nums text-muted-foreground">{timeLabel}</p>
             <div className="mt-2 flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => { setReviewEntryOverlapsOpen(false); openEdit(entry) }}>Edit times</Button><Button type="button" variant="ghost" size="sm" data-testid="dismiss-saved-overlap" onClick={() => saveOverlapReviews("entry", [...reviewedEntryOverlaps, entryOverlapKeys.get(entry.id)!])}><X className="size-3" />Dismiss flag</Button></div>
           </div> }
         })}
@@ -1266,33 +1610,59 @@ export default function TrackerPage() {
         items={pendingAgentOverlaps.map((overlap) => {
           const project = getProject(overlap.projectId)
           const client = getClient(project?.clientId ?? "")
-          const timeLabel = `${format(new Date(overlap.start), "MMM d, yyyy h:mm a")} – ${format(new Date(overlap.end), "MMM d, h:mm a")}`
+          const timeLabel = `${format(new Date(overlap.start), "EEE, MMM d, yyyy")} · ${timeRange(overlap.start, overlap.end)}`
           return { id: overlap.key, searchText: `${project?.name} ${client?.name} ${timeLabel}`, content: <div data-testid="agent-overlap-item" className="flex min-w-0 items-start gap-2">
-            <div className="min-w-0 flex-1"><p className="break-words font-medium">{project?.name ?? "Unknown project"}</p><p className="text-xs text-muted-foreground">{client?.name}</p><p className="mt-1 text-xs text-muted-foreground">{timeLabel}</p><p className="mt-1 text-xs tabular-nums">{formatDuration(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
+            <div className="min-w-0 flex-1"><p className="break-words font-medium">{project?.name ?? "Unknown project"}</p><p className="text-xs text-muted-foreground">{client?.name}</p><p className="mt-1 text-xs tabular-nums text-muted-foreground">{timeLabel}</p><p className="mt-1 text-xs tabular-nums">{entryClock(Math.floor((overlap.end - overlap.start) / 1000))} excluded</p></div>
             <Button type="button" variant="ghost" size="icon-sm" data-testid="dismiss-agent-overlap-warning" aria-label="Dismiss reviewed agent overlap" onClick={() => saveOverlapReviews("agent", [...reviewedAgentOverlaps, overlap.key])}><X className="size-4" /></Button>
           </div> }
         })}
       />
-      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Import projects" description="Choose where each desktop project belongs. Personal projects stay out of imports." emptyText="No desktop projects to map."
-        items={[...unmappedAgentProjects, ...handledAgentProjects].map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-          <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
-          <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={[{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]} />
+      <DraftReviewDialog open={draftsOpen} onOpenChange={setDraftsOpen} busy={agentTimeLoading || importing} totalSeconds={agentImportPreviewSeconds}
+        onApprove={(ids) => void approveDrafts(agentImportPreview.slices.filter((slice) => ids.includes(slice.id)))}
+        onSkip={(ids) => skipDrafts(agentImportPreview.slices.filter((slice) => ids.includes(slice.id)))}
+        onEdit={(id) => { const slice = agentImportPreview.slices.find((s) => s.id === id); if (!slice) return; returnToDrafts.current = true; setDraftsOpen(false); openDraftEdit(slice) }}
+        onApproveAll={() => void approveAllDrafts()}
+        items={[...agentImportPreview.slices].sort((a, b) => b.start - a.start).map((slice) => {
+          const project = getProject(slice.projectId)
+          const client = project ? getClient(project.clientId) : undefined
+          const { description: draftTitle, machines: draftMachines, billFactor } = draftDetails.get(slice.id)!
+          const amount = project ? (billedSeconds({ duration: slice.durationSeconds, billFactor }) / 3600) * project.rate : 0
+          // Skip the client when it only repeats the project's name ("ASCEND · ASCEND").
+          const owner = client && client.name.trim().toLowerCase() !== project?.name.trim().toLowerCase() ? ` · ${client.name}` : ""
+          return {
+            id: slice.id,
+            start: slice.start,
+            end: slice.end,
+            durationSeconds: slice.durationSeconds,
+            title: draftTitle,
+            titleNode: <EntryChats description={draftTitle} sources={slice.interval.sourceIntervals || []} start={slice.start} end={slice.end} labels={data.settings.agentTimeHostLabels || {}} chatFactors={chatFactors} onSetChatFactor={(chat, factor) => void setChatBillFactor(chat, factor)} />,
+            meta: `${project?.name ?? "—"}${owner}${draftMachines.length ? ` · ${draftMachines.join(", ")}` : ""}`,
+            amount: amount ? money(amount, project?.currency) : "",
+            billed: billFactor < 1 ? <BilledTime block seconds={billedSeconds({ duration: slice.durationSeconds, billFactor })} factor={billFactor} /> : undefined,
+            searchText: [draftTitle, project?.name, client?.name, ...draftMachines, format(new Date(slice.start), "EEEE MMMM d yyyy h:mm a")].join(" "),
+          }
+        })}
+      />
+      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Project mappings" description="Choose where each T3 Code project's time goes. It's saved on the project, so you can also change it on the Projects page. Personal projects stay out of imports." emptyText="No T3 Code projects to map."
+        items={mappingFolders.map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${t3ProjectTitles.get(agentProject) ?? ""} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+          <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{t3ProjectTitles.get(agentProject) && <p className="text-xs text-muted-foreground">T3 Code: {t3ProjectTitles.get(agentProject)}</p>}{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
+          <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={agentProjectChoices} />
         </div> }))}
       />
       <Dialog open={importSettingsOpen} onOpenChange={setImportSettingsOpen}>
         <DialogContent><DialogHeader><DialogTitle>Import settings</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Adjust gap grouping and the period included in your review.</p>
+          <p className="text-sm text-muted-foreground">Adjust gap grouping and the period included in your review. Agent Time older than {AGENT_DRAFT_WINDOW_DAYS} days never becomes a draft.</p>
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <div className="flex h-8 items-center rounded-md border bg-background pl-3 focus-within:ring-2 focus-within:ring-ring" title="Join gaps up to this many minutes">
-                <span>Gap</span>
-                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center text-xs tabular-nums text-foreground shadow-none [appearance:textfield] focus-visible:ring-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none dark:bg-transparent" />
+              <div className="flex h-8 items-center rounded-md border border-input bg-background pl-3 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30" title="Join gaps up to this many minutes">
+                <label htmlFor="tracker-agent-gap">Gap</label>
+                <Input id="tracker-agent-gap" data-testid="tracker-agent-gap" aria-label="Join gaps up to (minutes)" type="number" min="0" max="240" inputMode="numeric" value={gapMinutes} onChange={(event) => setGapMinutes(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyGapMinutes() }} className="h-7 w-12 border-0 bg-transparent px-1 text-center text-[16px] tabular-nums text-foreground shadow-none focus-visible:ring-0 sm:text-xs dark:bg-transparent" />
                 <span className="pr-3">min</span>
               </div>
               <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
-              {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE
+              {!agentTimeStartDate || agentTimeStartDate <= draftWindowStartDate
                 ? <Button type="button" variant="ghost" size="sm" className="h-8" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
-                : <Button type="button" variant="ghost" size="sm" className="h-8" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
-              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 font-mono">{formatDuration(agentImportPreview.ignoredSeconds)}</span></Button>}
+                : <Button type="button" variant="ghost" size="sm" className="h-8" onClick={showAllAgentTime}>Last {AGENT_DRAFT_WINDOW_DAYS} days</Button>}
+              {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 tabular-nums">{formatClock(agentImportPreview.ignoredSeconds)}</span></Button>}
             </div>
           <DialogFooter><Button variant="outline" onClick={() => setImportSettingsOpen(false)}>Done</Button></DialogFooter>
         </DialogContent>
@@ -1306,9 +1676,9 @@ export default function TrackerPage() {
           <div className="grid gap-4 py-3">
             <p className="text-sm text-muted-foreground">Add billable time without needing exact start and end times.</p>
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label htmlFor="hours-project">Project</Label>
               <Select value={hoursForm.projectId} onValueChange={(projectId) => setHoursForm({ ...hoursForm, projectId })}>
-                <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                <SelectTrigger id="hours-project" className="w-full"><SelectValue placeholder="Select project" /></SelectTrigger>
                 <SelectContent>{data.projects.filter((project) => project.status === "active").map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
@@ -1327,29 +1697,29 @@ export default function TrackerPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Project</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid gap-2"><Label>Project name</Label><Input value={projectEdit?.name ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, name: e.target.value } : p)} /></div>
-            <div className="grid gap-2"><Label>Hourly rate</Label><Input type="number" min="0" step="0.01" value={projectEdit?.rate ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, rate: e.target.value } : p)} /></div>
+            <div className="grid gap-2"><Label htmlFor="project-edit-name">Project name</Label><Input id="project-edit-name" value={projectEdit?.name ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, name: e.target.value } : p)} /></div>
+            <div className="grid gap-2"><Label htmlFor="project-edit-rate">Hourly rate</Label><Input id="project-edit-rate" type="number" min="0" step="0.01" value={projectEdit?.rate ?? ""} onChange={(e) => setProjectEdit((p) => p ? { ...p, rate: e.target.value } : p)} /></div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setProjectEdit(null)}>Cancel</Button><Button onClick={saveProjectEdit}>Save changes</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Edit Entry Dialog */}
-      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) { setEditEntry(null); setEditDraft(null) } }}>
+      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) { setEditEntry(null); setEditDraft(null); backToDrafts() } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editDraft ? "Approve draft" : "Edit Time Entry"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label>Project</Label>
+              <Label htmlFor="edit-project">Project</Label>
               <Select
                 value={editForm.projectId}
                 onValueChange={(v) =>
                   setEditForm({ ...editForm, projectId: v })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger id="edit-project" className="w-full">
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1378,10 +1748,11 @@ export default function TrackerPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label>Start Time</Label>
+                <Label htmlFor="edit-start">Start time</Label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
+                      id="edit-start"
                       variant="outline"
                       className="justify-start text-left font-normal"
                     >
@@ -1414,7 +1785,8 @@ export default function TrackerPage() {
                             d.setHours(h, m)
                             setEditForm({ ...editForm, startTime: d.toISOString() })
                           }}
-                          className="font-mono"
+                          aria-label="Start time of day"
+                          className="tabular-nums"
                         />
                       </div>
                     </div>
@@ -1422,10 +1794,11 @@ export default function TrackerPage() {
                 </Popover>
               </div>
               <div className="grid gap-2">
-                <Label>End Time</Label>
+                <Label htmlFor="edit-end">End time</Label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
+                      id="edit-end"
                       variant="outline"
                       className="justify-start text-left font-normal"
                     >
@@ -1458,7 +1831,8 @@ export default function TrackerPage() {
                             d.setHours(h, m)
                             setEditForm({ ...editForm, endTime: d.toISOString() })
                           }}
-                          className="font-mono"
+                          aria-label="End time of day"
+                          className="tabular-nums"
                         />
                       </div>
                     </div>
@@ -1470,8 +1844,8 @@ export default function TrackerPage() {
               <span className="text-xs text-muted-foreground">
                 Calculated duration:{" "}
               </span>
-              <span className="font-mono text-sm font-medium">
-                {editDuration > 0 ? formatDuration(editDuration) : "—"}
+              <span className="text-sm font-medium tabular-nums">
+                {editDuration > 0 ? entryClock(editDuration) : "—"}
               </span>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1510,7 +1884,7 @@ export default function TrackerPage() {
             <AlertDialogDescription>
               This will permanently delete &ldquo;
               {deleteTarget?.description || "Untitled"}&rdquo; (
-              {deleteTarget ? formatDuration(deleteTarget.duration) : ""}). This
+              {deleteTarget ? entryClock(deleteTarget.duration) : ""}). This
               action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
