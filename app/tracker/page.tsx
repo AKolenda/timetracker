@@ -643,11 +643,12 @@ export default function TrackerPage() {
 
   const projectMappings = useMemo(
     () => resolveAgentMappings(
-      [...(agentTime?.projects ?? []), ...(agentTime?.intervals.map((interval) => interval.project) ?? [])],
+      // Skipped folders resolve too, so a skip still finds its billing project after the folder disappears.
+      [...(agentTime?.projects ?? []), ...(agentTime?.intervals.map((interval) => interval.project) ?? []), ...ignoredAgentRanges.map((range) => range.agentProject)],
       data.projects,
       localMappings
     ),
-    [agentTime, data.projects, localMappings]
+    [agentTime, data.projects, localMappings, ignoredAgentRanges]
   )
 
   const availableAgentIntervals = useMemo(
@@ -1202,7 +1203,8 @@ export default function TrackerPage() {
   function restoreVisibleIgnoredAgentRanges() {
     setIgnoredAgentRanges((current) => {
       const next = current.filter((range) => !availableAgentIntervals.some((interval) => {
-        if (interval.project !== range.agentProject) return false
+        const rangeProject = projectMappings[range.agentProject]
+        if (interval.project !== range.agentProject && !(rangeProject && rangeProject === projectMappings[interval.project])) return false
         const intervalStart = new Date(interval.start).getTime()
         const intervalEnd = new Date(interval.end).getTime()
         return Number.isFinite(intervalStart) && Number.isFinite(intervalEnd) && range.end > intervalStart && range.start < intervalEnd
