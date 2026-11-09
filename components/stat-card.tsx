@@ -54,6 +54,8 @@ export function StatGrid({ className, children }: { className?: string; children
         // Hairlines come from a 1px gap over the border colour, so no edge doubles up;
         // an odd last tile spans both columns so no empty cell shows.
         "max-sm:gap-px max-sm:overflow-hidden max-sm:rounded-lg max-sm:border max-sm:bg-border max-sm:[&>:last-child:nth-child(odd)]:col-span-2",
+        // Any tile, not just a StatCard, sits flat inside the strip: no corners, ring or border of its own.
+        "max-sm:*:rounded-none max-sm:*:border-0 max-sm:*:shadow-none max-sm:*:ring-0",
         className
       )}
     >

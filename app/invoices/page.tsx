@@ -71,6 +71,7 @@ import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-
 import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
 import { billedSeconds } from "@/lib/billing"
 import { PageHeader } from "@/components/page-header"
+import { HeaderSearch } from "@/components/header-search"
 import { SheetAction } from "@/components/more-sheet"
 import {
   InvoiceStatusBadge,
@@ -723,17 +724,12 @@ export default function InvoicesPage() {
       <PageHeader
         title="Invoices"
         center={
-          <div className="relative w-full min-w-0">
-            <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-11 pl-9 text-[16px]"
-              placeholder="Search"
-              aria-label="Search invoices by number, client, or status"
-            />
-          </div>
+          <HeaderSearch
+            value={search}
+            onChange={setSearch}
+            noun="invoices"
+            label="Search invoices by number, client, or status"
+          />
         }
         primary={{
           label: "New invoice",
@@ -950,8 +946,9 @@ export default function InvoicesPage() {
               const client = getClient(inv.clientId)
               const { total, secondary } = listTotal(inv)
               return (
-                <li key={inv.id} data-testid="invoice-row" className="flex items-center gap-1 py-1.5 pr-0.5 pl-3">
-                  <div className="min-w-0 flex-1">
+                <li key={inv.id} data-testid="invoice-row" className="flex items-center gap-1 pr-0.5 pl-4">
+                  {/* Padding sits on the text, as on Expenses, so the 44px ⋯ doesn't add to the row height. */}
+                  <div className="min-w-0 flex-1 py-2.5">
                     <div className="flex min-w-0 items-center gap-1.5 min-[360px]:gap-2">
                       <p className="min-w-0 truncate text-sm font-medium tabular-nums">{inv.invoiceNumber}</p>
                       <StatusMenu
@@ -998,13 +995,14 @@ export default function InvoicesPage() {
 
       {/* Create Invoice Dialog — full-width responsive */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto sm:max-w-4xl">
+        <DialogContent className="max-h-[90vh] w-[95vw] grid-cols-1 overflow-y-auto sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Create Invoice</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-6 py-4">
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              <div className="grid content-start gap-2">
+          {/* grid-cols-N tracks are minmax(0,1fr) and every cell is min-w-0, so long entry text truncates instead of widening the dialog. */}
+          <div className="grid min-w-0 grid-cols-1 gap-6 py-4">
+            <div className="grid min-w-0 grid-cols-1 gap-4 min-[400px]:grid-cols-2 md:grid-cols-4">
+              <div className="grid min-w-0 content-start gap-2">
                 <Label htmlFor="invoice-client">Client</Label>
                 <Select
                   value={selectedClientId}
@@ -1032,7 +1030,7 @@ export default function InvoicesPage() {
                 </Select>
                 <FieldError id="invoice-client-error" message={createErrors.client} />
               </div>
-              <div className="grid content-start gap-2">
+              <div className="grid min-w-0 content-start gap-2">
                 <Label htmlFor="tax-rate">Tax %</Label>
                 <Input
                   id="tax-rate"
@@ -1043,7 +1041,7 @@ export default function InvoicesPage() {
                   onChange={(e) => setTaxRate(e.target.value)}
                 />
               </div>
-              <div className="grid content-start gap-2">
+              <div className="grid min-w-0 content-start gap-2">
                 <Label htmlFor="due-days">
                   Due in (days)
                   {dueDays === "0" && (
@@ -1065,7 +1063,7 @@ export default function InvoicesPage() {
                 />
                 <FieldError id="due-days-error" message={createErrors.dueDays} />
               </div>
-              <div className="grid content-start gap-2">
+              <div className="grid min-w-0 content-start gap-2">
                 <Label htmlFor="invoice-number">Invoice #</Label>
                 <Input
                   id="invoice-number"
@@ -1077,16 +1075,16 @@ export default function InvoicesPage() {
             </div>
 
             {selectedClientId && (
-              <div className="grid gap-2">
+              <div className="grid min-w-0 gap-2">
               <div
                 id="invoice-line-items"
                 role="group"
                 aria-label="Time entries and expenses to invoice"
                 aria-describedby={createErrors.items ? "invoice-items-error" : undefined}
-                className="grid gap-6 lg:grid-cols-2"
+                className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2"
               >
                 {/* Time Entries */}
-                <div>
+                <div className="min-w-0">
                   <div className="mb-2 flex items-center justify-between">
                     <Label className="text-sm font-medium">
                       Time Entries
@@ -1117,20 +1115,20 @@ export default function InvoicesPage() {
                       {unbilledEntries.map((entry) => (
                         <label
                           key={entry.id}
-                          className="flex items-center gap-3 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
+                          className="flex min-w-0 cursor-pointer items-center gap-3 rounded px-2 py-1.5 text-sm hover:bg-muted/50 max-sm:gap-2 pointer-coarse:min-h-11"
                         >
                           <Checkbox
                             checked={selectedEntries.has(entry.id)}
                             onCheckedChange={() => toggleEntry(entry.id)}
                           />
-                          <span className="flex-1 truncate">
+                          <span className="min-w-0 flex-1 truncate">
                             {entry.projectName}:{" "}
                             {entry.description || "Untitled"}
                           </span>
                           <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                             {formatHours(billedSeconds(entry))}h
                           </span>
-                          <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums">
+                          <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums max-sm:w-auto">
                             {formatCurrency(
                               (billedSeconds(entry) / 3600) * entry.rate
                             )}
@@ -1142,7 +1140,7 @@ export default function InvoicesPage() {
                 </div>
 
                 {/* Expenses — always shown */}
-                <div>
+                <div className="min-w-0">
                   <div className="mb-2 flex items-center justify-between">
                     <Label className="text-sm font-medium">
                       Expenses
@@ -1173,16 +1171,16 @@ export default function InvoicesPage() {
                       {unbilledExpenses.map((expense) => (
                         <label
                           key={expense.id}
-                          className="flex items-center gap-3 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
+                          className="flex min-w-0 cursor-pointer items-center gap-3 rounded px-2 py-1.5 text-sm hover:bg-muted/50 max-sm:gap-2 pointer-coarse:min-h-11"
                         >
                           <Checkbox
                             checked={selectedExpenses.has(expense.id)}
                             onCheckedChange={() => toggleExpense(expense.id)}
                           />
-                          <span className="flex-1 truncate">
+                          <span className="min-w-0 flex-1 truncate">
                             {expense.projectName}: {expense.description}
                           </span>
-                          <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums">
+                          <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums max-sm:w-auto">
                             {formatCurrency(expense.amount)}
                           </span>
                         </label>
@@ -1197,8 +1195,8 @@ export default function InvoicesPage() {
 
             <Separator />
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="grid gap-2">
+            <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="grid min-w-0 gap-2">
                 <Label htmlFor="inv-notes">Notes</Label>
                 <Textarea
                   id="inv-notes"

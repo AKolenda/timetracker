@@ -9,7 +9,7 @@ import { formatCurrency } from "@/lib/format"
 import type { InvoiceEstimate } from "@/lib/invoice-estimates"
 
 const hoursLabel = (hours: number) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(hours)
-// A quiet warning tint with a thin accent edge, so previews stand apart without flooding the log.
+// A quiet warning tint with a thin accent edge, so previews stand apart in the desktop table.
 const previewRow = "bg-warning/[0.05] shadow-[inset_2px_0_0_var(--warning)] hover:bg-warning/10"
 const previewChip = "inline-flex h-5 items-center rounded-md bg-warning/15 px-1.5 text-xs font-medium whitespace-nowrap text-warning-foreground"
 
@@ -17,12 +17,14 @@ export function InvoiceEstimateRow({ estimate, onReview, mobile = false }: { est
   // Issued rows show amounts in the display currency with no code, so only name a currency that differs from it.
   const { currency: displayCurrency } = useMoney()
   const currencyCode = estimate.currency !== displayCurrency ? estimate.currency : null
-  // A row in the phone/tablet invoice list: one line of client and amount, then the preview facts.
-  if (mobile) return <button type="button" data-testid="invoice-estimate-row" onClick={onReview} aria-label={`Review invoice preview for ${estimate.clientName}`} className={`flex w-full min-w-0 cursor-pointer items-center gap-3 px-3 py-2.5 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset ${previewRow}`}>
-    <FileText aria-hidden className="size-4 shrink-0 text-warning-foreground" />
-    <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{estimate.clientName}</p><p className="mt-1 flex min-w-0 flex-nowrap items-center gap-x-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground"><span className={previewChip}>Preview</span><span className="tabular-nums">{hoursLabel(estimate.hours)}h</span><span aria-hidden className="max-sm:hidden">·</span><span className="max-sm:sr-only">Before tax</span></p></div>
-    <div className="shrink-0 text-right"><p className="text-sm font-semibold tabular-nums">{formatCurrency(estimate.subtotal, estimate.currency)}</p>{currencyCode && <p className="text-xs text-muted-foreground">{currencyCode}</p>}</div>
-    <Eye aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+  // A row in the phone/tablet invoice list, laid out like the invoice rows under it: client, chip and
+  // amount on line 1, hours on line 2, and the eye in the same 44px slot as their ⋯. The tint marks it.
+  if (mobile) return <button type="button" data-testid="invoice-estimate-row" onClick={onReview} aria-label={`Review invoice preview for ${estimate.clientName}`} className="flex w-full min-w-0 cursor-pointer items-center gap-1 bg-warning/[0.05] pr-0.5 pl-4 text-left hover:bg-warning/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset">
+    <span className="min-w-0 flex-1 py-2.5">
+      <span className="flex min-w-0 items-center gap-2"><span className="min-w-0 truncate text-sm font-medium">{estimate.clientName}</span><span className={previewChip}>Preview</span><span className="ml-auto shrink-0 text-sm font-semibold tabular-nums">{formatCurrency(estimate.subtotal, estimate.currency)}</span></span>
+      <span className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate tabular-nums">{hoursLabel(estimate.hours)}h<span className="max-sm:sr-only"> · Before tax</span></span>{currencyCode && <span className="shrink-0">{currencyCode}</span>}</span>
+    </span>
+    <span aria-hidden className="flex size-11 shrink-0 items-center justify-center text-muted-foreground"><Eye className="size-4" /></span>
   </button>
   return <TableRow data-testid="invoice-estimate-row" className={previewRow}>
     <TableCell><button type="button" onClick={onReview} className="inline-flex cursor-pointer items-center gap-2 rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"><FileText aria-hidden className="size-4 text-warning-foreground" />Not issued</button></TableCell>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
 import Image from "next/image"
 import Link from "next/link"
@@ -57,6 +57,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { SheetAction, SheetSection } from "@/components/more-sheet"
 import { PageHeader } from "@/components/page-header"
+import { HeaderSearch } from "@/components/header-search"
 import { StatCard, StatGrid } from "@/components/stat-card"
 import { formatClock as formatHm, formatDuration } from "@/lib/format"
 
@@ -633,12 +634,12 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
 
   return (
     <section className="min-w-0 rounded-xl border" data-testid="agentic-hover-day">
-      <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
+      <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2 max-sm:h-11 max-sm:py-0">
         <button type="button" className="flex min-w-0 items-center gap-2 rounded-md max-sm:hidden text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
           <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`} />
           <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
         </button>
-        <h2 className="flex min-h-11 min-w-0 items-center gap-2 text-sm font-medium sm:hidden">
+        <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium sm:hidden">
           {format(new Date(`${date}T12:00:00`), "EEE, MMM d")}
           <span className="text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span>
         </h2>
@@ -1095,6 +1096,9 @@ function FocusLayout({
 
 export default function AgenticCodingPage() {
   const searchParams = useSearchParams()
+  // Fixture runs carry their fixture to the tracker, which otherwise tries a real database.
+  const fixtureParam = process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" ? searchParams.get("fixture") : null
+  const importHref = `/tracker?importAgentTime=1${fixtureParam ? `&fixture=${encodeURIComponent(fixtureParam)}` : ""}`
   const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -1313,9 +1317,21 @@ export default function AgenticCodingPage() {
   const filterControls = (phone = false) => {
     const open = phone ? phoneProjectOpen : projectOpen
     const setOpen = phone ? setPhoneProjectOpen : setProjectOpen
+    // Phones get one sheet section per filter, its heading standing in for the visible label.
+    const field = (label: string, id: string, control: ReactNode) =>
+      phone ? (
+        <SheetSection label={label}>
+          <Label htmlFor={id} className="sr-only">{label}</Label>
+          {control}
+        </SheetSection>
+      ) : (
+        <div className="grid min-w-0 gap-2">
+          <Label htmlFor={id}>{label}</Label>
+          {control}
+        </div>
+      )
     return (<>
-          <div className="grid min-w-0 gap-2">
-            <Label htmlFor={phone ? "agent-range-phone" : "agent-range"}>Date range</Label>
+          {field("Date range", phone ? "agent-range-phone" : "agent-range", (
             <Select value={range} onValueChange={setRange}>
               <SelectTrigger
                 id={phone ? "agent-range-phone" : "agent-range"}
@@ -1331,9 +1347,8 @@ export default function AgenticCodingPage() {
                 <SelectItem value="all">All activity</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="grid min-w-0 gap-2">
-            <Label htmlFor={phone ? "agent-project-phone" : "agent-project"}>Project</Label>
+          ))}
+          {field("Project", phone ? "agent-project-phone" : "agent-project", (
             <Popover open={open} onOpenChange={setOpen}>
               <PopoverTrigger asChild>
                 <Button
@@ -1342,7 +1357,7 @@ export default function AgenticCodingPage() {
                   variant="outline"
                   role="combobox"
                   aria-expanded={open}
-                  className="w-full min-w-0 justify-between"
+                  className={`w-full min-w-0 justify-between ${phone ? "text-[16px] font-normal" : ""}`}
                 >
                   <span className="truncate">
                     {project === "all" ? "All projects" : project}
@@ -1391,7 +1406,7 @@ export default function AgenticCodingPage() {
                 </Command>
               </PopoverContent>
             </Popover>
-          </div>
+          ))}
   </>)
   }
 
@@ -1400,12 +1415,12 @@ export default function AgenticCodingPage() {
       <PageHeader
         title="Agentic Coding"
         currencyToggle={false}
-        center={<Input aria-label="Search chats" data-testid="agentic-search-phone" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search chats…" className="h-11 min-w-0 text-[16px]" />}
-        primary={{ label: "Review & import time", icon: Download, href: "/tracker?importAgentTime=1", testId: "agentic-import-time" }}
+        center={<HeaderSearch value={search} onChange={setSearch} noun="chats" testId="agentic-search-phone" />}
+        primary={{ label: "Review & import time", icon: Download, href: importHref, testId: "agentic-import-time" }}
         moreCount={Number(range !== "7d") + Number(project !== "all")}
         onMoreClear={() => { setRange("7d"); setProject("all") }}
         more={<>
-          <SheetSection label="Filters">{filterControls(true)}</SheetSection>
+          {filterControls(true)}
           <SheetAction icon={RefreshCw} label="Refresh" disabled={loading} onSelect={() => void loadAgentTime(true)} />
         </>}
         actions={
@@ -1413,7 +1428,7 @@ export default function AgenticCodingPage() {
             <Button asChild size="sm">
               <Link
                 data-testid="agentic-import-time"
-                href="/tracker?importAgentTime=1"
+                href={importHref}
               >
                 <Download className="size-3.5" data-icon="inline-start" />
                 Review &amp; import time
@@ -1486,7 +1501,7 @@ export default function AgenticCodingPage() {
         </div>
       )}
 
-      <StatGrid className="mb-6">
+      <StatGrid className="mb-6 max-sm:mb-3">
         <StatCard
           label="Unique coding time"
           value={
@@ -1506,7 +1521,7 @@ export default function AgenticCodingPage() {
           }
         />
         <div
-          className="col-span-2 grid min-w-0 content-start gap-2 rounded-lg bg-card p-3 ring-1 ring-foreground/10 sm:p-4"
+          className="col-span-2 grid min-w-0 content-start gap-2 rounded-lg bg-card p-3 ring-1 ring-foreground/10 max-sm:px-3 max-sm:py-2 sm:p-4"
           role="group"
           aria-label="Coding by source"
         >
