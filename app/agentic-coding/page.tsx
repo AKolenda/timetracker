@@ -61,6 +61,9 @@ import { useStore } from "@/lib/store"
 import type { Client, Project } from "@/lib/types"
 
 const AGENT_TIME_START_DATE = "2026-08-30"
+// The API clips turns at `from`, so ask from a day earlier: a turn that started before the first
+// shown day keeps its full length and can still be recognized as left open.
+const AGENT_TIME_FETCH_FROM = "2026-08-29"
 const LOCAL_MAPPINGS_KEY = "timetracker-agent-time-project-mappings"
 const THREADS_SHOWN = 6
 const JOURNAL_ROWS_SHOWN = 7
@@ -411,7 +414,7 @@ export default function AgenticCodingPage() {
     try {
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
       const response = await fetch(
-        `/api/agent-time?gapMinutes=0&includeLive=true&withLive=true&t3Only=true&from=${AGENT_TIME_START_DATE}${fixture}`
+        `/api/agent-time?gapMinutes=0&includeLive=true&withLive=true&t3Only=true&from=${AGENT_TIME_FETCH_FROM}${fixture}`
       )
       if (!response.ok) throw new Error("Agent Time is not available")
       setAgentTime((await response.json()) as AgentTimeResponse)
