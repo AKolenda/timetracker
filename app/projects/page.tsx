@@ -253,20 +253,21 @@ export default function ProjectsPage() {
     }
   })
 
-  function actionsMenu(project: Project) {
+  function actionsMenu(project: Project, className?: string) {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-xs" aria-label={`Actions for ${project.name}`}>
+          <Button variant="ghost" size="icon-xs" className={className} aria-label={`Actions for ${project.name}`}>
             <MoreHorizontal className="size-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => openEdit(project)}>
+          <DropdownMenuItem className="max-sm:min-h-11" onClick={() => openEdit(project)}>
             <Pencil className="size-4" />
             Edit
           </DropdownMenuItem>
           <DropdownMenuItem
+            className="max-sm:min-h-11"
             onClick={() => {
               setMergeSource(project)
               setMergeTargetId("")
@@ -276,7 +277,7 @@ export default function ProjectsPage() {
             Merge into…
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => { setDeleteTarget(project); setDeleteOpen(true) }}>
+          <DropdownMenuItem variant="destructive" className="max-sm:min-h-11" onClick={() => { setDeleteTarget(project); setDeleteOpen(true) }}>
             <Trash2 className="size-4" />
             Delete
           </DropdownMenuItem>
@@ -303,6 +304,13 @@ export default function ProjectsPage() {
       />
       <PageHeader
         title="Projects"
+        primary={{
+          label: "New project",
+          icon: Plus,
+          onClick: openCreate,
+          disabled: data.clients.length === 0,
+          testId: "new-project",
+        }}
         actions={
           <Button
             size="sm"
@@ -350,25 +358,23 @@ export default function ProjectsPage() {
         <Card className="py-0">
           <ul className="divide-y lg:hidden" aria-label="Projects">
             {projectRows.map(({ project, client, totalSecs, revenue }) => (
-              <li key={project.id} className="flex items-start gap-3 px-4 py-3">
+              <li key={project.id} className="flex items-center gap-1 py-2 pr-0.5 pl-4 sm:gap-3 sm:py-3 sm:pr-4">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{project.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{client?.name ?? "No client"}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 truncate font-medium">{project.name}</p>
                     <ProjectStatusBadge status={project.status} />
-                    <span>{money(project.rate, project.currency)}/hr</span>
-                    <span aria-hidden>·</span>
-                    <span>{formatHours(totalSecs)}h</span>
-                    <span aria-hidden>·</span>
-                    <span className="font-medium text-foreground">{money(revenue, project.currency)}</span>
+                    <span className="ml-auto shrink-0 font-medium tabular-nums">{money(revenue, project.currency)}</span>
                   </div>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">
+                    {client?.name ?? "No client"} · {money(project.rate, project.currency)}/hr · {formatHours(totalSecs)}h
+                  </p>
                   {!!project.agentFolders?.length && (
-                    <p className="mt-1 truncate text-xs text-muted-foreground" title="Agent Time from these folders imports here">
+                    <p className="mt-1 truncate text-xs text-muted-foreground max-sm:hidden" title="Agent Time from these folders imports here">
                       Agent folders: {project.agentFolders.join(", ")}
                     </p>
                   )}
                 </div>
-                <div className="-mr-1.5 -mt-0.5 shrink-0">{actionsMenu(project)}</div>
+                <div className="shrink-0 sm:-mr-1.5">{actionsMenu(project, "max-sm:size-11 max-sm:text-muted-foreground")}</div>
               </li>
             ))}
           </ul>

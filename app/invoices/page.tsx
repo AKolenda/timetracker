@@ -71,6 +71,7 @@ import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-
 import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
 import { billedSeconds } from "@/lib/billing"
 import { PageHeader } from "@/components/page-header"
+import { SheetAction } from "@/components/more-sheet"
 import {
   InvoiceStatusBadge,
   invoiceStatusDots,
@@ -103,6 +104,12 @@ function invoiceDueLabel(invoice: Invoice): string {
   return invoice.dueDate === invoice.issueDate
     ? "Due on receipt"
     : format(parseISO(invoice.dueDate), "MMM d, yyyy")
+}
+
+/** "Nov 28" this year, "Nov 28, 2025" otherwise, for compact phone rows. */
+function shortDate(iso: string): string {
+  const date = parseISO(iso)
+  return format(date, date.getFullYear() === new Date().getFullYear() ? "MMM d" : "MMM d, yyyy")
 }
 
 function isPastDue(invoice: Invoice): boolean {
@@ -142,9 +149,11 @@ function invalidProps(id: string, message?: string) {
 function StatusMenu({
   invoice,
   onChange,
+  className,
 }: {
   invoice: Invoice
   onChange: (status: Invoice["status"]) => void
+  className?: string
 }) {
   return (
     <DropdownMenu>
@@ -154,7 +163,8 @@ function StatusMenu({
           aria-label={`Change status for ${invoice.invoiceNumber}`}
           className={cn(
             "inline-flex h-6 pointer-coarse:h-9 items-center gap-1.5 rounded-md pr-1.5 pl-2 text-xs font-medium whitespace-nowrap transition-colors hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-            invoiceStatusStyles[invoice.status]
+            invoiceStatusStyles[invoice.status],
+            className
           )}
         >
           <span
@@ -169,6 +179,7 @@ function StatusMenu({
         {STATUS_OPTIONS.map((status) => (
           <DropdownMenuItem
             key={status}
+            className="max-sm:min-h-11"
             onClick={() => status !== invoice.status && onChange(status)}
           >
             <span aria-hidden className={cn("size-2 rounded-full", invoiceStatusDots[status])} />
@@ -225,21 +236,21 @@ function InvoiceActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {onPreview && (
-          <DropdownMenuItem onClick={onPreview}>
+          <DropdownMenuItem className="max-sm:min-h-11" onClick={onPreview}>
             <Eye className="size-4" /> Preview
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onClick={onSend} disabled={sending}>
+        <DropdownMenuItem className="max-sm:min-h-11" onClick={onSend} disabled={sending}>
           <Send className="size-4" /> {reissue ? "Reissue invoice" : "Send invoice"}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onDownload} disabled={downloading}>
+        <DropdownMenuItem className="max-sm:min-h-11" onClick={onDownload} disabled={downloading}>
           <Download className="size-4" /> Download PDF
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onEdit}>
+        <DropdownMenuItem className="max-sm:min-h-11" onClick={onEdit}>
           <Pencil className="size-4" /> Edit
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={onDelete}>
+        <DropdownMenuItem className="max-sm:min-h-11" variant="destructive" onClick={onDelete}>
           <Trash2 className="size-4" /> Delete
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -711,6 +722,37 @@ export default function InvoicesPage() {
     <>
       <PageHeader
         title="Invoices"
+        center={
+          <div className="relative w-full min-w-0">
+            <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-11 pl-9 text-[16px]"
+              placeholder="Search"
+              aria-label="Search invoices by number, client, or status"
+            />
+          </div>
+        }
+        primary={{
+          label: "New invoice",
+          icon: Plus,
+          onClick: openCreate,
+          disabled: data.clients.length === 0,
+          testId: "new-invoice",
+        }}
+        more={
+          filteredEstimates.length > 0 ? (
+            <SheetAction
+              icon={Eye}
+              label={`Review ${filteredEstimates.length === 1 ? "preview" : "previews"}`}
+              detail={filteredEstimates.length}
+              testId="review-invoice-previews-phone"
+              onSelect={() => setEstimateId(filteredEstimates[0].id)}
+            />
+          ) : undefined
+        }
         actions={
           <Button
             size="sm"
@@ -724,8 +766,8 @@ export default function InvoicesPage() {
         }
       />
 
-      <Card data-testid="invoice-section">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <Card data-testid="invoice-section" className="phone-flat">
+        <CardHeader className="flex flex-col gap-3 max-sm:hidden sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-sm font-medium">Invoice log</CardTitle>
           {filteredEstimates.length > 0 && (
             <Button
@@ -741,7 +783,7 @@ export default function InvoicesPage() {
           )}
         </CardHeader>
         <CardContent>
-      <div className="mb-5 max-w-md">
+      <div className="mb-5 max-w-md max-sm:hidden">
         <div className="relative">
           <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -897,82 +939,56 @@ export default function InvoicesPage() {
             </Table>
           </div>
 
-          {/* Mobile cards */}
-          <div className="space-y-3 lg:hidden">
-            {filteredEstimates.map((estimate) => <InvoiceEstimateRow key={estimate.id} estimate={estimate} onReview={() => setEstimateId(estimate.id)} mobile />)}
+          {/* Phone and tablet list: two lines per invoice */}
+          <ul className="divide-y overflow-hidden rounded-lg border bg-card lg:hidden" aria-label="Invoices">
+            {filteredEstimates.map((estimate) => (
+              <li key={estimate.id}>
+                <InvoiceEstimateRow estimate={estimate} onReview={() => setEstimateId(estimate.id)} mobile />
+              </li>
+            ))}
             {filteredInvoices.map((inv) => {
               const client = getClient(inv.clientId)
+              const { total, secondary } = listTotal(inv)
               return (
-                <Card key={inv.id} className="py-0">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium tabular-nums">
-                          {inv.invoiceNumber}
-                        </p>
-                        <div className="mt-1 flex items-center gap-2">
-                          {client && (
-                            <div
-                              className="size-2 shrink-0 rounded-full"
-                              style={{ backgroundColor: client.color }}
-                            />
-                          )}
-                          <span className="truncate text-sm text-muted-foreground">
-                            {client?.name ?? "—"}
-                          </span>
-                        </div>
-                      </div>
-                      <InvoiceActionsMenu
-                        invoice={inv}
-                        downloading={downloadingId === inv.id}
-                        sending={sendingId === inv.id}
-                        onPreview={() => setPreviewInvoice(inv)}
-                        onDownload={() => handleDownload(inv)}
-                        onEdit={() => openEdit(inv)}
-                        onSend={() => openSend(inv)}
-                        onDelete={() => setDeleteTarget(inv)}
-                        className="-mt-1 -mr-1"
-                      />
-                    </div>
-
-                    <div className="mt-3 flex items-end justify-between gap-3">
-                      <div className="space-y-0.5 text-xs text-muted-foreground">
-                        <p>
-                          Issued {format(new Date(inv.issueDate), "MMM d, yyyy")}
-                        </p>
-                        <p
-                          className={cn(
-                            isPastDue(inv) && "font-medium text-destructive"
-                          )}
-                        >
-                          {inv.dueDate === inv.issueDate
-                            ? "Due on receipt"
-                            : `Due ${format(parseISO(inv.dueDate), "MMM d, yyyy")}`}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="text-base font-semibold tabular-nums">
-                          {listTotal(inv).total}
-                        </p>
-                        {listTotal(inv).secondary && (
-                          <p className="text-xs text-muted-foreground tabular-nums">
-                            {listTotal(inv).secondary}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 border-t pt-3">
+                <li key={inv.id} data-testid="invoice-row" className="flex items-center gap-1 py-1.5 pr-0.5 pl-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-1.5 min-[360px]:gap-2">
+                      <p className="min-w-0 truncate text-sm font-medium tabular-nums">{inv.invoiceNumber}</p>
                       <StatusMenu
                         invoice={inv}
+                        className="relative shrink-0 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] max-[359px]:pr-2 max-[359px]:[&>svg]:hidden"
                         onChange={(status) => handleStatusChange(inv.id, status)}
                       />
+                      <p className="ml-auto shrink-0 text-sm font-semibold tabular-nums">{total}</p>
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                      {client && (
+                        <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: client.color }} />
+                      )}
+                      <span className="min-w-0 flex-1 truncate">{client?.name ?? "—"}</span>
+                      <span className={cn("shrink-0 tabular-nums", isPastDue(inv) && "font-medium text-destructive")}>
+                        {inv.dueDate === inv.issueDate ? "Due on receipt" : `Due ${shortDate(inv.dueDate)}`}
+                      </span>
+                    </div>
+                    {secondary && (
+                      <p className="text-right text-xs text-muted-foreground tabular-nums">{secondary}</p>
+                    )}
+                  </div>
+                  <InvoiceActionsMenu
+                    invoice={inv}
+                    downloading={downloadingId === inv.id}
+                    sending={sendingId === inv.id}
+                    onPreview={() => setPreviewInvoice(inv)}
+                    onDownload={() => handleDownload(inv)}
+                    onEdit={() => openEdit(inv)}
+                    onSend={() => openSend(inv)}
+                    onDelete={() => setDeleteTarget(inv)}
+                    className="size-11 text-muted-foreground"
+                  />
+                </li>
               )
             })}
-          </div>
+          </ul>
         </>
       )}
 
