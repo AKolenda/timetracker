@@ -20,6 +20,7 @@ import { CalendarClock, ChevronLeft, ChevronRight, Clock, DollarSign, Receipt } 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import { Fact, FactBox } from "@/components/fact-list"
 import { PageHeader } from "@/components/page-header"
 import { StatCard, StatGrid } from "@/components/stat-card"
 import { InvoiceStatusBadge } from "@/components/status-badge"
@@ -240,6 +241,13 @@ export default function CalendarPage() {
     <>
       <PageHeader
         title="Calendar & reports"
+        center={<div className="flex w-full min-w-0 items-center">
+          <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Previous month" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}><ChevronLeft /></Button>
+          <Button variant="ghost" className="h-11 min-w-0 flex-1 px-0 text-xs" aria-label={`Today · ${format(currentMonth, "MMMM yyyy")}`} title="Go to today" onClick={selectToday}>
+            <span className="truncate">{format(currentMonth, "MMM yyyy")}</span>
+          </Button>
+          <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Next month" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}><ChevronRight /></Button>
+        </div>}
       />
 
       <StatGrid className="mb-6">
@@ -267,9 +275,9 @@ export default function CalendarPage() {
         />
       </StatGrid>
 
-      <div className="grid gap-6 lg:grid-cols-3 lg:items-stretch">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-stretch">
         <Card className="flex flex-col lg:col-span-2 lg:min-h-[calc(100dvh-20rem)]">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardHeader className="flex flex-row items-center justify-between pb-2 max-sm:hidden">
             <CardTitle className="text-sm font-medium">
               {format(currentMonth, "MMMM yyyy")}
             </CardTitle>
@@ -301,7 +309,7 @@ export default function CalendarPage() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="flex flex-1 flex-col gap-3">
+          <CardContent className="flex flex-1 flex-col gap-3 max-sm:px-2">
             <div
               className="grid flex-1 grid-cols-7 gap-px"
               style={{ gridTemplateRows: `auto repeat(${Math.ceil(days.length / 7)}, minmax(0, 1fr))` }}
@@ -417,7 +425,12 @@ export default function CalendarPage() {
               ) : (
                 <div className="space-y-3">
                   {selectedDayData && (
-                    <div className="grid grid-cols-2 gap-2">
+                    <>
+                    <FactBox className="sm:hidden">
+                      <Fact label="Earned" value={money(selectedDayData.earnings)} tone="success" />
+                      <Fact label="Spent" value={money(selectedDayData.expenses)} tone="destructive" />
+                    </FactBox>
+                    <div className="hidden grid-cols-2 gap-2 sm:grid">
                       <div className="rounded-md bg-success/10 p-2 text-center">
                         <p className="text-xs font-medium text-muted-foreground">
                           Earned
@@ -435,6 +448,7 @@ export default function CalendarPage() {
                         </p>
                       </div>
                     </div>
+                    </>
                   )}
 
                   {selectedDayEntries.length > 0 && (

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
-import { Eye, DollarSign, Key, CheckCircle2, Trash2 } from "lucide-react"
+import { Save, Eye, DollarSign, Key, CheckCircle2, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { SheetAction } from "@/components/more-sheet"
 import { PageHeader } from "@/components/page-header"
 import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-options"
 import { useStore } from "@/lib/store"
@@ -129,7 +130,7 @@ function SectionHeading({ title, description }: { title: string; description: st
   return (
     <div className="grid gap-0.5 px-1">
       <h2 className="text-sm font-semibold">{title}</h2>
-      <p className="text-xs text-muted-foreground">{description}</p>
+      <p className="text-xs text-muted-foreground max-sm:hidden">{description}</p>
     </div>
   )
 }
@@ -137,6 +138,7 @@ function SectionHeading({ title, description }: { title: string; description: st
 export default function SettingsPage() {
   const { data, updateSettings } = useStore()
   const [form, setForm] = useState({ ...data.settings })
+  const [section, setSection] = useState("information")
   const [saving, setSaving] = useState(false)
   const [generalSaved, setGeneralSaved] = useState(false)
   const [emailSaving, setEmailSaving] = useState(false)
@@ -345,6 +347,25 @@ export default function SettingsPage() {
       <PageHeader
         title="Settings"
         currencyToggle={false}
+        more={<>
+          <SheetAction icon={Eye} label="Preview invoice" onSelect={() => setPreviewOpen(true)} />
+          <SheetAction icon={DollarSign} label="Payout threshold" onSelect={() => setPayoutOpen(true)} />
+        </>}
+        primary={{ label: "Save general settings", icon: Save, onClick: handleSave, disabled: saving, testId: "settings-save-general" }}
+        center={<Select value={section} onValueChange={(value) => {
+          setSection(value)
+          document.getElementById(`settings-${value}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+        }}>
+          <SelectTrigger aria-label="Settings section" className="h-11! w-full min-w-0 text-[16px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="information">Your information</SelectItem>
+            <SelectItem value="invoicing">Invoicing</SelectItem>
+            <SelectItem value="remittance">Remittance</SelectItem>
+            <SelectItem value="agent-time">Agent Time</SelectItem>
+            <SelectItem value="email-integration">Email integration</SelectItem>
+            <SelectItem value="email-format">Email format</SelectItem>
+          </SelectContent>
+        </Select>}
         actions={
           <>
             <SaveStatus dirty={generalDirty} saved={generalSaved} />
@@ -360,16 +381,16 @@ export default function SettingsPage() {
         }
       />
 
-      <div className="mx-auto grid w-full max-w-3xl gap-6 pb-6">
+      <div className="mx-auto grid w-full max-w-3xl gap-6 pb-6 max-sm:gap-3 max-sm:[&_input]:min-h-11 max-sm:[&_input]:text-[16px] max-sm:[&_textarea]:text-[16px] max-sm:[&_[data-slot=select-trigger]]:h-11! max-sm:[&_[data-slot=select-trigger]]:text-[16px] max-sm:[&_button]:min-h-11">
         <SectionHeading
           title="General"
           description="Your details, invoicing, payment accounts and Agent Time imports. Saved with “Save general settings” at the top."
         />
 
-        <Card>
+        <Card id="settings-information" className="scroll-mt-20 max-sm:gap-4 max-sm:py-4 max-sm:[&_[data-slot=card-header]]:px-3 max-sm:[&_[data-slot=card-content]]:px-3 max-sm:[&_[data-slot=card-footer]]:px-3">
           <CardHeader>
             <CardTitle className="text-sm font-medium">Your information</CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription className="text-xs max-sm:hidden">
               Shown as the sender on every invoice.
             </CardDescription>
           </CardHeader>
@@ -447,10 +468,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="settings-invoicing" className="scroll-mt-20 max-sm:gap-4 max-sm:py-4 max-sm:[&_[data-slot=card-header]]:px-3 max-sm:[&_[data-slot=card-content]]:px-3 max-sm:[&_[data-slot=card-footer]]:px-3">
           <CardHeader>
             <CardTitle className="text-sm font-medium">Invoicing</CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription className="text-xs max-sm:hidden">
               Numbering and due dates for new invoices.
             </CardDescription>
           </CardHeader>
@@ -610,18 +631,18 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="settings-remittance" className="scroll-mt-20 max-sm:gap-4 max-sm:py-4 max-sm:[&_[data-slot=card-header]]:px-3 max-sm:[&_[data-slot=card-content]]:px-3 max-sm:[&_[data-slot=card-footer]]:px-3">
           <CardHeader>
             <CardTitle className="text-sm font-medium">
               Remittance information
             </CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription className="text-xs max-sm:hidden">
               This information appears on your invoices so clients know how to
               pay you.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
-            <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+            <p className="text-xs font-medium text-muted-foreground sm:tracking-wider sm:uppercase">
               Primary account · {INVOICE_CURRENCY}
             </p>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -705,7 +726,7 @@ export default function SettingsPage() {
             </div>
             <Separator />
             <div className="grid gap-1">
-              <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+              <p className="text-xs font-medium text-muted-foreground sm:tracking-wider sm:uppercase">
                 Second account · optional
               </p>
               <p className="text-xs text-muted-foreground">
@@ -815,12 +836,12 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="settings-agent-time" className="scroll-mt-20 max-sm:gap-4 max-sm:py-4 max-sm:[&_[data-slot=card-header]]:px-3 max-sm:[&_[data-slot=card-content]]:px-3 max-sm:[&_[data-slot=card-footer]]:px-3">
           <CardHeader>
             <CardTitle className="text-sm font-medium">
               Agent Time integrations
             </CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription className="text-xs max-sm:hidden">
               Machines the tracker imports agentic coding time from.
             </CardDescription>
           </CardHeader>
@@ -913,10 +934,10 @@ export default function SettingsPage() {
           description="Sending invoices by email. Each card here saves on its own."
         />
 
-        <Card>
+        <Card id="settings-email-integration" className="scroll-mt-20 max-sm:gap-4 max-sm:py-4 max-sm:[&_[data-slot=card-header]]:px-3 max-sm:[&_[data-slot=card-content]]:px-3 max-sm:[&_[data-slot=card-footer]]:px-3">
           <CardHeader>
             <CardTitle className="text-sm font-medium">Email integration</CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription className="text-xs max-sm:hidden">
               Connect Resend to send invoices directly to your clients.
             </CardDescription>
             <CardAction>
@@ -1034,10 +1055,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="settings-email-format" className="scroll-mt-20 max-sm:gap-4 max-sm:py-4 max-sm:[&_[data-slot=card-header]]:px-3 max-sm:[&_[data-slot=card-content]]:px-3 max-sm:[&_[data-slot=card-footer]]:px-3">
           <CardHeader>
             <CardTitle className="text-sm font-medium">Email format</CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription className="text-xs max-sm:hidden">
               Customize the subject, greeting, and signature. Variables:{" "}
               <code className="font-mono">{"{{invoiceNumber}}"}</code>{" "}
               <code className="font-mono">{"{{businessName}}"}</code>{" "}

@@ -55,6 +55,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SheetAction, SheetSection } from "@/components/more-sheet"
 import { PageHeader } from "@/components/page-header"
 import { StatCard, StatGrid } from "@/components/stat-card"
 import { formatClock as formatHm, formatDuration } from "@/lib/format"
@@ -131,7 +132,7 @@ function mobileFixtureRequested() {
   return (
     typeof window !== "undefined" &&
     process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
-    new URLSearchParams(window.location.search).get("fixture") === "mobile"
+    ["mobile", "demo"].includes(new URLSearchParams(window.location.search).get("fixture") ?? "")
   )
 }
 
@@ -316,7 +317,7 @@ function DayTimeline({
 
   return (
     <div
-      className="grid min-w-0 gap-2 rounded-lg border bg-muted/10 p-3"
+      className="grid min-w-0 gap-2 rounded-lg border bg-muted/10 p-3 max-sm:hidden"
       data-testid="agentic-day-timeline"
     >
       {labels.map((label) => (
@@ -547,7 +548,7 @@ function SessionCard({ conversation, className = "", onRemove }: { conversation:
         </div>
         {conversation.live && <Badge variant="secondary" className="text-[0.6rem]">Live</Badge>}
         {onRemove && (
-          <button type="button" aria-label="Remove this chat" title="Remove this chat" className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:size-9" onClick={onRemove} data-testid="agentic-remove-chat">
+          <button type="button" aria-label="Remove this chat" title="Remove this chat" className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:size-9 max-sm:size-11" onClick={onRemove} data-testid="agentic-remove-chat">
             <X className="size-4" />
           </button>
         )}
@@ -633,13 +634,17 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
   return (
     <section className="min-w-0 rounded-xl border" data-testid="agentic-hover-day">
       <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
-        <button type="button" className="flex min-w-0 items-center gap-2 rounded-md text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
+        <button type="button" className="flex min-w-0 items-center gap-2 rounded-md max-sm:hidden text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
           <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`} />
           <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
         </button>
+        <h2 className="flex min-h-11 min-w-0 items-center gap-2 text-sm font-medium sm:hidden">
+          {format(new Date(`${date}T12:00:00`), "EEE, MMM d")}
+          <span className="text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span>
+        </h2>
         <p className="text-xs tabular-nums">{formatHm(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
       </header>
-      <div className="px-3 pb-3" onMouseLeave={scheduleClose}>
+      <div className="px-3 pb-3 max-sm:hidden" onMouseLeave={scheduleClose}>
         <div className="relative grid min-w-0 gap-2" ref={containerRef}>
           {labels.map((label) => (
             <div key={label} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] items-center gap-2">
@@ -694,6 +699,7 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
           )}
         </div>
       </div>
+      {activeConversation && <div className="border-t p-3 sm:hidden"><SessionCard conversation={activeConversation} onRemove={() => setRemoveTarget(activeConversation)} /></div>}
       <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -708,12 +714,12 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {expanded && <div className="border-t">
+      <div className={`border-t ${expanded ? "" : "sm:hidden"}`}>
         {conversations.map((conversation) => (
           <button
             key={conversation.key}
             type="button"
-            className={`flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-muted/30 ${active?.key === conversation.key ? "bg-muted/40" : ""}`}
+            className={`flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-3 py-1.5 max-sm:min-h-11 text-left transition-colors hover:bg-muted/30 ${active?.key === conversation.key ? "bg-muted/40" : ""}`}
             data-testid="agentic-conversation"
             onMouseEnter={() => show(targetFromConversation(conversation))}
             onMouseLeave={scheduleClose}
@@ -725,7 +731,7 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
             <span className="w-12 shrink-0 text-right text-xs tabular-nums">{formatHm(conversation.durationSeconds)}</span>
           </button>
         ))}
-      </div>}
+      </div>
     </section>
   )
 }
@@ -1094,6 +1100,7 @@ export default function AgenticCodingPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [project, setProject] = useState("all")
   const [projectOpen, setProjectOpen] = useState(false)
+  const [phoneProjectOpen, setPhoneProjectOpen] = useState(false)
   const [range, setRange] = useState("7d")
   const [search, setSearch] = useState("")
   const [selectedSource, setSelectedSource] = useState("all")
@@ -1303,11 +1310,104 @@ export default function AgenticCodingPage() {
     return [...groups.entries()].sort(([a], [b]) => b.localeCompare(a))
   }, [conversations])
 
+  const filterControls = (phone = false) => {
+    const open = phone ? phoneProjectOpen : projectOpen
+    const setOpen = phone ? setPhoneProjectOpen : setProjectOpen
+    return (<>
+          <div className="grid min-w-0 gap-2">
+            <Label htmlFor={phone ? "agent-range-phone" : "agent-range"}>Date range</Label>
+            <Select value={range} onValueChange={setRange}>
+              <SelectTrigger
+                id={phone ? "agent-range-phone" : "agent-range"}
+                data-testid={phone ? "agentic-range-phone" : "agentic-range"}
+                className="w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="7d">Last 7 days</SelectItem>
+                <SelectItem value="30d">Last 30 days</SelectItem>
+                <SelectItem value="all">All activity</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid min-w-0 gap-2">
+            <Label htmlFor={phone ? "agent-project-phone" : "agent-project"}>Project</Label>
+            <Popover open={open} onOpenChange={setOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  id={phone ? "agent-project-phone" : "agent-project"}
+                  data-testid={phone ? "agentic-project-picker-phone" : "agentic-project-picker"}
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={open}
+                  className="w-full min-w-0 justify-between"
+                >
+                  <span className="truncate">
+                    {project === "all" ? "All projects" : project}
+                  </span>
+                  <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-[min(22rem,calc(100vw-2rem))] p-1"
+              >
+                <Command>
+                  <CommandInput placeholder="Search Agent Time projects…" />
+                  <CommandList>
+                    <CommandEmpty>No project found.</CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem
+                        value="All projects"
+                        onSelect={() => {
+                          setProject("all")
+                          setOpen(false)
+                        }}
+                      >
+                        <Check
+                          className={`mr-2 size-4 ${project === "all" ? "opacity-100" : "opacity-0"}`}
+                        />
+                        All projects
+                      </CommandItem>
+                      {(agentTime?.projects ?? []).map((name) => (
+                        <CommandItem
+                          key={name}
+                          value={name}
+                          onSelect={() => {
+                            setProject(name)
+                            setOpen(false)
+                          }}
+                        >
+                          <Check
+                            className={`mr-2 size-4 ${project === name ? "opacity-100" : "opacity-0"}`}
+                          />
+                          <span className="truncate">{name}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
+  </>)
+  }
+
   return (
     <>
       <PageHeader
         title="Agentic Coding"
         currencyToggle={false}
+        center={<Input aria-label="Search chats" data-testid="agentic-search-phone" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search chats…" className="h-11 min-w-0 text-[16px]" />}
+        primary={{ label: "Review & import time", icon: Download, href: "/tracker?importAgentTime=1", testId: "agentic-import-time" }}
+        moreCount={Number(range !== "7d") + Number(project !== "all")}
+        onMoreClear={() => { setRange("7d"); setProject("all") }}
+        more={<>
+          <SheetSection label="Filters">{filterControls(true)}</SheetSection>
+          <SheetAction icon={RefreshCw} label="Refresh" disabled={loading} onSelect={() => void loadAgentTime(true)} />
+        </>}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm">
@@ -1339,86 +1439,9 @@ export default function AgenticCodingPage() {
         }
       />
 
-      <Card className="mb-6 rounded-lg">
+      <Card className="mb-6 rounded-lg max-sm:hidden">
         <CardContent className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[180px_minmax(0,240px)_minmax(0,1fr)] lg:items-end">
-          <div className="grid min-w-0 gap-2">
-            <Label htmlFor="agent-range">Date range</Label>
-            <Select value={range} onValueChange={setRange}>
-              <SelectTrigger
-                id="agent-range"
-                data-testid="agentic-range"
-                className="w-full"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="7d">Last 7 days</SelectItem>
-                <SelectItem value="30d">Last 30 days</SelectItem>
-                <SelectItem value="all">All activity</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid min-w-0 gap-2">
-            <Label htmlFor="agent-project">Project</Label>
-            <Popover open={projectOpen} onOpenChange={setProjectOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  id="agent-project"
-                  data-testid="agentic-project-picker"
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={projectOpen}
-                  className="w-full min-w-0 justify-between"
-                >
-                  <span className="truncate">
-                    {project === "all" ? "All projects" : project}
-                  </span>
-                  <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                className="w-[min(22rem,calc(100vw-2rem))] p-1"
-              >
-                <Command>
-                  <CommandInput placeholder="Search Agent Time projects…" />
-                  <CommandList>
-                    <CommandEmpty>No project found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem
-                        value="All projects"
-                        onSelect={() => {
-                          setProject("all")
-                          setProjectOpen(false)
-                        }}
-                      >
-                        <Check
-                          className={`mr-2 size-4 ${project === "all" ? "opacity-100" : "opacity-0"}`}
-                        />
-                        All projects
-                      </CommandItem>
-                      {(agentTime?.projects ?? []).map((name) => (
-                        <CommandItem
-                          key={name}
-                          value={name}
-                          onSelect={() => {
-                            setProject(name)
-                            setProjectOpen(false)
-                          }}
-                        >
-                          <Check
-                            className={`mr-2 size-4 ${project === name ? "opacity-100" : "opacity-0"}`}
-                          />
-                          <span className="truncate">{name}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </div>
+          {filterControls()}
           <div className="grid min-w-0 gap-2 sm:col-span-2 lg:col-span-1">
             <Label htmlFor="agent-search">Search chats</Label>
             <Input
@@ -1498,7 +1521,7 @@ export default function AgenticCodingPage() {
             )}
           </div>
           {sourceStats.length > 0 ? (
-            <div className="flex min-w-0 flex-wrap gap-2">
+            <div className="flex min-w-0 flex-wrap gap-2 max-sm:flex-nowrap max-sm:overflow-x-auto">
               {sourceStats.map((stat) => (
                 <button
                   key={stat.label}
@@ -1506,7 +1529,7 @@ export default function AgenticCodingPage() {
                   data-testid={`agentic-source-${stat.label.toLowerCase().replaceAll(" ", "-")}`}
                   aria-pressed={effectiveSelectedSource === stat.label}
                   title={`Show only ${stat.label}`}
-                  className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-md border py-1 pr-2.5 pl-1 text-left transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:py-1.5 ${effectiveSelectedSource === stat.label ? "border-foreground/35 bg-muted/50" : "bg-background"}`}
+                  className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-md border max-sm:min-h-11 max-sm:shrink-0 py-1 pr-2.5 pl-1 text-left transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:py-1.5 ${effectiveSelectedSource === stat.label ? "border-foreground/35 bg-muted/50" : "bg-background"}`}
                   onClick={() =>
                     setSelectedSource((current) =>
                       current === stat.label ? "all" : stat.label
