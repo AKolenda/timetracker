@@ -23,7 +23,6 @@ import {
   EyeOff,
   FolderInput,
   Settings2,
-  Bot,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -74,6 +73,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { TrackerReviewDialog } from "@/components/tracker-review-dialog"
 import { DraftReviewDialog } from "@/components/draft-review-dialog"
 import { EntryChats, type ConversationSource } from "@/components/entry-chat-audit"
+import { LiveAgentIcons } from "@/components/live-agent-icons"
 import { PageHeader } from "@/components/page-header"
 import { useStore } from "@/lib/store"
 import { useMoney } from "@/lib/display-currency"
@@ -154,6 +154,8 @@ type IgnoredAgentRange = {
   end: number
 }
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
+/** Agent Time older than this never becomes a draft, so a backlog can't pile up or come back. */
+const AGENT_DRAFT_WINDOW_DAYS = 7
 /** How often an open, visible tracker checks Agent Time for new and running work. */
 const AGENT_TIME_REFRESH_MS = 30_000
 const LOG_PAGE_SIZE = 100
@@ -288,8 +290,9 @@ function buildAgentImportPlan(
       0
     )
     skippedSeconds += Math.floor((sourceEnd - sourceStart) / 1000) - trackedUncoveredSeconds
+    // A skip holds for the project it was billed to, so it survives a folder being renamed or re-read by the collector.
     const ignoredForProject = ignoredRanges
-      .filter((range) => range.agentProject === interval.project)
+      .filter((range) => range.agentProject === interval.project || projectMappings[range.agentProject] === projectId)
       .map((range) => ({ start: range.start, end: range.end }))
     const gaps = trackedGaps.flatMap((gap) => subtractRanges(gap, ignoredForProject))
     const finalUncoveredSeconds = gaps.reduce(
@@ -364,18 +367,6 @@ function LiveTimer({
 }
 
 /** Elapsed time of a running agent turn, ticking from its start. */
-function LiveAgentClock({ start }: { start: string }) {
-  const [now, setNow] = useState<number | null>(null)
-  useEffect(() => {
-    const tick = () => setNow(Date.now())
-    tick()
-    const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
-  }, [start])
-  const seconds = now === null ? 0 : Math.max(0, Math.floor((now - Date.parse(start)) / 1000))
-  return <span className="font-mono text-sm font-semibold tabular-nums">{formatLiveTotal(seconds)}</span>
-}
-
 function TodayTotal({
   completedSeconds,
   activeTimers,
@@ -638,12 +629,12 @@ export default function TrackerPage() {
   function showAllAgentTime() {
     localStorage.removeItem("timetracker-agent-time-start-date")
     setAgentTimeStartDate(null)
-    toast("Showing Agent Time from Aug 30, 2026")
+    toast(`Showing the last ${AGENT_DRAFT_WINDOW_DAYS} days of Agent Time`)
   }
 
-  const effectiveAgentTimeStartDate = agentTimeStartDate && agentTimeStartDate > HARD_AGENT_TIME_START_DATE
-    ? agentTimeStartDate
-    : HARD_AGENT_TIME_START_DATE
+  const draftWindowStartDate = localDateString(new Date(Date.now() - AGENT_DRAFT_WINDOW_DAYS * 86_400_000), data.settings.timezone)
+  const effectiveAgentTimeStartDate = [HARD_AGENT_TIME_START_DATE, draftWindowStartDate, agentTimeStartDate ?? ""]
+    .reduce((latest, date) => (date > latest ? date : latest))
 
   const agentTimeCutoff = useMemo(() => {
     const cutoff = new Date(`${effectiveAgentTimeStartDate}T00:00:00`).getTime()
@@ -652,11 +643,12 @@ export default function TrackerPage() {
 
   const projectMappings = useMemo(
     () => resolveAgentMappings(
-      [...(agentTime?.projects ?? []), ...(agentTime?.intervals.map((interval) => interval.project) ?? [])],
+      // Skipped folders resolve too, so a skip still finds its billing project after the folder disappears.
+      [...(agentTime?.projects ?? []), ...(agentTime?.intervals.map((interval) => interval.project) ?? []), ...ignoredAgentRanges.map((range) => range.agentProject)],
       data.projects,
       localMappings
     ),
-    [agentTime, data.projects, localMappings]
+    [agentTime, data.projects, localMappings, ignoredAgentRanges]
   )
 
   const availableAgentIntervals = useMemo(
@@ -730,6 +722,7 @@ export default function TrackerPage() {
       title: sources.find((source) => source.conversationTitle.trim())?.conversationTitle.trim() || `${block.agents.join(" + ") || "Agent"} working`,
       agents: [...new Set(sources.map((source) => source.agent))],
       machines: machineNames(sources),
+      threadId: sources.find((source) => source.source === "T3 Code" && source.conversationId)?.conversationId,
       start: sources.reduce((earliest, source) => (source.start < earliest ? source.start : earliest), sources[0]?.start ?? block.start),
     }))
   }).sort((a, b) => a.start.localeCompare(b.start)), [agentTime, projectMappings]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -750,6 +743,7 @@ export default function TrackerPage() {
     0
   )
   const unmappedAgentProjects = agentImportPreview.unmappedProjects
+  const agentProjectChoices = [{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]
   // T3 Code projects show their T3 name when it differs from the folder (e.g. "invoicer" for timetracker).
   const t3ProjectTitles = useMemo(() => new Map((agentTime?.t3Projects ?? [])
     .filter((project) => project.title && project.title !== project.name)
@@ -1209,7 +1203,8 @@ export default function TrackerPage() {
   function restoreVisibleIgnoredAgentRanges() {
     setIgnoredAgentRanges((current) => {
       const next = current.filter((range) => !availableAgentIntervals.some((interval) => {
-        if (interval.project !== range.agentProject) return false
+        const rangeProject = projectMappings[range.agentProject]
+        if (interval.project !== range.agentProject && !(rangeProject && rangeProject === projectMappings[interval.project])) return false
         const intervalStart = new Date(interval.start).getTime()
         const intervalEnd = new Date(interval.end).getTime()
         return Number.isFinite(intervalStart) && Number.isFinite(intervalEnd) && range.end > intervalStart && range.start < intervalEnd
@@ -1358,29 +1353,10 @@ export default function TrackerPage() {
                 </div>
               })}</div>}
 
-              {liveAgentWork.length > 0 && <div className="grid gap-2" data-testid="live-agent-work" aria-label="Agents working now">
-                {liveAgentWork.map((work) => {
-                  const project = work.projectId ? getProject(work.projectId) : undefined
-                  return <div key={work.key} data-testid="live-agent-row" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-muted/30 px-4 py-3">
-                    <span className="relative flex size-5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
-                      <Bot className="size-5" />
-                      <span className="absolute -top-0.5 -right-0.5 size-2 animate-pulse rounded-full bg-emerald-500" />
-                    </span>
-                    <div className="min-w-[9rem] flex-1">
-                      <p className="font-medium break-words">{work.title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {project?.name ?? <>{work.folder} · <span className="text-warning">not linked to a project</span></>}
-                        {work.machines.length > 0 && <> · {work.machines.join(", ")}</>}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">{work.agents.join(" + ") || "Agent"} working</span>
-                      <LiveAgentClock start={work.start} />
-                    </div>
-                    <p className="w-full text-xs text-muted-foreground">Becomes a draft to approve when this turn finishes.</p>
-                  </div>
-                })}
-              </div>}
+              {liveAgentWork.length > 0 && <LiveAgentIcons
+                work={liveAgentWork.map((work) => ({ ...work, projectName: work.projectId ? getProject(work.projectId)?.name : undefined, folderTitle: t3ProjectTitles.get(work.folder) }))}
+                renderProjectPicker={(work) => <ImportProjectPicker value={projectMappings[work.folder] ?? ""} onChange={(value) => void saveProjectMapping(work.folder, value)} choices={agentProjectChoices} />}
+              />}
             </div>
           )}
         </CardContent>
@@ -1606,12 +1582,12 @@ export default function TrackerPage() {
       <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Project mappings" description="Choose where each T3 Code project's time goes. It's saved on the project, so you can also change it on the Projects page. Personal projects stay out of imports." emptyText="No T3 Code projects to map."
         items={mappingFolders.map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${t3ProjectTitles.get(agentProject) ?? ""} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{t3ProjectTitles.get(agentProject) && <p className="text-xs text-muted-foreground">T3 Code: {t3ProjectTitles.get(agentProject)}</p>}{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
-          <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={[{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]} />
+          <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={agentProjectChoices} />
         </div> }))}
       />
       <Dialog open={importSettingsOpen} onOpenChange={setImportSettingsOpen}>
         <DialogContent><DialogHeader><DialogTitle>Import settings</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Adjust gap grouping and the period included in your review.</p>
+          <p className="text-sm text-muted-foreground">Adjust gap grouping and the period included in your review. Agent Time older than {AGENT_DRAFT_WINDOW_DAYS} days never becomes a draft.</p>
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <div className="flex h-8 items-center rounded-md border border-input bg-background pl-3 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30" title="Join gaps up to this many minutes">
                 <label htmlFor="tracker-agent-gap">Gap</label>
@@ -1619,9 +1595,9 @@ export default function TrackerPage() {
                 <span className="pr-3">min</span>
               </div>
               <Button data-testid="apply-agent-gap" type="button" variant="outline" size="sm" className="h-8" onClick={applyGapMinutes} disabled={agentTimeLoading}>{agentTimeLoading && <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />}Refresh</Button>
-              {!agentTimeStartDate || agentTimeStartDate <= HARD_AGENT_TIME_START_DATE
+              {!agentTimeStartDate || agentTimeStartDate <= draftWindowStartDate
                 ? <Button type="button" variant="ghost" size="sm" className="h-8" onClick={startWatchingAgentTimeToday}>Start fresh today</Button>
-                : <Button type="button" variant="ghost" size="sm" className="h-8" onClick={showAllAgentTime}>Since {format(parseLocalDate(HARD_AGENT_TIME_START_DATE), "MMM d")}</Button>}
+                : <Button type="button" variant="ghost" size="sm" className="h-8" onClick={showAllAgentTime}>Last {AGENT_DRAFT_WINDOW_DAYS} days</Button>}
               {agentImportPreview.ignoredSeconds > 0 && <Button data-testid="restore-ignored-agent-slices" type="button" variant="ghost" size="sm" className="h-8" onClick={restoreVisibleIgnoredAgentRanges}>Restore skipped <span className="ml-1 tabular-nums">{formatClock(agentImportPreview.ignoredSeconds)}</span></Button>}
             </div>
           <DialogFooter><Button variant="outline" onClick={() => setImportSettingsOpen(false)}>Done</Button></DialogFooter>
