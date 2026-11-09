@@ -773,6 +773,11 @@ export default function TrackerPage() {
   }, [agentTime, handledAgentProjects, projectMappings, unmappedAgentProjects])
 
   const agentTimeRequest = useRef(0)
+  // Any open dialog (drafts, an entry's chats, edits) or a running import holds background refreshes,
+  // so the rows being read or approved never shift underneath; a refresh already in flight is dropped too.
+  function backgroundRefreshBlocked() {
+    return importInFlight.current || document.querySelector('[role="dialog"]') !== null
+  }
   async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes, background = false) {
     // Background refreshes don't disable the approve buttons, and a slow one never overwrites a newer answer.
     const request = ++agentTimeRequest.current
@@ -784,10 +789,10 @@ export default function TrackerPage() {
         : 15
       const demo = process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && new URLSearchParams(window.location.search).get("fixture") === "demo"
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : demo ? "&fixture=demo" : ""
-      const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}&withLive=true${fixture}`)
+      const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}&t3Only=true&withLive=true${fixture}`)
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse
-      if (request === agentTimeRequest.current) setAgentTime(payload)
+      if (request === agentTimeRequest.current && !(background && backgroundRefreshBlocked())) setAgentTime(payload)
     } catch (error) {
       if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
     } finally {
@@ -898,13 +903,10 @@ export default function TrackerPage() {
   }, [pendingTitleIds, syncAgentTimeTitles])
 
   // Keep Agent Time current while the tracker is open, so new and running work shows up without a reload.
-  // It pauses while drafts are being reviewed, edited, or saved, so the list doesn't shift underfoot.
-  const agentRefreshPaused = importing || draftsOpen || editOpen
   useEffect(() => {
-    if (agentRefreshPaused) return
     let lastRefresh = Date.now()
     function refresh() {
-      if (document.visibilityState !== "visible") return
+      if (document.visibilityState !== "visible" || backgroundRefreshBlocked()) return
       lastRefresh = Date.now()
       void latestLoadAgentTime.current(true, undefined, true)
     }
@@ -920,7 +922,7 @@ export default function TrackerPage() {
       document.removeEventListener("visibilitychange", catchUp)
       window.removeEventListener("focus", catchUp)
     }
-  }, [agentRefreshPaused])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function setChatBillFactor(chat: ConversationSource, factor: number) {
     const key = conversationKey(chat)

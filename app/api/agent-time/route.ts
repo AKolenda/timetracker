@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic"
 /**
  * Returns import-ready Agent Time blocks from the local desktop service.
  * Query: project, from=YYYY-MM-DD, to=YYYY-MM-DD, gapMinutes=0..1440,
- * includeLive=true, and withLive=true (adds running turns as a separate `live` list).
+ * includeLive=true, t3Only=true (T3 Code activity and projects only), and withLive=true (adds running turns as a separate `live` list).
  * The default gap is 15 minutes.
  */
 export async function GET(request: NextRequest) {
@@ -151,6 +151,8 @@ export async function GET(request: NextRequest) {
     const to = parseDateBoundary(searchParams.get("to"), "end")
     const gapMinutes = parseGapMinutes(searchParams.get("gapMinutes"))
     const includeLive = searchParams.get("includeLive") === "true"
+    // Billing callers (tracker, project folders) only use T3 Code work; activity stats keep everything.
+    const t3Only = searchParams.get("t3Only") === "true"
 
     if (from !== null && to !== null && from >= to) {
       return NextResponse.json(
@@ -167,7 +169,7 @@ export async function GET(request: NextRequest) {
       to,
       gapMinutes,
       includeLive,
-      t3Only: true,
+      t3Only,
     })
 
     // The Projects page only needs folder names, not every interval.
@@ -185,7 +187,7 @@ export async function GET(request: NextRequest) {
         to,
         gapMinutes,
         includeLive: true,
-        t3Only: true,
+        t3Only,
       }).intervals
       : undefined
     return NextResponse.json(live ? { ...data, live } : data, {
