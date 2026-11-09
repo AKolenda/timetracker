@@ -922,7 +922,7 @@ export default function TrackerPage() {
       document.removeEventListener("visibilitychange", catchUp)
       window.removeEventListener("focus", catchUp)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   async function setChatBillFactor(chat: ConversationSource, factor: number) {
     const key = conversationKey(chat)
