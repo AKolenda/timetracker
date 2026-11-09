@@ -8,10 +8,17 @@ export const DEFAULT_AGENT_TIME_GAP_MINUTES = 15
 const REQUEST_TIMEOUT_MS = 5_000
 const MAX_GAP_MINUTES = 24 * 60
 
+/** An open T3 Code project: `name` matches interval projects, `title` is what T3 Code shows. */
+export type T3Project = { name: string; title: string }
+
+/** Only T3 Code work is billed; plain Claude and Codex sessions outside T3 stay out of imports. */
+export const BILLABLE_AGENT_SOURCE = "T3 Code"
+
 type AgentTimePayload = {
   now: number
   timezone: string
   projects: string[]
+  t3Projects: T3Project[]
   intervals: AgentTimeInterval[]
 }
 
@@ -63,6 +70,7 @@ export type AgentTimeImportData = {
   fetchedAt: string
   timezone: string
   projects: string[]
+  t3Projects: T3Project[]
   gapMinutes: number
   intervals: AgentTimeBlock[]
 }
@@ -111,6 +119,12 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
     projects: value.projects.filter(
       (project): project is string => typeof project === "string"
     ),
+    t3Projects: Array.isArray(value.t3_projects)
+      ? value.t3_projects.flatMap((project): T3Project[] =>
+        isRecord(project) && typeof project.name === "string" && project.name
+          ? [{ name: project.name, title: typeof project.title === "string" ? project.title : "" }]
+          : [])
+      : [],
     intervals: value.intervals.filter(isValidInterval).map((interval) => ({
       ...interval,
       source: interval.source || interval.agent,
@@ -162,6 +176,7 @@ export async function fetchAgentTime(dbHosts: string[] = [], labels: Record<stri
     now: validPayloads[0].now,
     timezone: validPayloads[0].timezone,
     projects: [...new Set(validPayloads.flatMap((p) => p.projects))],
+    t3Projects: [...new Map(validPayloads.flatMap((p) => p.t3Projects).map((project) => [project.name, project])).values()],
     intervals: validPayloads.flatMap((p) => p.intervals),
   }
 }
@@ -239,10 +254,13 @@ export function toImportData(
     to: number | null
     gapMinutes: number
     includeLive: boolean
+    /** Keep only T3 Code activity, and list only T3 Code projects. */
+    t3Only?: boolean
   }
 ): AgentTimeImportData {
   const gapSeconds = options.gapMinutes * 60
   const filtered = payload.intervals
+    .filter((interval) => !options.t3Only || interval.source === BILLABLE_AGENT_SOURCE)
     .filter(
       (interval) => !options.project || interval.project === options.project
     )
@@ -285,7 +303,10 @@ export function toImportData(
   return {
     fetchedAt: new Date().toISOString(),
     timezone: payload.timezone,
-    projects: [...new Set(payload.projects)].sort((a, b) => a.localeCompare(b)),
+    projects: [...new Set(options.t3Only
+      ? [...payload.t3Projects.map((project) => project.name), ...payload.intervals.filter((interval) => interval.source === BILLABLE_AGENT_SOURCE).map((interval) => interval.project)]
+      : payload.projects)].sort((a, b) => a.localeCompare(b)),
+    t3Projects: [...payload.t3Projects].sort((a, b) => a.name.localeCompare(b.name)),
     gapMinutes: options.gapMinutes,
     intervals: blocks
       .map((block) => ({

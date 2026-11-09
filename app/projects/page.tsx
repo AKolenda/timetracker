@@ -100,7 +100,7 @@ export default function ProjectsPage() {
   useEffect(() => {
     if (!dialogOpen || detectedFolders) return
     let cancelled = false
-    fetch(`/api/agent-time?foldersOnly=true${fixtureQuery()}`)
+    fetch(`/api/agent-time?foldersOnly=true&t3Only=true${fixtureQuery()}`)
       .then((response) => (response.ok ? response.json() : { projects: [] }))
       .then((body: { folders?: unknown; projects?: unknown }) => {
         if (cancelled) return

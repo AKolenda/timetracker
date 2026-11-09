@@ -14,7 +14,8 @@ export const dynamic = "force-dynamic"
 /**
  * Returns import-ready Agent Time blocks from the local desktop service.
  * Query: project, from=YYYY-MM-DD, to=YYYY-MM-DD, gapMinutes=0..1440,
- * and includeLive=true. The default gap is 15 minutes.
+ * includeLive=true, t3Only=true (T3 Code activity and projects only), and withLive=true (adds running turns as a separate `live` list).
+ * The default gap is 15 minutes.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -52,8 +53,36 @@ export async function GET(request: NextRequest) {
       t3End.setHours(14, 12, 0, 0)
       const codexSecondStart = new Date()
       codexSecondStart.setHours(14, 15, 0, 0)
+      const liveStart = new Date(Date.now() - 12 * 60_000)
       return NextResponse.json({
         projects: ["Fixture Project"],
+        live: [
+          {
+            id: "fixture-agent-time-live",
+            start: liveStart.toISOString(),
+            end: new Date().toISOString(),
+            project: "Fixture Project",
+            agents: ["Claude"],
+            sources: ["T3 Code"],
+            durationSeconds: 720,
+            activitySeconds: 720,
+            live: true,
+            sourceIntervals: [
+              {
+                start: liveStart.toISOString(),
+                end: new Date().toISOString(),
+                durationSeconds: 720,
+                agent: "Claude",
+                source: "T3 Code",
+                model: "claude-opus-5-5",
+                hostUrl: "http://vm.example:8080/api/data",
+                machineLabel: "Development VM",
+                conversationId: "fixture-live-chat",
+                conversationTitle: "Send agent time to the tracker live",
+              },
+            ],
+          },
+        ],
         intervals: [
           {
             id: "fixture-agent-time",
@@ -122,6 +151,8 @@ export async function GET(request: NextRequest) {
     const to = parseDateBoundary(searchParams.get("to"), "end")
     const gapMinutes = parseGapMinutes(searchParams.get("gapMinutes"))
     const includeLive = searchParams.get("includeLive") === "true"
+    // Billing callers (tracker, project folders) only use T3 Code work; activity stats keep everything.
+    const t3Only = searchParams.get("t3Only") === "true"
 
     if (from !== null && to !== null && from >= to) {
       return NextResponse.json(
@@ -131,25 +162,35 @@ export async function GET(request: NextRequest) {
     }
 
     const settings = await getDataProvider().getSettings()
-    const data = toImportData(
-      await fetchAgentTime(settings.agentTimeHosts || [], settings.agentTimeHostLabels || {}),
-      {
-        project,
-        from,
-        to,
-        gapMinutes,
-        includeLive,
-      }
-    )
+    const payload = await fetchAgentTime(settings.agentTimeHosts || [], settings.agentTimeHostLabels || {})
+    const data = toImportData(payload, {
+      project,
+      from,
+      to,
+      gapMinutes,
+      includeLive,
+      t3Only,
+    })
 
     // The Projects page only needs folder names, not every interval.
     if (searchParams.get("foldersOnly") === "true") {
       return NextResponse.json(
-        { projects: data.projects, folders: summarizeAgentFolders(data.projects, data.intervals) },
+        { projects: data.projects, t3Projects: data.t3Projects, folders: summarizeAgentFolders(data.projects, data.intervals) },
         { headers: { "Cache-Control": "no-store" } }
       )
     }
-    return NextResponse.json(data, {
+    // Turns still running stay out of the drafts, but the tracker shows them as they happen.
+    const live = searchParams.get("withLive") === "true"
+      ? toImportData({ ...payload, intervals: payload.intervals.filter((interval) => interval.live) }, {
+        project,
+        from,
+        to,
+        gapMinutes,
+        includeLive: true,
+        t3Only,
+      }).intervals
+      : undefined
+    return NextResponse.json(live ? { ...data, live } : data, {
       headers: { "Cache-Control": "no-store" },
     })
   } catch (error) {
