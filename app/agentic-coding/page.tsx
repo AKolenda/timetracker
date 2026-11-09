@@ -1,37 +1,21 @@
 "use client"
 
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
-import Image from "next/image"
 import Link from "next/link"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
-  Check,
-  ChevronDown,
-  ChevronsUpDown,
-  LoaderCircle,
-  Download,
-  RefreshCw,
-  ArrowLeft,
-  ArrowRight,
   AlertTriangle,
-  X,
+  Check,
+  ChevronRight,
+  ChevronsUpDown,
+  Download,
+  LoaderCircle,
+  RefreshCw,
 } from "lucide-react"
 import { toast } from "sonner"
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Command,
   CommandEmpty,
@@ -40,13 +24,16 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -55,72 +42,40 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { SheetAction, SheetSection } from "@/components/more-sheet"
 import { PageHeader } from "@/components/page-header"
 import { HeaderSearch } from "@/components/header-search"
-import { StatCard, StatGrid } from "@/components/stat-card"
-import { formatClock as formatHm, formatDuration } from "@/lib/format"
+import { SheetAction, SheetSection } from "@/components/more-sheet"
+import type { AgentTimeBlock, AgentTimeImportData } from "@/lib/agent-time"
+import { PERSONAL_AGENT_PROJECT, resolveAgentMappings } from "@/lib/agent-import-projects"
+import { occupiedProjectRanges } from "@/lib/agent-time-overlap"
+import { conversationKey } from "@/lib/agent-time-chats"
+import { normalizeBillFactor } from "@/lib/billing"
+import {
+  LEFT_OPEN_SECONDS,
+  buildJournal,
+  buildProjectLedger,
+  summarizeUnbilledFolders,
+  type Billing,
+  type InsightTurn,
+  type JournalDay,
+  type ProjectLedger,
+} from "@/lib/agentic-insights"
+import { formatClock, formatCurrency } from "@/lib/format"
+import { useStore } from "@/lib/store"
+import type { Client, Project } from "@/lib/types"
 
 const AGENT_TIME_START_DATE = "2026-08-30"
-const HIDDEN_CHATS_KEY = "timetracker-agentic-hidden-chats"
+// The API clips turns at `from`, so ask from a day earlier: a turn that started before the first
+// shown day keeps its full length and can still be recognized as left open.
+const AGENT_TIME_FETCH_FROM = "2026-08-29"
+const LOCAL_MAPPINGS_KEY = "timetracker-agent-time-project-mappings"
+const THREADS_SHOWN = 6
+const JOURNAL_ROWS_SHOWN = 7
+const LEFT_OPEN_HOURS = LEFT_OPEN_SECONDS / 3600
 
-type AgentTimeSourceInterval = {
-  start: string
-  end: string
-  durationSeconds: number
-  agent: string
-  source: string
-  model: string
-  conversationId: string
-  conversationTitle: string
-}
-
-type AgentTimeBlock = {
-  id: string
-  start: string
-  end: string
-  project: string
-  agents: string[]
-  sources?: string[]
-  sourceIntervals?: AgentTimeSourceInterval[]
-  live?: boolean
-}
-
-type AgentTimeResponse = {
-  fetchedAt?: string
-  projects: string[]
-  intervals: AgentTimeBlock[]
-}
-
-type Activity = AgentTimeSourceInterval & {
-  blockId: string
-  project: string
-  live: boolean
-  sourceLabel: string
-  startMs: number
-  endMs: number
-}
-
-type ActivitySpan = {
-  start: number
-  end: number
-}
-
-type Conversation = {
-  key: string
-  project: string
-  sourceLabel: string
-  source: string
-  agent: string
-  model: string
-  conversationId: string
-  conversationTitle: string
-  live: boolean
-  start: number
-  end: number
-  durationSeconds: number
-  spans: ActivitySpan[]
-}
+// Hatching marks time inside turns left open: visible, but not working time.
+const HATCH =
+  "bg-[repeating-linear-gradient(135deg,color-mix(in_oklab,var(--muted-foreground)_55%,transparent)_0_2px,transparent_2px_6px)]"
 
 const RANGE_LABELS: Record<string, string> = {
   today: "today",
@@ -133,640 +88,37 @@ function mobileFixtureRequested() {
   return (
     typeof window !== "undefined" &&
     process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
-    ["mobile", "demo"].includes(new URLSearchParams(window.location.search).get("fixture") ?? "")
+    new URLSearchParams(window.location.search).get("fixture") === "mobile"
   )
 }
 
-function sourceLabel(source: string, agent: string) {
-  const combined = `${source} ${agent}`.toLowerCase()
-  if (source.toLowerCase().includes("t3")) return "T3 Code"
-  if (combined.includes("claude") || combined.includes("fable")) return "Claude"
-  if (
-    combined.includes("codex") ||
-    combined.includes("chatgpt") ||
-    combined.includes("openai")
-  )
-    return "Codex"
-  return source || agent || "Other"
-}
+const hours = (seconds: number) => `${formatClock(seconds)} h`
 
-function sourceColor(label: string) {
-  if (label === "Claude") return "bg-[#d97757]"
-  if (label === "Codex") return "bg-emerald-500"
-  if (label === "T3 Code") return "bg-violet-500"
-  return "bg-sky-500"
-}
+/** `live` lists only the turns still running; `intervals` marks a whole merged block live if any turn in it is. */
+type AgentTimeResponse = AgentTimeImportData & { live?: AgentTimeBlock[] }
 
-function SourceLogo({
-  label,
-  className = "size-8",
-}: {
-  label: string
-  className?: string
-}) {
-  if (label === "T3 Code") {
-    return (
-      <Image
-        src="/t3-code-logo.svg"
-        alt="T3 Code"
-        width={32}
-        height={32}
-        className={`shrink-0 rounded-md shadow-sm ${className}`}
-      />
-    )
-  }
-  if (label === "Claude") {
-    return (
-      <span
-        className={`grid shrink-0 place-items-center rounded-md bg-[#f0eee6] shadow-sm ${className}`}
-        aria-label="Claude logo"
-      >
-        <Image src="/claude-logo.svg" alt="" width={32} height={32} className="size-[72%]" />
-      </span>
-    )
-  }
-  if (label === "Codex") {
-    return (
-      <span
-        className={`grid shrink-0 place-items-center rounded-md bg-emerald-600 text-white shadow-sm ${className}`}
-        aria-label="Codex logo"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          className="size-[76%]"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.9"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M11.217 19.384A3.501 3.501 0 0 0 18 18.167V13l-6-3.35" />
-          <path d="M5.214 15.014A3.501 3.501 0 0 0 9.66 20.28L14 17.746V10.8" />
-          <path d="M6 7.63c-1.391-.236-2.787.395-3.534 1.689a3.474 3.474 0 0 0 1.271 4.745L8 16.578l6-3.348" />
-          <path d="M12.783 4.616A3.501 3.501 0 0 0 6 5.833V10.9l6 3.45" />
-          <path d="M18.786 8.986A3.501 3.501 0 0 0 14.34 3.72L10 6.254V13.2" />
-          <path d="M18 16.302c1.391.236 2.787-.395 3.534-1.689a3.474 3.474 0 0 0-1.271-4.745l-4.308-2.514L10 10.774" />
-        </svg>
-      </span>
-    )
-  }
-  return (
-    <span
-      className={`grid shrink-0 place-items-center rounded-md bg-sky-600 text-[0.65rem] font-bold text-white shadow-sm ${className}`}
-      aria-label={`${label} logo`}
-    >
-      {label.slice(0, 2).toUpperCase()}
-    </span>
-  )
-}
+type ViewState = "loading" | "unavailable" | "empty" | "filtered" | "ready"
 
-function mergeSpans(spans: ActivitySpan[]) {
-  const merged: ActivitySpan[] = []
-  for (const span of [...spans].sort((a, b) => a.start - b.start)) {
-    const previous = merged.at(-1)
-    if (previous && span.start <= previous.end)
-      previous.end = Math.max(previous.end, span.end)
-    else merged.push({ ...span })
-  }
-  return merged
-}
-
-function unionSeconds(spans: ActivitySpan[]) {
-  return mergeSpans(spans).reduce(
-    (total, span) =>
-      total + Math.max(0, Math.floor((span.end - span.start) / 1000)),
-    0
-  )
-}
-
-function buildConversations(activities: Activity[]) {
-  const grouped = new Map<
-    string,
-    Omit<Conversation, "start" | "end" | "durationSeconds" | "spans"> & {
-      spans: ActivitySpan[]
-    }
-  >()
-  for (const activity of activities) {
-    let segmentStart = activity.startMs
-    while (segmentStart < activity.endMs) {
-      const nextDay = new Date(segmentStart)
-      nextDay.setHours(24, 0, 0, 0)
-      const segmentEnd = Math.min(activity.endMs, nextDay.getTime())
-      const activityDate = format(new Date(segmentStart), "yyyy-MM-dd")
-      const fallbackIdentity = `${activity.model}:${activityDate}`
-      const identity =
-        activity.conversationId ||
-        activity.conversationTitle ||
-        fallbackIdentity
-      const key = `${activityDate}:${activity.project}:${activity.sourceLabel}:${identity}`
-      const current = grouped.get(key)
-      if (current) {
-        current.spans.push({ start: segmentStart, end: segmentEnd })
-        current.live ||= activity.live
-      } else {
-        grouped.set(key, {
-          key,
-          project: activity.project,
-          sourceLabel: activity.sourceLabel,
-          source: activity.source,
-          agent: activity.agent,
-          model: activity.model,
-          conversationId: activity.conversationId,
-          conversationTitle: activity.conversationTitle,
-          live: activity.live,
-          spans: [{ start: segmentStart, end: segmentEnd }],
-        })
-      }
-      segmentStart = segmentEnd
-    }
-  }
-
-  return [...grouped.values()]
-    .map((conversation) => {
-      const spans = mergeSpans(conversation.spans)
-      return {
-        ...conversation,
-        spans,
-        start: spans[0].start,
-        end: spans.at(-1)!.end,
-        durationSeconds: unionSeconds(spans),
-      }
-    })
-    .sort((a, b) => b.start - a.start)
-}
-
-function DayTimeline({
-  conversations,
-  highlightedConversation,
-  onHighlight,
-}: {
-  conversations: Conversation[]
-  highlightedConversation: string | null
-  onHighlight: (key: string | null) => void
-}) {
-  const dayReference = new Date(conversations[0].start)
-  const dayStart = new Date(dayReference)
-  dayStart.setHours(0, 0, 0, 0)
-  const dayEnd = new Date(dayStart)
-  dayEnd.setDate(dayEnd.getDate() + 1)
-  const start = dayStart.getTime()
-  const end = dayEnd.getTime()
-  const duration = Math.max(1, end - start)
-  const labels = [
-    ...new Set(conversations.map((conversation) => conversation.sourceLabel)),
-  ]
-
-  return (
-    <div
-      className="grid min-w-0 gap-2 rounded-lg border bg-muted/10 p-3 max-sm:hidden"
-      data-testid="agentic-day-timeline"
-    >
-      {labels.map((label) => (
-        <div
-          key={label}
-          className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] items-center gap-2"
-        >
-          <SourceLogo label={label} className="size-8" />
-          <div
-            className="relative h-8 min-w-0 overflow-hidden rounded-md border bg-background/40"
-            aria-label={`${label} daily timeline`}
-          >
-            {Array.from({ length: 23 }, (_, index) => index + 1).map((hour) => (
-              <span
-                key={hour}
-                className={`pointer-events-none absolute inset-y-0 border-l ${hour % 6 === 0 ? "border-border/80" : "border-border/35"}`}
-                style={{ left: `${(hour / 24) * 100}%` }}
-                aria-hidden="true"
-              />
-            ))}
-            {conversations
-              .filter((conversation) => conversation.sourceLabel === label)
-              .flatMap((conversation) =>
-                conversation.spans.map((span, index) => {
-                  const spanStart = Math.max(start, span.start)
-                  const spanEnd = Math.min(end, span.end)
-                  if (spanEnd <= spanStart) return null
-                  return (
-                    <button
-                      key={`${conversation.key}-${span.start}-${index}`}
-                      type="button"
-                      data-testid="agentic-timeline-session"
-                      className={`absolute inset-y-1 min-w-px cursor-pointer rounded-[4px] transition-[opacity,box-shadow] ${sourceColor(label)} ${highlightedConversation === conversation.key ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : ""} ${highlightedConversation !== null && highlightedConversation !== conversation.key ? "opacity-25" : ""}`}
-                      style={{
-                        left: `${((spanStart - start) / duration) * 100}%`,
-                        width: `${((spanEnd - spanStart) / duration) * 100}%`,
-                      }}
-                      title={`${conversation.conversationTitle || label} · ${format(new Date(spanStart), "h:mm:ss a")}–${format(new Date(spanEnd), "h:mm:ss a")}`}
-                      aria-label={`Highlight ${conversation.conversationTitle || `${label} coding session`}`}
-                      onMouseEnter={() => onHighlight(conversation.key)}
-                      onMouseLeave={() => onHighlight(null)}
-                      onFocus={() => onHighlight(conversation.key)}
-                      onBlur={() => onHighlight(null)}
-                    />
-                  )
-                })
-              )}
-          </div>
-        </div>
-      ))}
-      <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2 text-[0.7rem] text-muted-foreground tabular-nums">
-        <span />
-        <div className="flex justify-between">
-          <span>12a</span>
-          <span>6a</span>
-          <span>12p</span>
-          <span>6p</span>
-          <span>12a</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ConversationRow({
-  conversation,
-  highlighted,
-  onHighlight,
-}: {
-  conversation: Conversation
-  highlighted: boolean
-  onHighlight: (key: string | null) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  return (
-    <div
-      className={`min-w-0 border-t transition-colors first:border-t-0 ${highlighted ? "bg-muted/50 ring-1 ring-inset ring-foreground/25" : ""}`}
-      data-testid="agentic-conversation"
-      onMouseEnter={() => onHighlight(conversation.key)}
-      onMouseLeave={() => onHighlight(null)}
-    >
-      <button
-        type="button"
-        className="grid w-full min-w-0 cursor-pointer gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/20 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <div className="flex min-w-0 items-start gap-3">
-          <SourceLogo label={conversation.sourceLabel} />
-          <div className="min-w-0">
-            <p className="text-sm font-medium break-words">
-              {conversation.conversationTitle ||
-                `${conversation.sourceLabel} coding session`}
-            </p>
-            <p className="mt-0.5 text-xs break-words text-muted-foreground">
-              {conversation.sourceLabel}
-              {conversation.source === "T3 Code"
-                ? ` using ${conversation.agent}`
-                : ""}
-              {conversation.model && conversation.model !== conversation.agent
-                ? ` · ${conversation.model}`
-                : ""}
-              {` · ${conversation.project} · `}
-              <span className="tabular-nums">
-                {format(new Date(conversation.start), "h:mm a")}–
-                {format(new Date(conversation.end), "h:mm a")}
-              </span>
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center justify-between gap-3 sm:justify-end">
-          {conversation.live && (
-            <Badge variant="secondary" className="text-[0.65rem]">
-              Live
-            </Badge>
-          )}
-          <span className="text-xs tabular-nums">
-            {formatHm(conversation.durationSeconds)}
-          </span>
-          <ChevronDown
-            className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
-          />
-        </div>
-      </button>
-      {expanded && (
-        <div className="grid min-w-0 gap-3 border-t bg-muted/10 px-3 py-3 text-xs">
-          <div className="grid min-w-0 gap-1 sm:grid-cols-2">
-            <p className="break-all text-muted-foreground">
-              Chat ID:{" "}
-              <span className="font-mono text-foreground">
-                {conversation.conversationId || "Not supplied"}
-              </span>
-            </p>
-            <p className="text-muted-foreground sm:text-right">
-              {conversation.spans.length} contributing{" "}
-              {conversation.spans.length === 1 ? "span" : "spans"}
-            </p>
-          </div>
-          <div className="grid min-w-0 gap-1 border-l pl-3 text-xs text-muted-foreground tabular-nums">
-            {conversation.spans.map((span, index) => (
-              <p key={`${span.start}-${span.end}-${index}`}>
-                {format(new Date(span.start), "MMM d, h:mm:ss a")} –{" "}
-                {format(new Date(span.end), "h:mm:ss a")} ·{" "}
-                {formatDuration(Math.floor((span.end - span.start) / 1000))}
-              </p>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function TimelineDay({
-  date,
-  conversations,
-}: {
-  date: string
-  conversations: Conversation[]
-}) {
-  const [highlightedConversation, setHighlightedConversation] = useState<
-    string | null
-  >(null)
-
-  return (
-    <section className="min-w-0 overflow-hidden rounded-lg border">
-      <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2">
-        <div>
-          <h2 className="text-sm font-medium">
-            {format(new Date(`${date}T12:00:00`), "EEEE, MMMM d, yyyy")}
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            {conversations.length}{" "}
-            {conversations.length === 1 ? "conversation" : "conversations"}
-          </p>
-        </div>
-        <p className="text-xs tabular-nums">
-          {formatHm(
-            unionSeconds(
-              conversations.flatMap((conversation) => conversation.spans)
-            )
-          )}
-        </p>
-      </header>
-      <div className="p-3">
-        <DayTimeline
-          conversations={conversations}
-          highlightedConversation={highlightedConversation}
-          onHighlight={setHighlightedConversation}
-        />
-      </div>
-      {conversations.map((conversation) => (
-        <ConversationRow
-          key={conversation.key}
-          conversation={conversation}
-          highlighted={highlightedConversation === conversation.key}
-          onHighlight={setHighlightedConversation}
-        />
-      ))}
-    </section>
-  )
-}
-
-type HoverTarget = {
-  key: string
-  leftPx: number
-  containerWidth: number
-}
-
-function conversationMeta(conversation: Conversation) {
-  return [
-    conversation.sourceLabel + (conversation.source === "T3 Code" ? ` using ${conversation.agent}` : ""),
-    conversation.model && conversation.model !== conversation.agent ? conversation.model : "",
-    conversation.project,
-  ].filter(Boolean).join(" · ")
-}
-
-function SessionCard({ conversation, className = "", onRemove }: { conversation: Conversation; className?: string; onRemove?: () => void }) {
-  return (
-    <div className={`grid min-w-0 gap-2 ${className}`} data-testid="agentic-session-card">
-      <div className="flex min-w-0 items-start gap-2.5">
-        <SourceLogo label={conversation.sourceLabel} className="size-7" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium leading-snug break-words">
-            {conversation.conversationTitle || `${conversation.sourceLabel} coding session`}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground" title={conversationMeta(conversation)}>{conversationMeta(conversation)}</p>
-        </div>
-        {conversation.live && <Badge variant="secondary" className="text-[0.6rem]">Live</Badge>}
-        {onRemove && (
-          <button type="button" aria-label="Remove this chat" title="Remove this chat" className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:size-9 max-sm:size-11" onClick={onRemove} data-testid="agentic-remove-chat">
-            <X className="size-4" />
-          </button>
-        )}
-      </div>
-      <p className="text-xs tabular-nums"><span className="text-muted-foreground">{format(new Date(conversation.start), "h:mm a")} – {format(new Date(conversation.end), "h:mm a")}</span> · {formatHm(conversation.durationSeconds)}{conversation.spans.length > 1 && <span className="text-muted-foreground"> · {conversation.spans.length} runs</span>}</p>
-      {conversation.spans.length > 1 && (
-        <div className="max-h-48 min-w-0 overflow-y-auto overscroll-contain rounded-md border bg-muted/20 p-2 text-xs text-muted-foreground tabular-nums">
-          {conversation.spans.map((span, index) => (
-            <p key={`${span.start}-${span.end}-${index}`} className="flex justify-between gap-3 py-0.5">
-              <span>{format(new Date(span.start), "h:mm:ss a")} – {format(new Date(span.end), "h:mm:ss a")}</span>
-              <span className="text-foreground">{formatDuration(Math.floor((span.end - span.start) / 1000))}</span>
-            </p>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function HoverTimelineDay({ date, conversations, onHide }: { date: string; conversations: Conversation[]; onHide: (conversation: Conversation) => void }) {
-  const [hover, setHover] = useState<HoverTarget | null>(null)
-  const [pinned, setPinned] = useState<HoverTarget | null>(null)
-  const [expanded, setExpanded] = useState(false)
-  const [removeTarget, setRemoveTarget] = useState<Conversation | null>(null)
-  const cardRef = useRef<HTMLDivElement | null>(null)
-  const [closeTimer, setCloseTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const active = pinned ?? hover
-  const activeConversation = active ? conversations.find((conversation) => conversation.key === active.key) ?? null : null
-
-  const dayStart = new Date(conversations[0].start)
-  dayStart.setHours(0, 0, 0, 0)
-  const start = dayStart.getTime()
-  const end = start + 24 * 60 * 60 * 1000
-  const duration = end - start
-  const labels = [...new Set(conversations.map((conversation) => conversation.sourceLabel))]
-
-  function scheduleClose() {
-    if (closeTimer) clearTimeout(closeTimer)
-    setCloseTimer(setTimeout(() => setHover(null), 180))
-  }
-  function cancelClose() {
-    if (closeTimer) clearTimeout(closeTimer)
-    setCloseTimer(null)
-  }
-  function show(target: HoverTarget) {
-    cancelClose()
-    setHover(target)
-  }
-
-  useEffect(() => () => { if (closeTimer) clearTimeout(closeTimer) }, [closeTimer])
-
-  useEffect(() => {
-    if (!pinned) return
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (cardRef.current?.contains(target)) return
-      if (target instanceof Element && target.closest('[data-testid="agentic-timeline-session"], [data-testid="agentic-conversation"], [role="alertdialog"]')) return
-      setPinned(null)
-      setHover(null)
-    }
-    document.addEventListener("pointerdown", onPointerDown)
-    return () => document.removeEventListener("pointerdown", onPointerDown)
-  }, [pinned])
-
-  function targetFromBar(key: string, element: HTMLElement): HoverTarget {
-    const container = containerRef.current?.getBoundingClientRect()
-    return { key, leftPx: container ? element.getBoundingClientRect().left - container.left : 0, containerWidth: container?.width ?? 0 }
-  }
-  function targetFromConversation(conversation: Conversation): HoverTarget {
-    const container = containerRef.current
-    const track = container?.querySelector<HTMLElement>(`[data-lane="${conversation.sourceLabel}"]`)
-    if (!container || !track) return { key: conversation.key, leftPx: 0, containerWidth: 0 }
-    const containerRect = container.getBoundingClientRect()
-    const trackRect = track.getBoundingClientRect()
-    const pct = (Math.max(start, conversation.start) - start) / duration
-    return { key: conversation.key, leftPx: trackRect.left - containerRect.left + pct * trackRect.width, containerWidth: containerRect.width }
-  }
-  const containerWidth = active?.containerWidth ?? 0
-  const cardWidth = Math.min(352, Math.max(0, containerWidth - 8))
-  const cardLeft = active ? Math.max(0, Math.min(active.leftPx, containerWidth - cardWidth)) : 0
-
-  return (
-    <section className="min-w-0 rounded-xl border max-sm:overflow-hidden max-sm:rounded-lg" data-testid="agentic-hover-day">
-      {/* Phones: the same muted day band as the Tracker log, date left and total right. */}
-      <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2 max-sm:border-b max-sm:bg-muted/35 max-sm:px-4">
-        <button type="button" className="flex min-w-0 items-center gap-2 rounded-md max-sm:hidden text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
-          <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`} />
-          <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
-        </button>
-        <h2 className="flex min-w-0 items-center gap-2 text-xs font-semibold text-muted-foreground sm:hidden">
-          <span className="truncate">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}</span>
-          <span className="shrink-0 font-normal">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span>
-        </h2>
-        <p className="text-xs tabular-nums max-sm:shrink-0 max-sm:font-semibold">{formatHm(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
-      </header>
-      <div className="px-3 pb-3 max-sm:hidden" onMouseLeave={scheduleClose}>
-        <div className="relative grid min-w-0 gap-2" ref={containerRef}>
-          {labels.map((label) => (
-            <div key={label} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] items-center gap-2">
-              <SourceLogo label={label} className="size-8" />
-              <div className="relative h-8 min-w-0 overflow-hidden rounded-md bg-muted/30" aria-label={`${label} daily timeline`} data-lane={label}>
-                {Array.from({ length: 23 }, (_, index) => index + 1).map((hour) => (
-                  <span key={hour} className={`pointer-events-none absolute inset-y-0 border-l ${hour % 6 === 0 ? "border-border/80" : "border-border/35"}`} style={{ left: `${(hour / 24) * 100}%` }} aria-hidden="true" />
-                ))}
-                {conversations.filter((conversation) => conversation.sourceLabel === label).flatMap((conversation) =>
-                  conversation.spans.map((span, index) => {
-                    const spanStart = Math.max(start, span.start)
-                    const spanEnd = Math.min(end, span.end)
-                    if (spanEnd <= spanStart) return null
-                    const leftPct = ((spanStart - start) / duration) * 100
-                    const isActive = active?.key === conversation.key
-                    return (
-                      <button
-                        key={`${conversation.key}-${span.start}-${index}`}
-                        type="button"
-                        data-testid="agentic-timeline-session"
-                        className={`absolute inset-y-1 min-w-[3px] cursor-pointer rounded-[4px] transition-[opacity,box-shadow] ${sourceColor(label)} ${isActive ? "z-10 ring-2 ring-foreground ring-offset-1 ring-offset-background" : ""} ${active && !isActive ? "opacity-25" : ""}`}
-                        style={{ left: `${leftPct}%`, width: `${((spanEnd - spanStart) / duration) * 100}%` }}
-                        aria-label={`Show ${conversation.conversationTitle || `${label} coding session`}`}
-                        aria-pressed={pinned?.key === conversation.key}
-                        onMouseEnter={(event) => show(targetFromBar(conversation.key, event.currentTarget))}
-                        onMouseLeave={scheduleClose}
-                        onFocus={(event) => show(targetFromBar(conversation.key, event.currentTarget))}
-                        onBlur={scheduleClose}
-                        onClick={(event) => { const target = targetFromBar(conversation.key, event.currentTarget); setPinned((current) => (current?.key === conversation.key ? null : target)) }}
-                      />
-                    )
-                  })
-                )}
-              </div>
-            </div>
-          ))}
-          <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-2 text-[0.7rem] text-muted-foreground tabular-nums">
-            <span />
-            <div className="flex justify-between"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
-          </div>
-          {activeConversation && active && (
-            <div
-              ref={cardRef}
-              className="absolute top-[calc(100%+0.25rem)] z-20 rounded-xl border bg-popover p-3 text-popover-foreground shadow-xl"
-              style={{ left: cardLeft, width: cardWidth }}
-              onMouseEnter={cancelClose}
-              onMouseLeave={scheduleClose}
-              data-testid="agentic-hover-card"
-            >
-              <SessionCard conversation={activeConversation} onRemove={() => { setPinned(active); setRemoveTarget(activeConversation) }} />
-            </div>
-          )}
-        </div>
-      </div>
-      {activeConversation && <div className="border-t p-3 sm:hidden"><SessionCard conversation={activeConversation} onRemove={() => setRemoveTarget(activeConversation)} /></div>}
-      <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove this chat?</AlertDialogTitle>
-            <AlertDialogDescription>
-              “{removeTarget?.conversationTitle || `${removeTarget?.sourceLabel} coding session`}” will be hidden from this page and its time removed from the totals here. You can restore hidden chats at any time.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { if (removeTarget) onHide(removeTarget); setRemoveTarget(null); setPinned(null); setHover(null) }}>Remove</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <div className={`border-t max-sm:divide-y max-sm:border-t-0 ${expanded ? "" : "sm:hidden"}`}>
-        {conversations.map((conversation) => (
-          <button
-            key={conversation.key}
-            type="button"
-            className={`flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-muted/30 max-sm:grid max-sm:min-h-11 max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-0.5 max-sm:px-4 max-sm:py-2.5 ${active?.key === conversation.key ? "bg-muted/40" : ""}`}
-            data-testid="agentic-conversation"
-            onMouseEnter={() => show(targetFromConversation(conversation))}
-            onMouseLeave={scheduleClose}
-            onClick={() => setPinned((current) => (current?.key === conversation.key ? null : targetFromConversation(conversation)))}
-          >
-            {/* Phones: logo and title with the duration on line 1; project and start time on line 2. */}
-            <span className="flex min-w-0 flex-1 items-center gap-2.5 max-sm:gap-2">
-              <SourceLogo label={conversation.sourceLabel} className="size-5 max-sm:size-4" />
-              <span className="min-w-0 flex-1 truncate text-sm max-sm:font-medium">{conversation.conversationTitle || `${conversation.sourceLabel} coding session`}</span>
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums max-sm:order-2 max-sm:text-right">{format(new Date(conversation.start), "h:mm a")}</span>
-            <span className="w-12 shrink-0 text-right text-xs tabular-nums max-sm:w-auto">{formatHm(conversation.durationSeconds)}</span>
-            <span className="hidden min-w-0 truncate text-xs text-muted-foreground max-sm:order-1 max-sm:block">{conversation.project || conversation.sourceLabel}</span>
-          </button>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-/** Loading, unavailable, nothing recorded, and nothing matching each look different, with the next step offered. */
 function AgenticEmptyState({
   state,
   range,
   filtersActive,
-  hiddenCount,
   onClearFilters,
   onShowAllDates,
-  onRestoreHidden,
   onRetry,
 }: {
-  state: "loading" | "unavailable" | "empty" | "filtered"
+  state: Exclude<ViewState, "ready">
   range: string
   filtersActive: boolean
-  hiddenCount: number
   onClearFilters: () => void
   onShowAllDates: () => void
-  onRestoreHidden: () => void
   onRetry: () => void
 }) {
   if (state === "loading") {
     return (
       <div role="status" aria-busy="true" aria-label="Loading agentic coding" className="grid gap-4" data-testid="agentic-loading">
         {[0, 1].map((index) => (
-          <div key={index} className="grid gap-2 rounded-xl border p-3">
+          <div key={index} className="grid gap-2 rounded-lg border p-3">
             <Skeleton className="h-4 w-40" />
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-full" />
@@ -789,7 +141,7 @@ function AgenticEmptyState({
       </Button>
     )
   } else if (state === "empty") {
-    title = "No agentic coding recorded yet"
+    title = "No T3 Code activity recorded yet"
     detail = "Activity appears here once an Agent Time collector reports it."
     action = (
       <Button size="sm" variant="outline" asChild>
@@ -797,23 +149,15 @@ function AgenticEmptyState({
       </Button>
     )
   } else if (filtersActive) {
-    title = "No chats match these filters"
-    detail = "Try a different project, source, or search."
+    title = "No threads match these filters"
+    detail = "Try a different project or search."
     action = (
       <Button size="sm" variant="outline" onClick={onClearFilters} data-testid="agentic-clear-filters">
         Clear filters
       </Button>
     )
-  } else if (hiddenCount > 0) {
-    title = "Every chat here is hidden"
-    detail = `${hiddenCount} hidden ${hiddenCount === 1 ? "chat" : "chats"} in this view.`
-    action = (
-      <Button size="sm" variant="outline" onClick={onRestoreHidden}>
-        Restore hidden chats
-      </Button>
-    )
   } else {
-    title = `No agentic coding in ${RANGE_LABELS[range] ?? "this range"}`
+    title = `No T3 Code activity in ${RANGE_LABELS[range] ?? "this range"}`
     detail = "Earlier activity is still available."
     action =
       range !== "all" ? (
@@ -823,7 +167,7 @@ function AgenticEmptyState({
       ) : null
   }
   return (
-    <div className="grid justify-items-center gap-1 rounded-xl border border-dashed px-4 py-10 text-center" data-testid={`agentic-${state}`}>
+    <div className="grid justify-items-center gap-1 rounded-lg border border-dashed px-4 py-10 text-center" data-testid={`agentic-${state}`}>
       <p className="text-sm font-medium">{title}</p>
       <p className="max-w-sm text-sm text-muted-foreground">{detail}</p>
       {action && <div className="mt-3">{action}</div>}
@@ -831,321 +175,259 @@ function AgenticEmptyState({
   )
 }
 
-// PROTOTYPE: Three calmer agentic-coding layouts, switchable via ?variant=calm|focus|timeline.
-const prototypeVariants = [
-  { key: "hover", name: "Hover cards" },
-  { key: "calm", name: "Aligned ledger" },
-  { key: "focus", name: "Source focus" },
-  { key: "timeline", name: "Day timeline" },
-] as const
-
-type PrototypeVariant = (typeof prototypeVariants)[number]["key"]
-
-function PrototypeSwitcher({
-  variant,
-  queryString,
-}: {
-  variant: PrototypeVariant
-  queryString: string
-}) {
-  const router = useRouter()
-  const pathname = usePathname()
-
-  const changeVariant = useCallback(
-    (direction: number) => {
-      const index = prototypeVariants.findIndex((item) => item.key === variant)
-      const next =
-        prototypeVariants[
-          (index + direction + prototypeVariants.length) %
-            prototypeVariants.length
-        ]
-      const query = new URLSearchParams(queryString)
-      query.set("variant", next.key)
-      router.replace(`${pathname}?${query.toString()}`, { scroll: false })
-    },
-    [pathname, queryString, router, variant]
-  )
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
-      if (target?.matches("input, textarea, [contenteditable='true']")) return
-      if (event.key === "ArrowLeft") changeVariant(-1)
-      if (event.key === "ArrowRight") changeVariant(1)
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [changeVariant])
-
-  if (process.env.NODE_ENV === "production") return null
-  const label = prototypeVariants.find((item) => item.key === variant)!
+function LiveDot({ className = "" }: { className?: string }) {
   return (
-    <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-full border border-foreground/15 bg-foreground px-1.5 py-1.5 text-background shadow-xl">
+    <span
+      role="img"
+      title="Running now"
+      aria-label="Running now"
+      className={`inline-block size-1.5 shrink-0 rounded-full bg-emerald-500 ring-3 ring-emerald-500/20 ${className}`}
+    />
+  )
+}
+
+function LedgerRow({
+  row,
+  project,
+  client,
+  scaleSeconds,
+  folderTitle,
+  open,
+  onToggle,
+}: {
+  row: ProjectLedger
+  project: Project | undefined
+  client: Client | undefined
+  scaleSeconds: number
+  folderTitle: (folder: string) => string
+  open: boolean
+  onToggle: () => void
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const covered = Math.max(0, row.workingSeconds - row.untrackedSeconds)
+  const pct = (seconds: number) => `${(seconds / scaleSeconds) * 100}%`
+  const hasUntracked = row.untrackedSeconds >= 60
+  const threads = showAll ? row.threads : row.threads.slice(0, THREADS_SHOWN)
+  const folders = new Set(row.threads.map((thread) => thread.folder))
+  return (
+    <div className="border-b last:border-b-0" data-testid="agentic-ledger-row">
       <button
         type="button"
-        aria-label="Previous prototype"
-        onClick={() => changeVariant(-1)}
-        className="grid size-8 place-items-center rounded-full hover:bg-background/15"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="grid w-full cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-3 text-left hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4 md:grid-cols-[1rem_minmax(0,1.2fr)_minmax(0,2fr)_6rem_7rem_7rem]"
       >
-        <ArrowLeft className="size-4" />
-      </button>
-      <span className="min-w-36 px-2 text-center text-xs font-medium">
-        {label.name}
-      </span>
-      <button
-        type="button"
-        aria-label="Next prototype"
-        onClick={() => changeVariant(1)}
-        className="grid size-8 place-items-center rounded-full hover:bg-background/15"
-      >
-        <ArrowRight className="size-4" />
-      </button>
-    </div>
-  )
-}
-
-function SourceChips({
-  sourceStats,
-  selectedSource,
-  onSelect,
-}: {
-  sourceStats: { label: string; seconds: number; conversations: number }[]
-  selectedSource: string
-  onSelect: (label: string) => void
-}) {
-  return (
-    <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
-      {sourceStats.map((stat) => (
-        <button
-          key={stat.label}
-          type="button"
-          data-testid={`agentic-source-${stat.label.toLowerCase().replaceAll(" ", "-")}`}
-          className={`flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors hover:bg-muted/50 ${selectedSource === stat.label ? "border-foreground/30 bg-muted" : "bg-background"}`}
-          onClick={() => onSelect(stat.label)}
-        >
-          <SourceLogo
-            label={stat.label}
-            className="size-5 rounded-[5px] shadow-none"
-          />
-          <span className="text-xs font-medium">{stat.label}</span>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {formatHm(stat.seconds)}
+        <ChevronRight aria-hidden className={`size-4 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`} />
+        <span className="min-w-0">
+          <span className="block truncate font-medium">{client?.name ?? project?.name ?? "Project"}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {project ? `${project.name}, ${formatCurrency(project.rate, project.currency).replace(/\.00$/, "")}/h` : ""}
           </span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function LedgerLayout({
-  conversations,
-  sourceStats,
-  selectedSource,
-  onSelectSource,
-}: {
-  conversations: Conversation[]
-  sourceStats: { label: string; seconds: number; conversations: number }[]
-  selectedSource: string
-  onSelectSource: (label: string) => void
-}) {
-  return (
-    <section className="rounded-xl border bg-card">
-      <div className="space-y-4 border-b px-4 py-4 sm:px-5">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold">Recent activity</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              A quiet ledger: tool, conversation, project, session, then time.
-            </p>
-          </div>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {conversations.length} sessions
+        </span>
+        <span className="col-span-2 col-start-2 row-start-2 min-w-0 md:col-span-1 md:col-start-auto md:row-start-auto">
+          <span className="flex h-2.5 overflow-hidden rounded-sm bg-muted" aria-hidden>
+            <span className="h-full bg-primary" style={{ width: pct(covered) }} />
+            <span className="h-full bg-primary/35" style={{ width: pct(row.untrackedSeconds) }} />
+            <span className={`h-full ${HATCH}`} style={{ width: pct(row.leftOpenSeconds) }} />
           </span>
-        </div>
-        <SourceChips
-          sourceStats={sourceStats}
-          selectedSource={selectedSource}
-          onSelect={onSelectSource}
-        />
-      </div>
-      <div className="min-w-[680px] overflow-x-auto">
-        <div className="grid grid-cols-[minmax(10rem,1fr)_minmax(16rem,2fr)_minmax(8rem,1fr)_8rem_4.5rem] items-center gap-4 border-b bg-muted/30 px-5 py-2.5 text-[0.65rem] font-medium tracking-[0.12em] text-muted-foreground uppercase">
-          <span>Source</span>
-          <span>Conversation</span>
-          <span>Project</span>
-          <span>Session</span>
-          <span className="text-right">Time</span>
-        </div>
-        {conversations.map((conversation) => (
-          <div
-            key={conversation.key}
-            className="grid grid-cols-[minmax(10rem,1fr)_minmax(16rem,2fr)_minmax(8rem,1fr)_8rem_4.5rem] items-center gap-4 border-b px-5 py-3 last:border-b-0 hover:bg-muted/15"
-          >
-            <div className="flex min-w-0 items-center gap-2.5">
-              <SourceLogo
-                label={conversation.sourceLabel}
-                className="size-6 rounded-[6px] shadow-none"
-              />
-              <span className="truncate text-sm font-medium">
-                {conversation.sourceLabel}
-              </span>
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm">
-                {conversation.conversationTitle ||
-                  `${conversation.sourceLabel} coding session`}
-              </p>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                {conversation.model || conversation.agent}
-              </p>
-            </div>
-            <p className="truncate text-xs">{conversation.project}</p>
-            <p className="text-xs text-muted-foreground tabular-nums">
-              {format(new Date(conversation.start), "h:mm a")}
-            </p>
-            <p className="text-right text-xs font-medium tabular-nums">
-              {formatHm(conversation.durationSeconds)}
-            </p>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-function FocusLayout({
-  conversations,
-  sourceStats,
-  selectedSource,
-  onSelectSource,
-}: {
-  conversations: Conversation[]
-  sourceStats: { label: string; seconds: number; conversations: number }[]
-  selectedSource: string
-  onSelectSource: (label: string) => void
-}) {
-  return (
-    <section className="grid overflow-hidden rounded-xl border bg-card lg:grid-cols-[15rem_minmax(0,1fr)]">
-      <aside className="border-b bg-muted/15 p-4 lg:border-r lg:border-b-0">
-        <p className="mb-3 text-[0.65rem] font-medium tracking-[0.12em] text-muted-foreground uppercase">
-          Coding sources
-        </p>
-        <div className="grid gap-1">
-          {sourceStats.map((stat) => (
-            <button
-              key={stat.label}
-              type="button"
-              onClick={() => onSelectSource(stat.label)}
-              className={`flex items-center gap-3 rounded-lg p-2 text-left ${selectedSource === stat.label ? "bg-background shadow-sm ring-1 ring-border" : "hover:bg-muted/50"}`}
-            >
-              <SourceLogo
-                label={stat.label}
-                className="size-7 rounded-[7px] shadow-none"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{stat.label}</span>
-                <span className="text-xs text-muted-foreground tabular-nums">
-                  {formatHm(stat.seconds)}
+          <span className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+            <span><span className="font-medium text-foreground tabular-nums">{hours(row.workingSeconds)}</span> working</span>
+            <span className="tabular-nums md:hidden">{hours(row.trackedSeconds)} tracked</span>
+            {row.leftOpenTurns > 0 && (
+              <span className="tabular-nums">+ {hours(row.leftOpenSeconds)} in {row.leftOpenTurns} {row.leftOpenTurns === 1 ? "turn" : "turns"} left open</span>
+            )}
+          </span>
+        </span>
+        <span className="hidden text-right text-sm tabular-nums md:block">{hours(row.trackedSeconds)}</span>
+        <span className="hidden text-right tabular-nums md:block">
+          {hasUntracked ? <span className="font-semibold">{hours(row.untrackedSeconds)}</span> : <span className="text-sm text-muted-foreground">All tracked</span>}
+        </span>
+        <span className="text-right tabular-nums">
+          {hasUntracked && project ? (
+            <span className="font-semibold">{formatCurrency((row.billableUntrackedSeconds / 3600) * project.rate, project.currency)}</span>
+          ) : (
+            <span className="text-sm text-muted-foreground">{project ? formatCurrency(0, project.currency) : "—"}</span>
+          )}
+          <span className="block text-xs font-normal text-muted-foreground md:hidden">
+            {hasUntracked ? `${hours(row.untrackedSeconds)} not tracked` : "All tracked"}
+          </span>
+        </span>
+      </button>
+      {open && (
+        <div className="border-t bg-muted/20 px-3 py-1.5 sm:px-4 md:pl-11" data-testid="agentic-ledger-threads">
+          {threads.map((thread) => (
+            <div key={thread.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b border-dashed py-2 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_12rem_5rem]">
+              <span className="flex min-w-0 items-center gap-2">
+                {thread.live && <LiveDot />}
+                <span className="truncate" title={`${thread.title || "Untitled thread"}\nT3 thread ${thread.threadId}`}>
+                  {thread.title || "Untitled thread"}
                 </span>
+                {folders.size > 1 && <span className="max-w-32 shrink-0 truncate rounded-md bg-muted px-1.5 py-px text-xs text-muted-foreground">{folderTitle(thread.folder)}</span>}
               </span>
-              <Badge variant="secondary" className="text-[0.6rem]">
-                {stat.conversations}
-              </Badge>
-            </button>
-          ))}
-        </div>
-      </aside>
-      <div>
-        <div className="border-b px-5 py-4">
-          <h2 className="text-sm font-semibold">Sessions in view</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            The selected tool stays visually anchored; detail has more breathing
-            room.
-          </p>
-        </div>
-        <div className="divide-y">
-          {conversations.map((conversation) => (
-            <div
-              key={conversation.key}
-              className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_9rem_5rem] sm:items-center"
-            >
-              <div className="flex min-w-0 items-center gap-3">
-                <SourceLogo
-                  label={conversation.sourceLabel}
-                  className="size-7 rounded-[7px] shadow-none"
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {conversation.conversationTitle ||
-                      `${conversation.sourceLabel} coding session`}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {conversation.project} ·{" "}
-                    {conversation.model || conversation.agent}
-                  </p>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {format(new Date(conversation.start), "MMM d · h:mm a")}
-              </p>
-              <p className="text-xs tabular-nums sm:text-right">
-                {formatHm(conversation.durationSeconds)}
-              </p>
+              <span className="col-start-1 row-start-2 text-xs text-muted-foreground md:col-start-auto md:row-start-auto md:text-right">
+                {thread.leftOpenTurns > 0 ? `+ ${hours(thread.leftOpenSeconds)} left open (${thread.leftOpenTurns})` : ""}
+              </span>
+              <span className="row-span-2 text-right tabular-nums md:row-span-1">{hours(thread.workingSeconds)}</span>
             </div>
           ))}
+          {row.threads.length > THREADS_SHOWN && (
+            <Button variant="ghost" size="xs" className="my-1 text-muted-foreground" onClick={() => setShowAll((value) => !value)}>
+              {showAll ? "Show fewer" : `Show ${row.threads.length - THREADS_SHOWN} more threads`}
+            </Button>
+          )}
         </div>
-      </div>
-    </section>
+      )}
+    </div>
+  )
+}
+
+function JournalDayCard({
+  day,
+  open,
+  onToggle,
+  groupLabel,
+  folderTag,
+}: {
+  day: JournalDay
+  open: boolean
+  onToggle: () => void
+  groupLabel: (key: string) => string
+  folderTag: (folder: string) => { label: string; billed: boolean }
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const dayEnd = new Date(day.dayStart)
+  dayEnd.setDate(dayEnd.getDate() + 1)
+  const length = dayEnd.getTime() - day.dayStart
+  const position = (start: number, end: number) => ({
+    left: `${((start - day.dayStart) / length) * 100}%`,
+    width: `${((end - start) / length) * 100}%`,
+  })
+  const visible = day.threads.filter((thread) => thread.workingSeconds >= 60)
+  const threads = showAll ? visible : visible.slice(0, JOURNAL_ROWS_SHOWN)
+  const groups = [...day.groups].filter(([, seconds]) => seconds >= 60).sort(([a], [b]) => (a === "unbilled" ? 1 : b === "unbilled" ? -1 : 0))
+  const leftOpen = day.leftOpen
+  const track = (children: React.ReactNode) => (
+    <span className="relative block h-3.5 rounded-sm bg-muted" aria-hidden>
+      {[25, 50, 75].map((left) => <span key={left} className="absolute inset-y-0 w-px bg-foreground/5" style={{ left: `${left}%` }} />)}
+      {children}
+    </span>
+  )
+  return (
+    <div className="rounded-lg border bg-card" data-testid="agentic-day">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
+      >
+        <ChevronRight aria-hidden className={`size-4 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`} />
+        <span className="font-medium">{format(new Date(day.dayStart), "EEE, MMM d")}</span>
+        <span className="order-last flex basis-full flex-wrap gap-1.5 pl-7 sm:order-none sm:flex-1 sm:basis-auto sm:pl-0">
+          {groups.map(([key, seconds]) => (
+            <span key={key} className={`max-w-full truncate rounded-md px-1.5 py-px text-xs ${key === "unbilled" ? "bg-muted text-muted-foreground" : "bg-primary/15 text-foreground"}`}>
+              {groupLabel(key)} <span className="tabular-nums">{hours(seconds)}</span>
+            </span>
+          ))}
+        </span>
+        <span className="ml-auto flex items-baseline gap-3">
+          {leftOpen.turns > 0 && <span className="text-xs text-muted-foreground tabular-nums">+ {hours(leftOpen.seconds)} left open</span>}
+          <span className="font-semibold tabular-nums">{hours(day.workingSeconds)}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="border-t px-3 pt-1 pb-2.5 sm:px-4">
+          <div className="grid grid-cols-1 gap-4 pt-1 text-[11px] text-muted-foreground sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]" aria-hidden>
+            <span className="hidden sm:block" />
+            <span className="flex justify-between"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></span>
+            <span className="hidden sm:block" />
+          </div>
+          {threads.map((thread) => {
+            const tag = folderTag(thread.folder)
+            return (
+              <div key={thread.key} className="grid grid-cols-[minmax(0,1fr)_4rem] items-center gap-x-4 gap-y-1 py-1.5 text-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate" title={`${thread.title || "Untitled thread"}\nT3 thread ${thread.threadId}`}>{thread.title || "Untitled thread"}</span>
+                  <span className={`max-w-28 shrink-0 truncate rounded-md px-1.5 py-px text-xs sm:max-w-40 ${tag.billed ? "bg-primary/15 text-foreground" : "bg-muted text-muted-foreground"}`}>{tag.label}</span>
+                  {thread.live && <LiveDot />}
+                </span>
+                <span className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-auto">
+                  {track(thread.spans.map((span) => (
+                    <span
+                      key={span.start}
+                      title={`${format(new Date(span.start), "h:mm a")} – ${format(new Date(span.end), "h:mm a")}`}
+                      className={`absolute inset-y-0.5 min-w-0.5 rounded-[2px] ${tag.billed ? "bg-violet-500" : "bg-muted-foreground/60"}`}
+                      style={position(span.start, span.end)}
+                    />
+                  )))}
+                </span>
+                <span className="text-right tabular-nums sm:row-start-auto">{hours(thread.workingSeconds)}</span>
+              </div>
+            )
+          })}
+          {leftOpen.turns > 0 && (
+            <div className="mt-1 grid grid-cols-[minmax(0,1fr)_4rem] items-center gap-x-4 gap-y-1 border-t border-dashed pt-2 text-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]">
+              <span className="text-amber-600 dark:text-amber-400">
+                {leftOpen.turns} {leftOpen.turns === 1 ? "turn" : "turns"} left open
+                {leftOpen.closedTogether ? `, ${leftOpen.closedTogether.turns} closed together ${format(new Date(leftOpen.closedTogether.end), "EEE h:mm a")}` : ""}
+              </span>
+              <span className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-auto">
+                {track(leftOpen.spans.map((span) => (
+                  <span key={span.start} className="absolute inset-y-[3px] rounded-[2px] border border-amber-500/70" style={position(span.start, span.end)} />
+                )))}
+              </span>
+              <span className="text-right text-muted-foreground tabular-nums">{hours(leftOpen.seconds)}</span>
+            </div>
+          )}
+          {visible.length > JOURNAL_ROWS_SHOWN && (
+            <Button variant="ghost" size="xs" className="mt-1 text-muted-foreground" onClick={() => setShowAll((value) => !value)}>
+              {showAll ? "Show fewer" : `Show ${visible.length - JOURNAL_ROWS_SHOWN} shorter threads`}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
 export default function AgenticCodingPage() {
-  const searchParams = useSearchParams()
-  // Fixture runs carry their fixture to the tracker, which otherwise tries a real database.
-  const fixtureParam = process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" ? searchParams.get("fixture") : null
-  const importHref = `/tracker?importAgentTime=1${fixtureParam ? `&fixture=${encodeURIComponent(fixtureParam)}` : ""}`
+  const { data } = useStore()
   const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [project, setProject] = useState("all")
   const [projectOpen, setProjectOpen] = useState(false)
+  // The phone copy of the picker lives in the More sheet, so it keeps its own open state.
   const [phoneProjectOpen, setPhoneProjectOpen] = useState(false)
   const [range, setRange] = useState("7d")
   const [search, setSearch] = useState("")
-  const [selectedSource, setSelectedSource] = useState("all")
-  // Data only loads client-side after mount, so reading storage here never changes the first paint.
-  const [hiddenChatKeys, setHiddenChatKeys] = useState<string[]>(() => {
-    if (typeof window === "undefined") return []
+  const [openRows, setOpenRows] = useState<Set<string> | null>(null)
+  const [openDays, setOpenDays] = useState<Set<number> | null>(null)
+  const [leftOpenDialog, setLeftOpenDialog] = useState(false)
+  // Choices made in this browser in the import flow; "Personal" lives only here.
+  const [localMappings] = useState<Record<string, string>>(() => {
+    if (mobileFixtureRequested()) return { "Fixture Project": "fixture-project" }
     try {
-      const saved = window.localStorage.getItem(HIDDEN_CHATS_KEY)
-      const parsed: unknown = saved ? JSON.parse(saved) : []
-      return Array.isArray(parsed) ? parsed.filter((key): key is string => typeof key === "string") : []
-    } catch { return [] }
+      const saved = typeof window !== "undefined" ? window.localStorage.getItem(LOCAL_MAPPINGS_KEY) : null
+      const parsed: unknown = saved ? JSON.parse(saved) : {}
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {}
+    } catch {
+      return {}
+    }
   })
-  const updateHiddenChats = useCallback((next: string[]) => {
-    setHiddenChatKeys(next)
-    try { window.localStorage.setItem(HIDDEN_CHATS_KEY, JSON.stringify(next)) } catch { /* storage unavailable */ }
-  }, [])
-  const selectedVariant = searchParams.get("variant")
-  const variant: PrototypeVariant =
-    selectedVariant === "focus" || selectedVariant === "calm" || selectedVariant === "timeline"
-      ? selectedVariant
-      : "hover"
 
   const loadAgentTime = useCallback(async (showToast = false) => {
     setLoading(true)
     try {
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
       const response = await fetch(
-        `/api/agent-time?gapMinutes=0&includeLive=true&from=${AGENT_TIME_START_DATE}${fixture}`
+        `/api/agent-time?gapMinutes=0&includeLive=true&withLive=true&t3Only=true&from=${AGENT_TIME_FETCH_FROM}${fixture}`
       )
       if (!response.ok) throw new Error("Agent Time is not available")
       setAgentTime((await response.json()) as AgentTimeResponse)
       setLoadError(null)
       if (showToast) toast.success("Agentic coding activity refreshed")
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Could not load Agent Time"
+      const message = error instanceof Error ? error.message : "Could not load Agent Time"
       // The inline notice stays until a load succeeds; the toast only answers a manual refresh.
       setLoadError(message)
       if (showToast) toast.error(message)
@@ -1159,297 +441,224 @@ export default function AgenticCodingPage() {
     return () => window.clearTimeout(id)
   }, [loadAgentTime])
 
-  const activities = useMemo(
-    () =>
-      agentTime?.intervals.flatMap((block) => {
-        const sourceIntervals = block.sourceIntervals?.length
-          ? block.sourceIntervals
-          : [
-              {
-                start: block.start,
-                end: block.end,
-                durationSeconds: Math.max(
-                  0,
-                  Math.floor(
-                    (new Date(block.end).getTime() -
-                      new Date(block.start).getTime()) /
-                      1000
-                  )
-                ),
-                agent: block.agents[0] || "Other",
-                source: block.sources?.[0] || block.agents[0] || "Other",
-                model: "",
-                conversationId: "",
-                conversationTitle: "",
-              },
-            ]
-        return sourceIntervals.flatMap((interval) => {
-          const startMs = new Date(interval.start).getTime()
-          const endMs = new Date(interval.end).getTime()
-          if (
-            !Number.isFinite(startMs) ||
-            !Number.isFinite(endMs) ||
-            endMs <= startMs
-          )
-            return []
-          return [
-            {
-              ...interval,
-              blockId: block.id,
-              project: block.project,
-              live: block.live === true,
-              sourceLabel: sourceLabel(interval.source, interval.agent),
-              startMs,
-              endMs,
-            },
-          ]
-        })
-      }) ?? [],
-    [agentTime]
-  )
-
+  // Counted from when Agent Time was last read, so a tab left open rolls over at the next refresh.
+  const fetchedAt = agentTime?.fetchedAt
   const rangeStart = useMemo(() => {
-    if (range === "all")
-      return new Date(`${AGENT_TIME_START_DATE}T00:00:00`).getTime()
-    const start = new Date()
+    if (range === "all") return new Date(`${AGENT_TIME_START_DATE}T00:00:00`).getTime()
+    const start = fetchedAt ? new Date(fetchedAt) : new Date(0)
     start.setHours(0, 0, 0, 0)
     if (range === "7d") start.setDate(start.getDate() - 6)
     if (range === "30d") start.setDate(start.getDate() - 29)
     return start.getTime()
-  }, [range])
+  }, [range, fetchedAt])
 
-  const baseActivities = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return activities.flatMap((activity) => {
-      if (activity.endMs <= rangeStart) return []
-      if (project !== "all" && activity.project !== project) return []
-      const searchable =
-        `${activity.project} ${activity.sourceLabel} ${activity.agent} ${activity.model} ${activity.conversationId} ${activity.conversationTitle}`.toLowerCase()
-      if (query && !searchable.includes(query)) return []
-      return [{ ...activity, startMs: Math.max(activity.startMs, rangeStart) }]
-    })
-  }, [activities, project, rangeStart, search])
+  const savedChatFactors = data.settings.agentTimeChatBillFactors
+  const chatFactors = useMemo(() => savedChatFactors || {}, [savedChatFactors])
+  const liveThreads = useMemo(
+    () => new Set((agentTime?.live ?? []).flatMap((block) =>
+      (block.sourceIntervals ?? []).map((source) => `${source.hostUrl ?? ""}|${source.conversationId || block.id}|${Date.parse(source.start)}`))),
+    [agentTime]
+  )
 
-  const sourceStats = useMemo(
+  // Each T3 Code turn, clipped to the range. Fixture data mixes in other sources, which are never billed.
+  const allTurns = useMemo<InsightTurn[]>(
     () =>
-      [...new Set(baseActivities.map((activity) => activity.sourceLabel))]
-        .map((label) => {
-          const matching = baseActivities.filter(
-            (activity) => activity.sourceLabel === label
-          )
-          return {
-            label,
-            seconds: unionSeconds(
-              matching.map((activity) => ({
-                start: activity.startMs,
-                end: activity.endMs,
-              }))
-            ),
-            conversations: buildConversations(matching).length,
-          }
+      agentTime?.intervals.flatMap((block) =>
+        (block.sourceIntervals ?? []).flatMap((source) => {
+          if (!source.source.toLowerCase().includes("t3")) return []
+          const start = Date.parse(source.start)
+          const end = Date.parse(source.end)
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return []
+          const threadId = source.conversationId || block.id
+          const threadKey = `${source.hostUrl ?? ""}|${threadId}`
+          return [{
+            folder: block.project,
+            threadKey,
+            title: (source.conversationSummary || source.conversationTitle || "").trim(),
+            threadId,
+            start,
+            end,
+            leftOpen: (end - start) / 1000 > LEFT_OPEN_SECONDS,
+            // Only the running turn itself is live, not the thread's earlier turns.
+            live: liveThreads.has(`${threadKey}|${start}`),
+            billFactor: normalizeBillFactor(chatFactors[conversationKey(source)] ?? 1),
+          }]
         })
-        .sort((a, b) => b.seconds - a.seconds),
-    [baseActivities]
+      ) ?? [],
+    [agentTime, liveThreads, chatFactors]
   )
 
-  const effectiveSelectedSource =
-    selectedSource === "all" ||
-    sourceStats.some((stat) => stat.label === selectedSource)
-      ? selectedSource
-      : "all"
-  const visibleActivities = useMemo(
+  const turns = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return allTurns.flatMap((turn) => {
+      if (turn.end <= rangeStart) return []
+      if (project !== "all" && turn.folder !== project) return []
+      if (query && !`${turn.folder} ${turn.title} ${turn.threadId}`.toLowerCase().includes(query)) return []
+      return [{ ...turn, start: Math.max(turn.start, rangeStart) }]
+    })
+  }, [allTurns, project, rangeStart, search])
+
+  const folderTitles = useMemo(
+    () => new Map((agentTime?.t3Projects ?? []).map((t3) => [t3.name, t3.title || t3.name])),
+    [agentTime]
+  )
+  const folderTitle = useCallback((folder: string) => folderTitles.get(folder) ?? folder, [folderTitles])
+
+  const mappings = useMemo(
+    () => resolveAgentMappings([...(agentTime?.projects ?? []), ...allTurns.map((turn) => turn.folder)], data.projects, localMappings),
+    [agentTime, allTurns, data.projects, localMappings]
+  )
+  const projectsById = useMemo(() => new Map(data.projects.map((p) => [p.id, p])), [data.projects])
+  const clientsById = useMemo(() => new Map(data.clients.map((c) => [c.id, c])), [data.clients])
+  const billingFor = useCallback(
+    (folder: string): Billing => {
+      const target = mappings[folder]
+      if (target === PERSONAL_AGENT_PROJECT) return { kind: "personal" }
+      if (target && projectsById.has(target)) return { kind: "project", projectId: target }
+      return { kind: "none" }
+    },
+    [mappings, projectsById]
+  )
+
+  const ledger = useMemo(
     () =>
-      effectiveSelectedSource === "all"
-        ? baseActivities
-        : baseActivities.filter(
-            (activity) => activity.sourceLabel === effectiveSelectedSource
-          ),
-    [baseActivities, effectiveSelectedSource]
-  )
-  const allConversations = useMemo(
-    () => buildConversations(visibleActivities),
-    [visibleActivities]
-  )
-  const conversations = useMemo(
-    () => allConversations.filter((conversation) => !hiddenChatKeys.includes(conversation.key)),
-    [allConversations, hiddenChatKeys]
-  )
-  const hiddenVisibleCount = allConversations.length - conversations.length
-  const filtersActive =
-    project !== "all" || search.trim() !== "" || effectiveSelectedSource !== "all"
-  const clearFilters = useCallback(() => {
-    setProject("all")
-    setSearch("")
-    setSelectedSource("all")
-  }, [])
-  const restoreHidden = useCallback(
-    () =>
-      updateHiddenChats(
-        hiddenChatKeys.filter(
-          (key) =>
-            !allConversations.some((conversation) => conversation.key === key)
-        )
+      buildProjectLedger(
+        turns,
+        billingFor,
+        (projectId) => occupiedProjectRanges(projectId, data.timeEntries, data.activeTimers)
       ),
-    [allConversations, hiddenChatKeys, updateHiddenChats]
+    [turns, billingFor, data.timeEntries, data.activeTimers]
   )
-  // Which of the four states the page is in: still loading, unavailable, nothing recorded, or nothing matching.
-  const viewState: "loading" | "unavailable" | "empty" | "filtered" | "ready" =
-    !agentTime
-      ? loadError
-        ? "unavailable"
-        : "loading"
-      : conversations.length > 0
-        ? "ready"
-        : activities.length === 0
-          ? "empty"
-          : "filtered"
-  const totalsKnown = !!agentTime
-  const totalSeconds = useMemo(
-    () => unionSeconds(conversations.flatMap((conversation) => conversation.spans)),
-    [conversations]
-  )
-  const dayGroups = useMemo(() => {
-    const groups = new Map<string, Conversation[]>()
-    for (const conversation of conversations) {
-      const date = format(new Date(conversation.start), "yyyy-MM-dd")
-      const current = groups.get(date) ?? []
-      current.push(conversation)
-      groups.set(date, current)
-    }
-    return [...groups.entries()].sort(([a], [b]) => b.localeCompare(a))
-  }, [conversations])
+  const unbilled = useMemo(() => summarizeUnbilledFolders(turns, billingFor), [turns, billingFor])
+  const journal = useMemo(() => buildJournal(turns, billingFor), [turns, billingFor])
+  const leftOpenTurns = useMemo(() => turns.filter((turn) => turn.leftOpen).sort((a, b) => b.start - a.start), [turns])
+  // The sum of what the ledger rows and folder cards show, so the banner matches them.
+  const leftOpenSeconds =
+    ledger.reduce((total, row) => total + row.leftOpenSeconds, 0) +
+    unbilled.reduce((total, folder) => total + folder.leftOpenSeconds, 0)
+  const runningThreads = useMemo(() => new Set(turns.filter((turn) => turn.live).map((turn) => turn.threadKey)).size, [turns])
+  const scaleSeconds = Math.max(1, ...ledger.map((row) => row.workingSeconds + row.leftOpenSeconds))
 
-  const filterControls = (phone = false) => {
-    const open = phone ? phoneProjectOpen : projectOpen
-    const setOpen = phone ? setPhoneProjectOpen : setProjectOpen
-    // Phones get one sheet section per filter, its heading standing in for the visible label.
-    const field = (label: string, id: string, control: ReactNode) =>
-      phone ? (
-        <SheetSection label={label}>
-          <Label htmlFor={id} className="sr-only">{label}</Label>
-          {control}
-        </SheetSection>
-      ) : (
-        <div className="grid min-w-0 gap-2">
-          <Label htmlFor={id}>{label}</Label>
-          {control}
-        </div>
-      )
-    return (<>
-          {field("Date range", phone ? "agent-range-phone" : "agent-range", (
-            <Select value={range} onValueChange={setRange}>
-              <SelectTrigger
-                id={phone ? "agent-range-phone" : "agent-range"}
-                data-testid={phone ? "agentic-range-phone" : "agentic-range"}
-                className="w-full"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="7d">Last 7 days</SelectItem>
-                <SelectItem value="30d">Last 30 days</SelectItem>
-                <SelectItem value="all">All activity</SelectItem>
-              </SelectContent>
-            </Select>
-          ))}
-          {field("Project", phone ? "agent-project-phone" : "agent-project", (
-            <Popover open={open} onOpenChange={setOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  id={phone ? "agent-project-phone" : "agent-project"}
-                  data-testid={phone ? "agentic-project-picker-phone" : "agentic-project-picker"}
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={open}
-                  className={`w-full min-w-0 justify-between ${phone ? "text-[16px] font-normal" : ""}`}
-                >
-                  <span className="truncate">
-                    {project === "all" ? "All projects" : project}
-                  </span>
-                  <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                className="w-[min(22rem,calc(100vw-2rem))] p-1"
-              >
-                <Command>
-                  <CommandInput placeholder="Search Agent Time projects…" />
-                  <CommandList>
-                    <CommandEmpty>No project found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem
-                        value="All projects"
-                        onSelect={() => {
-                          setProject("all")
-                          setOpen(false)
-                        }}
-                      >
-                        <Check
-                          className={`mr-2 size-4 ${project === "all" ? "opacity-100" : "opacity-0"}`}
-                        />
-                        All projects
-                      </CommandItem>
-                      {(agentTime?.projects ?? []).map((name) => (
-                        <CommandItem
-                          key={name}
-                          value={name}
-                          onSelect={() => {
-                            setProject(name)
-                            setOpen(false)
-                          }}
-                        >
-                          <Check
-                            className={`mr-2 size-4 ${project === name ? "opacity-100" : "opacity-0"}`}
-                          />
-                          <span className="truncate">{name}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          ))}
-  </>)
+  const clientLabel = useCallback(
+    (projectId: string) => {
+      const p = projectsById.get(projectId)
+      return (p && clientsById.get(p.clientId)?.name) || p?.name || "Project"
+    },
+    [projectsById, clientsById]
+  )
+  const groupLabel = useCallback(
+    (key: string) => (key === "unbilled" ? "Not billed" : clientLabel(key.slice("project:".length))),
+    [clientLabel]
+  )
+  const folderTag = useCallback(
+    (folder: string) => {
+      const billing = billingFor(folder)
+      return billing.kind === "project"
+        ? { label: clientLabel(billing.projectId), billed: true }
+        : { label: folderTitle(folder), billed: false }
+    },
+    [billingFor, clientLabel, folderTitle]
+  )
+
+  const filtersActive = project !== "all" || search.trim() !== ""
+  const viewState: ViewState = !agentTime
+    ? loadError
+      ? "unavailable"
+      : "loading"
+    : turns.length > 0
+      ? "ready"
+      : allTurns.length === 0
+        ? "empty"
+        : "filtered"
+
+  // Until someone toggles them, the top client and the two newest days start open.
+  const rowsOpen = openRows ?? new Set(ledger.slice(0, 1).map((row) => row.projectId))
+  const daysOpen = openDays ?? new Set(journal.slice(0, 2).map((day) => day.dayStart))
+  const toggle = <T,>(current: Set<T>, value: T) => {
+    const next = new Set(current)
+    if (next.has(value)) next.delete(value)
+    else next.add(value)
+    return next
   }
+
+  // The range and project filters render in the desktop filter card and, on phones, in the More sheet.
+  const rangeSelect = (id: string, testId: string) => (
+    <Select value={range} onValueChange={setRange}>
+      <SelectTrigger id={id} data-testid={testId} className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="today">Today</SelectItem>
+        <SelectItem value="7d">Last 7 days</SelectItem>
+        <SelectItem value="30d">Last 30 days</SelectItem>
+        <SelectItem value="all">All activity</SelectItem>
+      </SelectContent>
+    </Select>
+  )
+  const projectPicker = (id: string, testId: string, open: boolean, setOpen: (open: boolean) => void) => (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          id={id}
+          data-testid={testId}
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full min-w-0 justify-between"
+        >
+          <span className="truncate">{project === "all" ? "All projects" : folderTitle(project)}</span>
+          <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-1">
+        <Command>
+          <CommandInput placeholder="Search T3 projects…" />
+          <CommandList>
+            <CommandEmpty>No project found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem value="All projects" onSelect={() => { setProject("all"); setOpen(false) }}>
+                <Check className={`mr-2 size-4 ${project === "all" ? "opacity-100" : "opacity-0"}`} />
+                All projects
+              </CommandItem>
+              {(agentTime?.projects ?? []).map((name) => (
+                <CommandItem key={name} value={`${folderTitle(name)} ${name}`} onSelect={() => { setProject(name); setOpen(false) }}>
+                  <Check className={`mr-2 size-4 ${project === name ? "opacity-100" : "opacity-0"}`} />
+                  <span className="truncate">{folderTitle(name)}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+  const filtersChanged = (range !== "7d" ? 1 : 0) + (project !== "all" ? 1 : 0)
 
   return (
     <>
       <PageHeader
         title="Agentic Coding"
         currencyToggle={false}
-        center={<HeaderSearch value={search} onChange={setSearch} noun="chats" testId="agentic-search-phone" />}
-        primary={{ label: "Review & import time", icon: Download, href: importHref, testId: "agentic-import-time" }}
-        moreCount={Number(range !== "7d") + Number(project !== "all")}
-        onMoreClear={() => { setRange("7d"); setProject("all") }}
+        center={<HeaderSearch value={search} onChange={setSearch} noun="threads" testId="agentic-search-phone" />}
+        primary={{ label: "Review & import time", icon: Download, href: "/tracker?importAgentTime=1", testId: "agentic-import-time" }}
+        moreCount={filtersChanged}
+        onMoreClear={filtersChanged ? () => { setRange("7d"); setProject("all") } : undefined}
         more={<>
-          {filterControls(true)}
-          <SheetAction icon={RefreshCw} label="Refresh" disabled={loading} onSelect={() => void loadAgentTime(true)} />
+          <SheetSection label="Date range">{rangeSelect("agent-range-phone", "agentic-range-phone")}</SheetSection>
+          <SheetSection label="T3 project">{projectPicker("agent-project-phone", "agentic-project-picker-phone", phoneProjectOpen, setPhoneProjectOpen)}</SheetSection>
+          <SheetAction icon={RefreshCw} label={loading ? "Refreshing…" : "Refresh"} disabled={loading} onSelect={() => void loadAgentTime(true)} />
         </>}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm">
-              <Link
-                data-testid="agentic-import-time"
-                href={importHref}
-              >
+              <Link data-testid="agentic-import-time" href="/tracker?importAgentTime=1">
                 <Download className="size-3.5" data-icon="inline-start" />
                 Review &amp; import time
               </Link>
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void loadAgentTime(true)}
-              disabled={loading}
-            >
+            <Button variant="outline" size="sm" onClick={() => void loadAgentTime(true)} disabled={loading}>
               {loading ? (
-                <LoaderCircle
-                  className="size-3.5 animate-spin"
-                  data-icon="inline-start"
-                />
+                <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />
               ) : (
                 <RefreshCw className="size-3.5" data-icon="inline-start" />
               )}
@@ -1461,15 +670,22 @@ export default function AgenticCodingPage() {
 
       <Card className="mb-6 rounded-lg max-sm:hidden">
         <CardContent className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[180px_minmax(0,240px)_minmax(0,1fr)] lg:items-end">
-          {filterControls()}
+          <div className="grid min-w-0 gap-2">
+            <Label htmlFor="agent-range">Date range</Label>
+            {rangeSelect("agent-range", "agentic-range")}
+          </div>
+          <div className="grid min-w-0 gap-2">
+            <Label htmlFor="agent-project">T3 project</Label>
+            {projectPicker("agent-project", "agentic-project-picker", projectOpen, setProjectOpen)}
+          </div>
           <div className="grid min-w-0 gap-2 sm:col-span-2 lg:col-span-1">
-            <Label htmlFor="agent-search">Search chats</Label>
+            <Label htmlFor="agent-search">Search threads</Label>
             <Input
               id="agent-search"
               data-testid="agentic-search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Title, chat ID, model, project…"
+              placeholder="Thread title, thread ID, project…"
               className="min-w-0"
             />
           </div>
@@ -1484,211 +700,151 @@ export default function AgenticCodingPage() {
         >
           <AlertTriangle aria-hidden className="size-4 shrink-0 text-destructive" />
           <p className="min-w-0 flex-1">
-            <span className="font-medium">
-              {agentTime ? "Couldn’t refresh Agent Time." : "Agent Time is unavailable."}
-            </span>{" "}
+            <span className="font-medium">{agentTime ? "Couldn’t refresh Agent Time." : "Agent Time is unavailable."}</span>{" "}
             <span className="text-muted-foreground">
               {agentTime
                 ? `Showing activity from ${agentTime.fetchedAt ? format(new Date(agentTime.fetchedAt), "h:mm a") : "the last successful load"}, which may be out of date.`
                 : "Totals are unknown until it reconnects, not zero. Check that the Agent Time service is running."}
             </span>
           </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void loadAgentTime(true)}
-            disabled={loading}
-            data-testid="agentic-retry"
-          >
+          <Button size="sm" variant="outline" onClick={() => void loadAgentTime(true)} disabled={loading} data-testid="agentic-retry">
             <RefreshCw className={loading ? "animate-spin" : undefined} data-icon="inline-start" />
             Retry
           </Button>
         </div>
       )}
 
-      <StatGrid className="mb-6 max-sm:mb-3">
-        <StatCard
-          label="Unique coding time"
-          value={
-            <span data-testid="agentic-total">
-              {totalsKnown ? formatHm(totalSeconds) : "—"}
-            </span>
-          }
-          hint="Overlaps count once"
-        />
-        <StatCard
-          label="Chats"
-          value={totalsKnown ? conversations.length : "—"}
-          hint={
-            totalsKnown
-              ? `${dayGroups.length} active ${dayGroups.length === 1 ? "day" : "days"}`
-              : "Waiting for Agent Time"
-          }
-        />
-        <div
-          className="col-span-2 grid min-w-0 content-start gap-2 rounded-lg bg-card p-3 ring-1 ring-foreground/10 max-sm:gap-0 max-sm:p-0 sm:p-4"
-          role="group"
-          aria-label="Coding by source"
-        >
-          {/* Phones: one fact row per source (logo and name left, time right), each a 44px filter toggle. */}
-          <div className="flex items-center justify-between gap-2 max-sm:min-h-8 max-sm:px-4 max-sm:pt-2">
-            <p className="text-xs font-medium text-muted-foreground sm:text-sm">
-              By source
-            </p>
-            {effectiveSelectedSource !== "all" && (
-              <Button variant="ghost" size="xs" onClick={() => setSelectedSource("all")}>
-                Show all
-              </Button>
-            )}
-          </div>
-          {sourceStats.length > 0 ? (
-            <div className="flex min-w-0 flex-wrap gap-2 max-sm:flex-col max-sm:flex-nowrap max-sm:gap-0">
-              {sourceStats.map((stat) => (
-                <button
-                  key={stat.label}
-                  type="button"
-                  data-testid={`agentic-source-${stat.label.toLowerCase().replaceAll(" ", "-")}`}
-                  aria-pressed={effectiveSelectedSource === stat.label}
-                  title={`Show only ${stat.label}`}
-                  className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-md border py-1 pr-2.5 pl-1 text-left transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:py-1.5 max-sm:min-h-11 max-sm:rounded-none max-sm:border-x-0 max-sm:border-t-0 max-sm:border-border max-sm:px-4 max-sm:last:border-b-0 max-sm:focus-visible:ring-inset ${effectiveSelectedSource === stat.label ? "border-foreground/35 bg-muted/50" : "bg-background max-sm:bg-transparent"}`}
-                  onClick={() =>
-                    setSelectedSource((current) =>
-                      current === stat.label ? "all" : stat.label
-                    )
-                  }
-                >
-                  <SourceLogo label={stat.label} className="size-6 shadow-none max-sm:size-5" />
-                  <span className="truncate text-sm font-medium max-sm:flex-1">{stat.label}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums max-sm:shrink-0 max-sm:text-sm max-sm:font-medium max-sm:text-foreground">
-                    {formatHm(stat.seconds)}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground max-sm:px-4 max-sm:pt-1 max-sm:pb-2.5">
-              {viewState === "loading"
-                ? "Loading…"
-                : viewState === "unavailable"
-                  ? "—"
-                  : "No sources in this view"}
-            </p>
-          )}
-        </div>
-      </StatGrid>
-
-      {variant === "calm" && (
-        <LedgerLayout
-          conversations={conversations}
-          sourceStats={sourceStats}
-          selectedSource={effectiveSelectedSource}
-          onSelectSource={(label) =>
-            setSelectedSource((current) => (current === label ? "all" : label))
-          }
-        />
-      )}
-      {variant === "focus" && (
-        <FocusLayout
-          conversations={conversations}
-          sourceStats={sourceStats}
-          selectedSource={effectiveSelectedSource}
-          onSelectSource={(label) =>
-            setSelectedSource((current) => (current === label ? "all" : label))
-          }
-        />
-      )}
-      {variant === "hover" && (
-        viewState !== "ready" ? (
-          <AgenticEmptyState
-            state={viewState}
-            range={range}
-            filtersActive={filtersActive}
-            hiddenCount={hiddenVisibleCount}
-            onClearFilters={clearFilters}
-            onShowAllDates={() => setRange("all")}
-            onRestoreHidden={restoreHidden}
-            onRetry={() => void loadAgentTime(true)}
-          />
-        ) : (
-          <div className="grid min-w-0 gap-4">
-            {hiddenVisibleCount > 0 && (
-              <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-                <span>{hiddenVisibleCount} hidden</span>
-                <Button variant="ghost" size="xs" onClick={restoreHidden} data-testid="agentic-restore-hidden">Restore</Button>
-              </div>
-            )}
-            {dayGroups.map(([date, dayConversations]) => (
-              <HoverTimelineDay key={date} date={date} conversations={dayConversations} onHide={(conversation) => updateHiddenChats([...hiddenChatKeys, conversation.key])} />
-            ))}
-          </div>
-        )
-      )}
-      {variant === "timeline" && (
-        <>
-          <Card className="rounded-lg">
-            <CardHeader className="flex flex-row items-center justify-between gap-3">
-              <div>
-                <CardTitle className="text-sm font-medium">
-                  Master timeline
-                </CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Overlapping agents count once in the total. Expand any chat
-                  for exact contributing spans.
-                </p>
-              </div>
-              {effectiveSelectedSource !== "all" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedSource("all")}
-                >
-                  Show all
-                </Button>
-              )}
-            </CardHeader>
-            <CardContent className="min-w-0 p-0">
-              {viewState !== "ready" ? (
-                <AgenticEmptyState
-                  state={viewState}
-                  range={range}
-                  filtersActive={filtersActive}
-                  hiddenCount={hiddenVisibleCount}
-                  onClearFilters={clearFilters}
-                  onShowAllDates={() => setRange("all")}
-                  onRestoreHidden={restoreHidden}
-                  onRetry={() => void loadAgentTime(true)}
-                />
-              ) : (
-                <div className="grid min-w-0 gap-5 p-3 sm:p-4">
-                  {dayGroups.map(([date, dayConversations]) => (
-                    <TimelineDay
-                      key={date}
-                      date={date}
-                      conversations={dayConversations}
-                    />
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </>
-      )}
-      {viewState !== "ready" && variant !== "timeline" && variant !== "hover" && (
+      {viewState !== "ready" ? (
         <AgenticEmptyState
           state={viewState}
           range={range}
           filtersActive={filtersActive}
-          hiddenCount={hiddenVisibleCount}
-          onClearFilters={clearFilters}
+          onClearFilters={() => { setProject("all"); setSearch("") }}
           onShowAllDates={() => setRange("all")}
-          onRestoreHidden={restoreHidden}
           onRetry={() => void loadAgentTime(true)}
         />
+      ) : (
+        <div className="grid min-w-0 gap-6">
+          <div className="grid gap-3">
+            {runningThreads > 0 && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="agentic-running">
+                <LiveDot />
+                {runningThreads} {runningThreads === 1 ? "thread" : "threads"} running now
+              </p>
+            )}
+            {leftOpenTurns.length > 0 && (
+              <div className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm" data-testid="agentic-left-open">
+                <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <p className="min-w-0 flex-1">
+                  <span className="font-medium">
+                    {leftOpenTurns.length} {leftOpenTurns.length === 1 ? "turn" : "turns"} stayed open over {LEFT_OPEN_HOURS} hours straight, {hours(leftOpenSeconds)} in all.
+                  </span>{" "}
+                  <span className="text-muted-foreground">They’re hatched below and not counted as working time. The import still offers them, so skip them there. Tracked and invoiced entries aren’t changed.</span>
+                </p>
+                <Button size="sm" variant="outline" onClick={() => setLeftOpenDialog(true)}>
+                  Show turns
+                </Button>
+              </div>
+            )}
+
+            {ledger.length > 0 && (
+              <div className="rounded-lg border bg-card" data-testid="agentic-ledger">
+                <div className="hidden grid-cols-[1rem_minmax(0,1.2fr)_minmax(0,2fr)_6rem_7rem_7rem] gap-x-3 border-b px-4 py-2 text-xs text-muted-foreground md:grid">
+                  <span />
+                  <span>Client</span>
+                  <span>Working time, {range === "all" ? "all activity" : RANGE_LABELS[range]}</span>
+                  <span className="text-right">Tracked</span>
+                  <span className="text-right">Not tracked yet</span>
+                  <span className="text-right">At rate</span>
+                </div>
+                {ledger.map((row) => {
+                  const p = projectsById.get(row.projectId)
+                  return (
+                    <LedgerRow
+                      key={row.projectId}
+                      row={row}
+                      project={p}
+                      client={p ? clientsById.get(p.clientId) : undefined}
+                      scaleSeconds={scaleSeconds}
+                      folderTitle={folderTitle}
+                      open={rowsOpen.has(row.projectId)}
+                      onToggle={() => setOpenRows(toggle(rowsOpen, row.projectId))}
+                    />
+                  )
+                })}
+              </div>
+            )}
+
+            {unbilled.length > 0 && (
+              <div className="grid gap-2" data-testid="agentic-unbilled">
+                <div className="flex items-baseline justify-between gap-3 text-sm text-muted-foreground">
+                  <span>Not billed</span>
+                  <Link href="/tracker?importAgentTime=1" className="text-xs underline-offset-2 hover:text-foreground hover:underline">
+                    Link folders to projects in the import
+                  </Link>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {unbilled.map((folder) => (
+                    <div key={folder.folder} className="flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 text-sm">
+                      <span className="min-w-0">
+                        <span className="block truncate" title={folder.folder}>{folderTitle(folder.folder)}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {folder.billing.kind === "personal" ? "Personal" : "Not linked"}
+                          {folder.leftOpenTurns > 0
+                            ? `, + ${hours(folder.leftOpenSeconds)} left open`
+                            : `, ${folder.threadCount} ${folder.threadCount === 1 ? "thread" : "threads"}`}
+                        </span>
+                      </span>
+                      <span className="shrink-0 tabular-nums">{hours(folder.workingSeconds)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <section className="grid gap-2" aria-label="Work by day" data-testid="agentic-journal">
+            <h2 className="text-sm text-muted-foreground">By day</h2>
+            {journal.map((day) => (
+              <JournalDayCard
+                key={day.dayStart}
+                day={day}
+                open={daysOpen.has(day.dayStart)}
+                onToggle={() => setOpenDays(toggle(daysOpen, day.dayStart))}
+                groupLabel={groupLabel}
+                folderTag={folderTag}
+              />
+            ))}
+          </section>
+        </div>
       )}
-      <PrototypeSwitcher
-        variant={variant}
-        queryString={searchParams.toString()}
-      />
+
+      <Dialog open={leftOpenDialog} onOpenChange={setLeftOpenDialog}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Turns left open</DialogTitle>
+            <DialogDescription>
+              Turns that ran over {LEFT_OPEN_HOURS} hours straight. They aren’t counted as working time here. Nothing already tracked or invoiced changes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid">
+            {leftOpenTurns.map((turn, index) => {
+              const tag = folderTag(turn.folder)
+              return (
+                <div key={`${turn.threadKey}:${turn.start}:${index}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-b border-dashed py-2 text-sm last:border-b-0">
+                  <span className="min-w-0">
+                    <span className="block truncate" title={`T3 thread ${turn.threadId}`}>{turn.title || "Untitled thread"}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {tag.label}, {format(new Date(turn.start), "EEE MMM d, h:mm a")} to {format(new Date(turn.end), "EEE h:mm a")}
+                    </span>
+                  </span>
+                  <span className="tabular-nums">{hours((turn.end - turn.start) / 1000)}</span>
+                </div>
+              )
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
