@@ -633,17 +633,18 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
   const cardLeft = active ? Math.max(0, Math.min(active.leftPx, containerWidth - cardWidth)) : 0
 
   return (
-    <section className="min-w-0 rounded-xl border" data-testid="agentic-hover-day">
-      <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2 max-sm:h-11 max-sm:py-0">
+    <section className="min-w-0 rounded-xl border max-sm:overflow-hidden max-sm:rounded-lg" data-testid="agentic-hover-day">
+      {/* Phones: the same muted day band as the Tracker log, date left and total right. */}
+      <header className="flex min-w-0 items-center justify-between gap-2 px-3 py-2 max-sm:border-b max-sm:bg-muted/35 max-sm:px-4">
         <button type="button" className="flex min-w-0 items-center gap-2 rounded-md max-sm:hidden text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} data-testid="agentic-day-toggle">
           <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`} />
           <h2 className="text-sm font-medium">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}<span className="ml-2 text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span></h2>
         </button>
-        <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium sm:hidden">
-          {format(new Date(`${date}T12:00:00`), "EEE, MMM d")}
-          <span className="text-xs font-normal text-muted-foreground">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span>
+        <h2 className="flex min-w-0 items-center gap-2 text-xs font-semibold text-muted-foreground sm:hidden">
+          <span className="truncate">{format(new Date(`${date}T12:00:00`), "EEE, MMM d")}</span>
+          <span className="shrink-0 font-normal">{conversations.length} {conversations.length === 1 ? "chat" : "chats"}</span>
         </h2>
-        <p className="text-xs tabular-nums">{formatHm(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
+        <p className="text-xs tabular-nums max-sm:shrink-0 max-sm:font-semibold">{formatHm(unionSeconds(conversations.flatMap((conversation) => conversation.spans)))}</p>
       </header>
       <div className="px-3 pb-3 max-sm:hidden" onMouseLeave={scheduleClose}>
         <div className="relative grid min-w-0 gap-2" ref={containerRef}>
@@ -715,21 +716,25 @@ function HoverTimelineDay({ date, conversations, onHide }: { date: string; conve
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <div className={`border-t ${expanded ? "" : "sm:hidden"}`}>
+      <div className={`border-t max-sm:divide-y max-sm:border-t-0 ${expanded ? "" : "sm:hidden"}`}>
         {conversations.map((conversation) => (
           <button
             key={conversation.key}
             type="button"
-            className={`flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-3 py-1.5 max-sm:min-h-11 text-left transition-colors hover:bg-muted/30 ${active?.key === conversation.key ? "bg-muted/40" : ""}`}
+            className={`flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-muted/30 max-sm:grid max-sm:min-h-11 max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-0.5 max-sm:px-4 max-sm:py-2.5 ${active?.key === conversation.key ? "bg-muted/40" : ""}`}
             data-testid="agentic-conversation"
             onMouseEnter={() => show(targetFromConversation(conversation))}
             onMouseLeave={scheduleClose}
             onClick={() => setPinned((current) => (current?.key === conversation.key ? null : targetFromConversation(conversation)))}
           >
-            <SourceLogo label={conversation.sourceLabel} className="size-5" />
-            <span className="min-w-0 flex-1 truncate text-sm">{conversation.conversationTitle || `${conversation.sourceLabel} coding session`}</span>
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{format(new Date(conversation.start), "h:mm a")}</span>
-            <span className="w-12 shrink-0 text-right text-xs tabular-nums">{formatHm(conversation.durationSeconds)}</span>
+            {/* Phones: logo and title with the duration on line 1; project and start time on line 2. */}
+            <span className="flex min-w-0 flex-1 items-center gap-2.5 max-sm:gap-2">
+              <SourceLogo label={conversation.sourceLabel} className="size-5 max-sm:size-4" />
+              <span className="min-w-0 flex-1 truncate text-sm max-sm:font-medium">{conversation.conversationTitle || `${conversation.sourceLabel} coding session`}</span>
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums max-sm:order-2 max-sm:text-right">{format(new Date(conversation.start), "h:mm a")}</span>
+            <span className="w-12 shrink-0 text-right text-xs tabular-nums max-sm:w-auto">{formatHm(conversation.durationSeconds)}</span>
+            <span className="hidden min-w-0 truncate text-xs text-muted-foreground max-sm:order-1 max-sm:block">{conversation.project || conversation.sourceLabel}</span>
           </button>
         ))}
       </div>
@@ -1521,11 +1526,12 @@ export default function AgenticCodingPage() {
           }
         />
         <div
-          className="col-span-2 grid min-w-0 content-start gap-2 rounded-lg bg-card p-3 ring-1 ring-foreground/10 max-sm:px-3 max-sm:py-2 sm:p-4"
+          className="col-span-2 grid min-w-0 content-start gap-2 rounded-lg bg-card p-3 ring-1 ring-foreground/10 max-sm:gap-0 max-sm:p-0 sm:p-4"
           role="group"
           aria-label="Coding by source"
         >
-          <div className="flex items-center justify-between gap-2">
+          {/* Phones: one fact row per source (logo and name left, time right), each a 44px filter toggle. */}
+          <div className="flex items-center justify-between gap-2 max-sm:min-h-8 max-sm:px-4 max-sm:pt-2">
             <p className="text-xs font-medium text-muted-foreground sm:text-sm">
               By source
             </p>
@@ -1536,7 +1542,7 @@ export default function AgenticCodingPage() {
             )}
           </div>
           {sourceStats.length > 0 ? (
-            <div className="flex min-w-0 flex-wrap gap-2 max-sm:flex-nowrap max-sm:overflow-x-auto">
+            <div className="flex min-w-0 flex-wrap gap-2 max-sm:flex-col max-sm:flex-nowrap max-sm:gap-0">
               {sourceStats.map((stat) => (
                 <button
                   key={stat.label}
@@ -1544,23 +1550,23 @@ export default function AgenticCodingPage() {
                   data-testid={`agentic-source-${stat.label.toLowerCase().replaceAll(" ", "-")}`}
                   aria-pressed={effectiveSelectedSource === stat.label}
                   title={`Show only ${stat.label}`}
-                  className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-md border max-sm:min-h-11 max-sm:shrink-0 py-1 pr-2.5 pl-1 text-left transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:py-1.5 ${effectiveSelectedSource === stat.label ? "border-foreground/35 bg-muted/50" : "bg-background"}`}
+                  className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-md border py-1 pr-2.5 pl-1 text-left transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-coarse:py-1.5 max-sm:min-h-11 max-sm:rounded-none max-sm:border-x-0 max-sm:border-t-0 max-sm:border-border max-sm:px-4 max-sm:last:border-b-0 max-sm:focus-visible:ring-inset ${effectiveSelectedSource === stat.label ? "border-foreground/35 bg-muted/50" : "bg-background max-sm:bg-transparent"}`}
                   onClick={() =>
                     setSelectedSource((current) =>
                       current === stat.label ? "all" : stat.label
                     )
                   }
                 >
-                  <SourceLogo label={stat.label} className="size-6 shadow-none" />
-                  <span className="truncate text-sm font-medium">{stat.label}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
+                  <SourceLogo label={stat.label} className="size-6 shadow-none max-sm:size-5" />
+                  <span className="truncate text-sm font-medium max-sm:flex-1">{stat.label}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums max-sm:shrink-0 max-sm:text-sm max-sm:font-medium max-sm:text-foreground">
                     {formatHm(stat.seconds)}
                   </span>
                 </button>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground max-sm:px-4 max-sm:pt-1 max-sm:pb-2.5">
               {viewState === "loading"
                 ? "Loading…"
                 : viewState === "unavailable"
