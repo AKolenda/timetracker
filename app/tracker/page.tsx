@@ -1,12 +1,4 @@
 "use client"
-/*
- * React Compiler lint: these three checks used to be skipped silently on this page, because the compiler
- * bailed out on a hoisted function reference in the draft rows. Folding the row actions into a menu removed
- * that bailout and surfaced six existing findings (the hoisted Agent Time loader, the "latest" refs written
- * during render, and Date.now for the draft window). The React Compiler isn't enabled for this app, so
- * runtime behaviour is unchanged; fix these when the tracker's data loading is split out of this component.
- */
-/* eslint-disable react-hooks/immutability, react-hooks/purity, react-hooks/refs */
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { machineName } from "@/lib/agent-time-hosts"
@@ -570,6 +562,7 @@ export default function TrackerPage() {
       setGapMinutes(savedGap)
       setAppliedGapMinutes(savedGap)
       setIgnoredAgentRanges(savedIgnoredRanges)
+      // eslint-disable-next-line react-hooks/immutability -- existing pattern, now visible to the React Compiler lint
       void loadAgentTime(true, savedGap)
     }, 0)
     return () => window.clearTimeout(id)
@@ -650,6 +643,7 @@ export default function TrackerPage() {
     toast(`Showing the last ${AGENT_DRAFT_WINDOW_DAYS} days of Agent Time`)
   }
 
+  // eslint-disable-next-line react-hooks/purity -- existing pattern, now visible to the React Compiler lint
   const draftWindowStartDate = localDateString(new Date(Date.now() - AGENT_DRAFT_WINDOW_DAYS * 86_400_000), data.settings.timezone)
   const effectiveAgentTimeStartDate = [HARD_AGENT_TIME_START_DATE, draftWindowStartDate, agentTimeStartDate ?? ""]
     .reduce((latest, date) => (date > latest ? date : latest))
@@ -812,6 +806,7 @@ export default function TrackerPage() {
     }
   }
   const latestLoadAgentTime = useRef(loadAgentTime)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
   latestLoadAgentTime.current = loadAgentTime
 
   function applyGapMinutes() {
@@ -839,8 +834,10 @@ export default function TrackerPage() {
   const importInFlight = useRef(false)
   const importedEntries = useRef<TimeEntry[]>([])
   const latestData = useRef(data)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
   latestData.current = data
   const latestStartTimer = useRef(startTimer)
+  // eslint-disable-next-line react-hooks/refs -- existing pattern, now visible to the React Compiler lint
   latestStartTimer.current = startTimer
   useEffect(() => {
     const savedIds = new Set(data.timeEntries.map((entry) => entry.id))
@@ -916,6 +913,7 @@ export default function TrackerPage() {
 
   // Keep Agent Time current while the tracker is open, so new and running work shows up without a reload.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/purity -- existing pattern, now visible to the React Compiler lint
     let lastRefresh = Date.now()
     function refresh() {
       if (document.visibilityState !== "visible" || backgroundRefreshBlocked()) return
