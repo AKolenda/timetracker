@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import Image from "next/image"
 import { format } from "date-fns"
-import { ArrowLeft, ChevronDown, LoaderCircle, Search } from "lucide-react"
+import { ArrowLeft, ChevronDown, Copy, LoaderCircle, Search } from "lucide-react"
 import { toast } from "sonner"
 
 import { ChatMessageBody, plainTitle } from "@/components/chat-markdown"
@@ -94,6 +94,23 @@ function MessageRow({ message, placement, source, withDate, needle }: { message:
   </article>
 }
 
+/** The T3 Code thread a chat came from, so a billed entry can be traced back to it. */
+function T3ThreadId({ id }: { id: string }) {
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(id)
+      toast.success("T3 thread ID copied")
+    } catch {
+      toast.error("Couldn't copy the thread ID")
+    }
+  }
+  return <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground" data-testid="t3-thread-id">
+    <span className="shrink-0">T3 thread</span>
+    <code className="min-w-0 truncate font-mono" title={id}>{id}</code>
+    <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" aria-label="Copy T3 thread ID" onClick={() => void copy()}><Copy /></Button>
+  </p>
+}
+
 function Boundary({ label }: { label: string }) {
   return <div className="flex items-center gap-3 py-2 text-xs text-muted-foreground" role="separator"><span className="h-px flex-1 bg-border" />{label}<span className="h-px flex-1 bg-border" /></div>
 }
@@ -182,6 +199,7 @@ function ChatTranscript({ source, entryStart, entryEnd, factor, onSetFactor, onB
         <Button type="button" variant="ghost" size="icon-xs" className="-ml-1.5 mt-px text-muted-foreground sm:hidden" aria-label="Back to chats" onClick={onBack}><ArrowLeft /></Button>
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-medium leading-snug break-words" title={`${source.machineLabel || machineName(source)} · ${sourceDescription(source)}${source.model ? ` · ${source.model}` : ""}`}>{plainTitle(title)}</h3>
+          {source.source === "T3 Code" && source.conversationId && <T3ThreadId id={source.conversationId} />}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -223,7 +241,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
   const openerRef = useRef<HTMLButtonElement>(null)
   const conversations = useMemo(() => open ? groupConversationSources(sources, start, end).map((source) => ({ ...source, machineLabel: machineName(source, labels) })) : [], [open, sources, start, end, labels])
   const needle = query.trim().toLowerCase()
-  const filtered = conversations.filter((source) => `${source.conversationTitle} ${source.conversationSummary || ""} ${source.machineLabel} ${source.source} ${source.model}`.toLowerCase().includes(needle))
+  const filtered = conversations.filter((source) => `${source.conversationTitle} ${source.conversationSummary || ""} ${source.machineLabel} ${source.source} ${source.model} ${source.conversationId}`.toLowerCase().includes(needle))
   const pages = Math.max(1, Math.ceil(filtered.length / CHAT_PAGE_SIZE))
   const currentPage = Math.min(page, pages - 1)
   const selected = conversations.find((source) => conversationKey(source) === selectedKey) ?? conversations[0] ?? null

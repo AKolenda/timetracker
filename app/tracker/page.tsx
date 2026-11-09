@@ -23,6 +23,7 @@ import {
   EyeOff,
   FolderInput,
   Settings2,
+  Bot,
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
@@ -118,6 +119,10 @@ type AgentTimeSourceInterval = {
 type AgentTimeResponse = {
   projects: string[]
   intervals: AgentTimeInterval[]
+  /** Turns an agent is still running; they become drafts once they finish. */
+  live?: AgentTimeInterval[]
+  /** Every open T3 Code project; `title` is the name T3 Code shows when it differs from the folder. */
+  t3Projects?: { name: string; title: string }[]
 }
 
 type AgentImportSlice = {
@@ -149,6 +154,8 @@ type IgnoredAgentRange = {
   end: number
 }
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
+/** How often an open, visible tracker checks Agent Time for new and running work. */
+const AGENT_TIME_REFRESH_MS = 30_000
 const LOG_PAGE_SIZE = 100
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
 const IGNORED_AGENT_RANGES_KEY = "timetracker-agent-time-ignored-ranges"
@@ -354,6 +361,19 @@ function LiveTimer({
       {formatDuration(elapsed)}
     </span>
   )
+}
+
+/** Elapsed time of a running agent turn, ticking from its start. */
+function LiveAgentClock({ start }: { start: string }) {
+  const [now, setNow] = useState<number | null>(null)
+  useEffect(() => {
+    const tick = () => setNow(Date.now())
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [start])
+  const seconds = now === null ? 0 : Math.max(0, Math.floor((now - Date.parse(start)) / 1000))
+  return <span className="font-mono text-sm font-semibold tabular-nums">{formatLiveTotal(seconds)}</span>
 }
 
 function TodayTotal({
@@ -694,6 +714,26 @@ export default function TrackerPage() {
     ),
     [agentTimeCutoff, availableAgentIntervals, data.timeEntries, data.activeTimers, data.settings.agentTimeMaxMinutes, ignoredAgentRanges, projectMappings]
   )
+  // One row per T3 thread an agent is working in right now; personal folders stay hidden.
+  const liveAgentWork = useMemo(() => (agentTime?.live ?? []).flatMap((block) => {
+    const projectId = projectMappings[block.project]
+    if (projectId === PERSONAL_AGENT_PROJECT) return []
+    const threads = new Map<string, AgentTimeSourceInterval[]>()
+    for (const source of block.sourceIntervals ?? []) {
+      const key = `${source.hostUrl ?? ""}|${source.conversationId || block.id}`
+      threads.set(key, [...(threads.get(key) ?? []), source])
+    }
+    return [...threads].map(([key, sources]) => ({
+      key,
+      projectId,
+      folder: block.project,
+      title: sources.find((source) => source.conversationTitle.trim())?.conversationTitle.trim() || `${block.agents.join(" + ") || "Agent"} working`,
+      agents: [...new Set(sources.map((source) => source.agent))],
+      machines: machineNames(sources),
+      start: sources.reduce((earliest, source) => (source.start < earliest ? source.start : earliest), sources[0]?.start ?? block.start),
+    }))
+  }).sort((a, b) => a.start.localeCompare(b.start)), [agentTime, projectMappings]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function saveOverlapReviews(kind: "agent" | "entry", keys: string[]) {
     if (kind === "agent") setReviewedAgentOverlaps(keys)
     else setReviewedEntryOverlaps(keys)
@@ -710,15 +750,33 @@ export default function TrackerPage() {
     0
   )
   const unmappedAgentProjects = agentImportPreview.unmappedProjects
+  // T3 Code projects show their T3 name when it differs from the folder (e.g. "invoicer" for timetracker).
+  const t3ProjectTitles = useMemo(() => new Map((agentTime?.t3Projects ?? [])
+    .filter((project) => project.title && project.title !== project.name)
+    .map((project) => [project.name, project.title])), [agentTime])
   const handledAgentProjects = useMemo(
     () => [...new Set(availableAgentIntervals.map((interval) => interval.project))]
       .filter((project) => !unmappedAgentProjects.includes(project))
       .sort((a, b) => a.localeCompare(b)),
     [availableAgentIntervals, unmappedAgentProjects]
   )
+  // Open T3 Code projects can be linked before they have any activity; unlinked ones come first.
+  const mappingFolders = useMemo(() => {
+    const listed = new Set([...unmappedAgentProjects, ...handledAgentProjects])
+    const idle = (agentTime?.t3Projects ?? []).map((project) => project.name).filter((name) => !listed.has(name))
+    return [
+      ...unmappedAgentProjects,
+      ...idle.filter((name) => !projectMappings[name]).sort((a, b) => a.localeCompare(b)),
+      ...handledAgentProjects,
+      ...idle.filter((name) => projectMappings[name]).sort((a, b) => a.localeCompare(b)),
+    ]
+  }, [agentTime, handledAgentProjects, projectMappings, unmappedAgentProjects])
 
-  async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes) {
-    setAgentTimeLoading(true)
+  const agentTimeRequest = useRef(0)
+  async function loadAgentTime(silent = false, gapOverride = appliedGapMinutes, background = false) {
+    // Background refreshes don't disable the approve buttons, and a slow one never overwrites a newer answer.
+    const request = ++agentTimeRequest.current
+    if (!background) setAgentTimeLoading(true)
     try {
       const requestedGap = Number(gapOverride)
       const gap = Number.isFinite(requestedGap)
@@ -726,16 +784,18 @@ export default function TrackerPage() {
         : 15
       const demo = process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" && new URLSearchParams(window.location.search).get("fixture") === "demo"
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : demo ? "&fixture=demo" : ""
-      const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}${fixture}`)
+      const response = await fetch(`/api/agent-time?gapMinutes=${gap}&from=${HARD_AGENT_TIME_START_DATE}&withLive=true${fixture}`)
       if (!response.ok) throw new Error("Agent Time is not available")
       const payload = (await response.json()) as AgentTimeResponse
-      setAgentTime(payload)
+      if (request === agentTimeRequest.current) setAgentTime(payload)
     } catch (error) {
       if (!silent) toast.error(error instanceof Error ? error.message : "Could not load Agent Time")
     } finally {
-      setAgentTimeLoading(false)
+      if (!background) setAgentTimeLoading(false)
     }
   }
+  const latestLoadAgentTime = useRef(loadAgentTime)
+  latestLoadAgentTime.current = loadAgentTime
 
   function applyGapMinutes() {
     const requestedGap = Number(gapMinutes)
@@ -836,6 +896,31 @@ export default function TrackerPage() {
     const timer = setInterval(() => { void poll().catch(() => undefined) }, 5000)
     return () => { stopped = true; clearInterval(timer) }
   }, [pendingTitleIds, syncAgentTimeTitles])
+
+  // Keep Agent Time current while the tracker is open, so new and running work shows up without a reload.
+  // It pauses while drafts are being reviewed, edited, or saved, so the list doesn't shift underfoot.
+  const agentRefreshPaused = importing || draftsOpen || editOpen
+  useEffect(() => {
+    if (agentRefreshPaused) return
+    let lastRefresh = Date.now()
+    function refresh() {
+      if (document.visibilityState !== "visible") return
+      lastRefresh = Date.now()
+      void latestLoadAgentTime.current(true, undefined, true)
+    }
+    const timer = window.setInterval(refresh, AGENT_TIME_REFRESH_MS)
+    // Coming back to the tab catches up at once rather than waiting for the next tick.
+    function catchUp() {
+      if (Date.now() - lastRefresh >= 5_000) refresh()
+    }
+    document.addEventListener("visibilitychange", catchUp)
+    window.addEventListener("focus", catchUp)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", catchUp)
+      window.removeEventListener("focus", catchUp)
+    }
+  }, [agentRefreshPaused])
 
   async function setChatBillFactor(chat: ConversationSource, factor: number) {
     const key = conversationKey(chat)
@@ -1256,7 +1341,7 @@ export default function TrackerPage() {
                 </div>
               </div>
 
-              {activeTimers.length === 0 ? <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"><Clock className="size-5" />No active timers</div> : <div className="grid gap-2">{activeTimers.map((timer) => {
+              {activeTimers.length === 0 ? liveAgentWork.length === 0 && <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"><Clock className="size-5" />No active timers</div> : <div className="grid gap-2">{activeTimers.map((timer) => {
                 const project = getProject(timer.projectId)
                 return <div key={timer.id} data-testid="active-timer" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-muted/30 px-4 py-3">
                   <Clock className="size-5 shrink-0 text-muted-foreground" />
@@ -1270,6 +1355,30 @@ export default function TrackerPage() {
                   </div>
                 </div>
               })}</div>}
+
+              {liveAgentWork.length > 0 && <div className="grid gap-2" data-testid="live-agent-work" aria-label="Agents working now">
+                {liveAgentWork.map((work) => {
+                  const project = work.projectId ? getProject(work.projectId) : undefined
+                  return <div key={work.key} data-testid="live-agent-row" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-muted/30 px-4 py-3">
+                    <span className="relative flex size-5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">
+                      <Bot className="size-5" />
+                      <span className="absolute -top-0.5 -right-0.5 size-2 animate-pulse rounded-full bg-emerald-500" />
+                    </span>
+                    <div className="min-w-[9rem] flex-1">
+                      <p className="font-medium break-words">{work.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {project?.name ?? <>{work.folder} · <span className="text-warning">not linked to a project</span></>}
+                        {work.machines.length > 0 && <> · {work.machines.join(", ")}</>}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">{work.agents.join(" + ") || "Agent"} working</span>
+                      <LiveAgentClock start={work.start} />
+                    </div>
+                    <p className="w-full text-xs text-muted-foreground">Becomes a draft to approve when this turn finishes.</p>
+                  </div>
+                })}
+              </div>}
             </div>
           )}
         </CardContent>
@@ -1492,9 +1601,9 @@ export default function TrackerPage() {
           }
         })}
       />
-      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Project mappings" description="Choose where each agent folder's time goes. It's saved on the project, so you can also change it on the Projects page. Personal folders stay out of imports." emptyText="No desktop projects to map."
-        items={[...unmappedAgentProjects, ...handledAgentProjects].map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-          <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
+      <TrackerReviewDialog open={projectsOpen} onOpenChange={setProjectsOpen} title="Project mappings" description="Choose where each T3 Code project's time goes. It's saved on the project, so you can also change it on the Projects page. Personal projects stay out of imports." emptyText="No T3 Code projects to map."
+        items={mappingFolders.map((agentProject) => ({ id: agentProject, searchText: `${agentProject} ${t3ProjectTitles.get(agentProject) ?? ""} ${getProject(projectMappings[agentProject])?.name ?? ""}`, content: <div data-testid="import-project-row" className="grid min-w-0 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+          <div className="min-w-0"><p className="break-words text-sm font-medium">{agentProject}</p>{t3ProjectTitles.get(agentProject) && <p className="text-xs text-muted-foreground">T3 Code: {t3ProjectTitles.get(agentProject)}</p>}{!projectMappings[agentProject] && <p className="text-xs text-muted-foreground">Choose a destination</p>}</div>
           <ImportProjectPicker value={projectMappings[agentProject] ?? ""} onChange={(value) => saveProjectMapping(agentProject, value)} choices={[{ value: PERSONAL_AGENT_PROJECT, label: "Personal — don't import" }, ...data.projects.map((project) => ({ value: project.id, label: `${getClient(project.clientId)?.name ?? ""} / ${project.name}` }))]} />
         </div> }))}
       />
