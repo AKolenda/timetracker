@@ -18,6 +18,7 @@ import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogDescription,
   DialogTitle,
   DialogFooter,
   DialogClose,
@@ -427,18 +428,19 @@ export default function ExpensesPage() {
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-sm:grid-cols-1 max-sm:[&_div]:min-w-0">
           <DialogHeader>
             <DialogTitle>{editTarget ? "Edit Expense" : "New Expense"}</DialogTitle>
+            <DialogDescription className="sr-only">Record the project, amount and date for this expense.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-2">
+          <div className="grid max-sm:grid-cols-1 gap-4 py-2">
             {editTarget && invoiceNumberFor(editTarget) && (
               <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
                 This expense is on {invoiceNumberFor(editTarget)}. Saving
                 changes here does not update that invoice.
               </p>
             )}
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-project">Project</Label>
               <Select
                 value={form.projectId}
@@ -447,7 +449,7 @@ export default function ExpensesPage() {
                   clearError("projectId")
                 }}
               >
-                <SelectTrigger id="expense-project" className="w-full" {...fieldErrorProps("projectId")}>
+                <SelectTrigger id="expense-project" className="w-full max-sm:min-w-0" {...fieldErrorProps("projectId")}>
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -464,7 +466,7 @@ export default function ExpensesPage() {
               </Select>
               <FieldError id="expense-project-error" message={errors.projectId} />
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-desc">Description</Label>
               <Input
                 id="expense-desc"
@@ -515,7 +517,7 @@ export default function ExpensesPage() {
                 </Select>
               </div>
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-date">Date</Label>
               <Popover>
                 <PopoverTrigger asChild>
@@ -523,7 +525,7 @@ export default function ExpensesPage() {
                     id="expense-date"
                     variant="outline"
                     className={cn(
-                      "justify-start text-left font-normal",
+                      "justify-start text-left font-normal max-sm:text-base",
                       !form.date && "text-muted-foreground"
                     )}
                   >
@@ -532,7 +534,7 @@ export default function ExpensesPage() {
                       data-icon="inline-start"
                     />
                     {form.date
-                      ? format(form.date, "PPP")
+                      ? <><span className="sm:hidden">{format(form.date, "MMM d, yyyy")}</span><span className="max-sm:hidden">{format(form.date, "PPP")}</span></>
                       : "Pick a date"}
                   </Button>
                 </PopoverTrigger>
@@ -547,7 +549,7 @@ export default function ExpensesPage() {
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-sm:grid-cols-1 gap-2">
               <Label htmlFor="expense-notes">Notes (optional)</Label>
               <Textarea
                 id="expense-notes"

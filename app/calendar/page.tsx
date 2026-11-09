@@ -312,7 +312,7 @@ export default function CalendarPage() {
           </CardHeader>
           <CardContent className="flex flex-1 flex-col gap-3 max-sm:px-2">
             <div
-              className="grid flex-1 grid-cols-7 gap-px"
+              className="grid flex-1 grid-cols-7 gap-px max-sm:-mx-3 max-sm:gap-0"
               style={{ gridTemplateRows: `auto repeat(${Math.ceil(days.length / 7)}, minmax(0, 1fr))` }}
             >
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
@@ -454,12 +454,27 @@ export default function CalendarPage() {
 
                   {selectedDayEntries.length > 0 && (
                     <>
-                      <Separator />
+                      <Separator className="max-sm:hidden" />
                       <div>
-                        <p className="mb-1 text-xs font-medium text-muted-foreground">
+                        <p className="mb-1 text-xs font-medium text-muted-foreground max-sm:mb-2 max-sm:text-sm max-sm:text-foreground">
                           Time entries
                         </p>
-                        <div className="space-y-1.5">
+
+                        <ul className="divide-y overflow-hidden rounded-lg border bg-card sm:hidden">
+                          {selectedDayEntries.map((e) => (
+                            <li key={e.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium">{e.description || "Untitled"}</p>
+                                <p className="truncate text-xs text-muted-foreground">{e.project?.name ?? "No project"}{e.client && ` · ${e.client.name}`}</p>
+                              </div>
+                              <div className="shrink-0 text-right tabular-nums">
+                                <p className="text-sm font-medium">{formatHours(e.duration)}h</p>
+                                <p className="text-xs text-muted-foreground">{e.billable && e.project ? money((billedSeconds(e) / 3600) * e.project.rate) : e.billable ? "Billable" : "Non-billable"}</p>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="space-y-1.5 max-sm:hidden">
                           {selectedDayEntries.map((e) => (
                             <div
                               key={e.id}
@@ -490,12 +505,24 @@ export default function CalendarPage() {
 
                   {selectedDayExpenses.length > 0 && (
                     <>
-                      <Separator />
+                      <Separator className="max-sm:hidden" />
                       <div>
-                        <p className="mb-1 text-xs font-medium text-muted-foreground">
+                        <p className="mb-1 text-xs font-medium text-muted-foreground max-sm:mb-2 max-sm:text-sm max-sm:text-foreground">
                           Expenses
                         </p>
-                        <div className="space-y-1.5">
+
+                        <ul className="divide-y overflow-hidden rounded-lg border bg-card sm:hidden">
+                          {selectedDayExpenses.map((e) => (
+                            <li key={e.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium">{e.description}</p>
+                                <p className="truncate text-xs text-muted-foreground">{e.project?.name ?? "No project"}{e.project && getClient(e.project.clientId) && ` · ${getClient(e.project.clientId)?.name}`}</p>
+                              </div>
+                              <p className="shrink-0 text-sm font-medium tabular-nums text-destructive">-{money(e.amount)}</p>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="space-y-1.5 max-sm:hidden">
                           {selectedDayExpenses.map((e) => (
                             <div
                               key={e.id}
@@ -603,7 +630,7 @@ export default function CalendarPage() {
                         </span>
                         <InvoiceStatusBadge status={inv.status} />
                       </div>
-                      <span className="shrink-0 text-sm font-semibold tabular-nums sm:row-span-2">
+                      <span className="shrink-0 text-sm font-semibold tabular-nums max-sm:font-medium sm:row-span-2">
                         {money(inv.total)}
                       </span>
                       <p className="mt-0.5 flex min-w-0 items-center text-xs text-muted-foreground max-sm:col-span-2 max-sm:gap-2">

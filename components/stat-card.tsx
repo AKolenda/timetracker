@@ -29,7 +29,7 @@ interface StatCardProps {
  */
 export function StatCard({ label, value, icon: Icon, hint, secondary, tone = "default", className }: StatCardProps) {
   return (
-    <div data-slot="stat-card" className={cn("min-w-0 rounded-lg bg-card p-3 ring-1 ring-foreground/10 sm:p-4 max-sm:rounded-none max-sm:px-3 max-sm:py-2 max-sm:shadow-none max-sm:ring-0", className)}>
+    <div data-slot="stat-card" className={cn("min-w-0 rounded-lg bg-card p-3 ring-1 ring-foreground/10 sm:p-4 max-sm:rounded-none max-sm:px-4 max-sm:py-2 max-sm:shadow-none max-sm:ring-0", className)}>
       <div className="flex items-center justify-between gap-2">
         <p className="truncate text-xs font-medium text-muted-foreground sm:text-sm">{label}</p>
         {Icon && <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground max-sm:hidden" />}

@@ -390,7 +390,7 @@ export default function ClientsPage() {
                     type="button"
                     aria-pressed={selected}
                     onClick={() => selectClient(client.id)}
-                    className={`flex w-full items-center justify-between gap-3 border-b px-4 py-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset max-sm:rounded-none max-sm:last:border-b-0 sm:border-l-2 sm:px-5 sm:py-4 ${selected ? "sm:border-l-primary sm:bg-primary/10" : "hover:bg-muted/50 sm:border-l-transparent"}`}
+                    className={`flex w-full items-center justify-between gap-3 border-b px-4 py-2.5 max-sm:items-start text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset max-sm:rounded-none max-sm:last:border-b-0 sm:border-l-2 sm:px-5 sm:py-4 ${selected ? "sm:border-l-primary sm:bg-primary/10" : "hover:bg-muted/50 sm:border-l-transparent"}`}
                   >
                     {/* Phones: the house row, a small colour dot and no repeated caption. */}
                     <span className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
@@ -566,12 +566,12 @@ export default function ClientsPage() {
               </FactBox>
               <p className="mt-1.5 text-xs text-muted-foreground">All time · USD · Drafts excluded</p>
               <h3 className="mt-4 text-xs text-muted-foreground">
-                Recent invoices · {clientInvoices.length} total
+                Recent invoices{clientInvoices.length > 0 && ` · ${clientInvoices.length} total`}
               </h3>
               {clientInvoices.length ? (
                 invoiceRows(clientInvoices.slice(0, 5))
               ) : (
-                <p className="py-6 text-sm text-muted-foreground">
+                <p className="mt-2 rounded-lg border bg-card px-4 py-6 text-sm text-muted-foreground">
                   No issued invoices yet. Drafts appear on the Invoices page.
                 </p>
               )}
@@ -712,7 +712,7 @@ export default function ClientsPage() {
               />
             </div>
             <div className="grid gap-3 rounded-md border p-3">
-              <div className="flex items-start gap-3">
+              <label htmlFor="schedule-enabled" className="flex max-sm:min-h-11 pointer-coarse:min-h-11 w-full cursor-pointer items-start gap-3">
                 <Checkbox
                   id="schedule-enabled"
                   checked={form.invoiceScheduleEnabled}
@@ -721,19 +721,18 @@ export default function ClientsPage() {
                   }
                   className="mt-0.5"
                 />
-                <div className="grid gap-0.5">
-                  <Label
-                    htmlFor="schedule-enabled"
+                <span className="grid gap-0.5">
+                  <span
                     className="text-sm font-medium"
                   >
                     Auto-invoice on a schedule
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
+                  </span>
+                  <span className="text-xs font-normal text-muted-foreground">
                     Automatically build an invoice from billable time +
                     uninvoiced expenses on the chosen interval.
-                  </p>
-                </div>
-              </div>
+                  </span>
+                </span>
+              </label>
               {form.invoiceScheduleEnabled && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
@@ -776,7 +775,7 @@ export default function ClientsPage() {
                     After the first email, each one counts from the day the last
                     one went out. Weekend sends follow Settings → Invoicing.
                   </p>
-                  <div className="flex items-start gap-3">
+                  <label htmlFor="schedule-autosend" className="flex max-sm:min-h-11 pointer-coarse:min-h-11 w-full cursor-pointer items-start gap-3">
                     <Checkbox
                       id="schedule-autosend"
                       checked={form.invoiceScheduleAutoSend}
@@ -785,18 +784,17 @@ export default function ClientsPage() {
                       }
                       className="mt-0.5"
                     />
-                    <div className="grid gap-0.5">
-                      <Label
-                        htmlFor="schedule-autosend"
+                    <span className="grid gap-0.5">
+                      <span
                         className="text-sm font-medium"
                       >
                         Email automatically
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
+                      </span>
+                      <span className="text-xs font-normal text-muted-foreground">
                         Off → invoice is created as a draft for you to review.
-                      </p>
-                    </div>
-                  </div>
+                      </span>
+                    </span>
+                  </label>
                 </>
               )}
             </div>

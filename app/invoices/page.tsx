@@ -25,6 +25,7 @@ import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogDescription,
   DialogTitle,
   DialogFooter,
   DialogClose,
@@ -62,6 +63,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
@@ -201,6 +207,7 @@ function InvoiceActionsMenu({
   downloading,
   sending,
   onPreview,
+  onStatusChange,
   onDownload,
   onEdit,
   onSend,
@@ -211,6 +218,7 @@ function InvoiceActionsMenu({
   downloading: boolean
   sending: boolean
   onPreview?: () => void
+  onStatusChange?: (status: Invoice["status"]) => void
   onDownload: () => void
   onEdit: () => void
   onSend: () => void
@@ -240,6 +248,20 @@ function InvoiceActionsMenu({
           <DropdownMenuItem className="max-sm:min-h-11" onClick={onPreview}>
             <Eye className="size-4" /> Preview
           </DropdownMenuItem>
+        )}
+        {onStatusChange && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-11 sm:hidden">Change status</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuRadioGroup value={invoice.status} onValueChange={(status) => onStatusChange(status as Invoice["status"])}>
+                {STATUS_OPTIONS.map((status) => (
+                  <DropdownMenuRadioItem key={status} value={status} className="min-h-11">
+                    {invoiceStatusLabels[status]}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         )}
         <DropdownMenuItem className="max-sm:min-h-11" onClick={onSend} disabled={sending}>
           <Send className="size-4" /> {reissue ? "Reissue invoice" : "Send invoice"}
@@ -945,30 +967,33 @@ export default function InvoicesPage() {
             {filteredInvoices.map((inv) => {
               const client = getClient(inv.clientId)
               const { total, secondary } = listTotal(inv)
+              const dueLabel = inv.dueDate === inv.issueDate ? "Due on receipt" : `Due ${shortDate(inv.dueDate)}`
               return (
                 <li key={inv.id} data-testid="invoice-row" className="flex items-center gap-1 pr-0.5 pl-4">
                   {/* Padding sits on the text, as on Expenses, so the 44px ⋯ doesn't add to the row height. */}
                   <div className="min-w-0 flex-1 py-2.5">
                     <div className="flex min-w-0 items-center gap-1.5 min-[360px]:gap-2">
                       <p className="min-w-0 truncate text-sm font-medium tabular-nums">{inv.invoiceNumber}</p>
+                      <InvoiceStatusBadge status={inv.status} className="sm:hidden" />
                       <StatusMenu
                         invoice={inv}
-                        className="relative shrink-0 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] max-[359px]:pr-2 max-[359px]:[&>svg]:hidden"
+                        className="max-sm:hidden relative shrink-0 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] max-[359px]:pr-2 max-[359px]:[&>svg]:hidden"
                         onChange={(status) => handleStatusChange(inv.id, status)}
                       />
-                      <p className="ml-auto shrink-0 text-sm font-semibold tabular-nums">{total}</p>
+                      <p className="ml-auto shrink-0 text-sm font-semibold tabular-nums max-sm:font-medium">{total}</p>
                     </div>
                     <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                       {client && (
                         <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: client.color }} />
                       )}
-                      <span className="min-w-0 flex-1 truncate">{client?.name ?? "—"}</span>
+                      <span className="min-w-0 flex-1 truncate">{client?.name ?? "—"}{secondary && <span className="sm:hidden"> · {dueLabel}</span>}</span>
                       <span className={cn("shrink-0 tabular-nums", isPastDue(inv) && "font-medium text-destructive")}>
-                        {inv.dueDate === inv.issueDate ? "Due on receipt" : `Due ${shortDate(inv.dueDate)}`}
+                        <span className="sm:hidden">{secondary ?? dueLabel}</span>
+                        <span className="max-sm:hidden">{dueLabel}</span>
                       </span>
                     </div>
                     {secondary && (
-                      <p className="text-right text-xs text-muted-foreground tabular-nums">{secondary}</p>
+                      <p className="text-right text-xs text-muted-foreground tabular-nums max-sm:hidden">{secondary}</p>
                     )}
                   </div>
                   <InvoiceActionsMenu
@@ -976,6 +1001,7 @@ export default function InvoicesPage() {
                     downloading={downloadingId === inv.id}
                     sending={sendingId === inv.id}
                     onPreview={() => setPreviewInvoice(inv)}
+                    onStatusChange={(status) => handleStatusChange(inv.id, status)}
                     onDownload={() => handleDownload(inv)}
                     onEdit={() => openEdit(inv)}
                     onSend={() => openSend(inv)}
@@ -998,6 +1024,7 @@ export default function InvoicesPage() {
         <DialogContent className="max-h-[90vh] w-[95vw] grid-cols-1 overflow-y-auto sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Create Invoice</DialogTitle>
+            <DialogDescription className="sr-only">Choose a client and billable items for the invoice.</DialogDescription>
           </DialogHeader>
           {/* grid-cols-N tracks are minmax(0,1fr) and every cell is min-w-0, so long entry text truncates instead of widening the dialog. */}
           <div className="grid min-w-0 grid-cols-1 gap-6 py-4">

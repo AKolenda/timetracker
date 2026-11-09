@@ -71,7 +71,7 @@ export function MoreSheet({ count, onClear, title = "More", className, children 
       <SheetTrigger asChild>
         <Button
           variant="outline"
-          className={cn("h-11 gap-1.5 px-3 max-[359px]:px-2.5", className)}
+          className={cn("h-11 min-w-11 shrink-0 gap-1.5 px-3 max-[359px]:px-2.5", className)}
           data-testid="page-more"
         >
           <Ellipsis aria-hidden className="size-4" />
