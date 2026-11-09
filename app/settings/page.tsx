@@ -356,7 +356,7 @@ export default function SettingsPage() {
           setSection(value)
           document.getElementById(`settings-${value}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
         }}>
-          <SelectTrigger aria-label="Settings section" className="h-11! w-full min-w-0 text-[16px]"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="Settings section" className="h-11! w-full min-w-0 text-[16px] *:data-[slot=select-value]:block! *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:truncate"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="information">Your information</SelectItem>
             <SelectItem value="invoicing">Invoicing</SelectItem>

@@ -358,7 +358,7 @@ export default function ProjectsPage() {
         <Card className="py-0">
           <ul className="divide-y lg:hidden" aria-label="Projects">
             {projectRows.map(({ project, client, totalSecs, revenue }) => (
-              <li key={project.id} className="flex items-center gap-1 py-2 pr-0.5 pl-4 sm:gap-3 sm:py-3 sm:pr-4">
+              <li key={project.id} className="flex items-center gap-1 py-2.5 pr-0.5 pl-4 sm:gap-3 sm:py-3 sm:pr-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
                     <p className="min-w-0 truncate font-medium">{project.name}</p>
@@ -588,7 +588,7 @@ export default function ProjectsPage() {
                           type="button"
                           variant="outline"
                           size="xs"
-                          className="h-auto max-w-full py-1 font-normal"
+                          className="h-auto max-w-full py-1 font-normal pointer-coarse:min-h-11"
                           title={lastActive ? `Last agent activity ${lastActive.toLocaleString()}` : "No agent activity recorded yet"}
                           onClick={() => addFolder(folder.name)}
                         >

@@ -107,7 +107,7 @@ export function T3ThreadId({ id }: { id: string }) {
   return <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground" data-testid="t3-thread-id">
     <span className="shrink-0">T3 thread</span>
     <code className="min-w-0 truncate font-mono" title={id}>{id}</code>
-    <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" aria-label="Copy T3 thread ID" onClick={() => void copy()}><Copy /></Button>
+    <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground pointer-coarse:size-11" aria-label="Copy T3 thread ID" onClick={() => void copy()}><Copy /></Button>
   </p>
 }
 
@@ -250,7 +250,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
   const range = Number.isFinite(end) ? `${format(start, "MMM d, HH:mm")}–${format(end, new Date(start).toDateString() === new Date(end).toDateString() ? "HH:mm" : "MMM d, HH:mm")}` : `${format(start, "MMM d, HH:mm")}–now`
 
   return <>
-    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left max-lg:gap-1 focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
+    <button ref={openerRef} type="button" className="flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md text-left max-lg:gap-1 max-sm:min-h-11 max-sm:items-center max-sm:[&>span:first-child]:truncate max-sm:[&>svg]:mt-0 focus-visible:outline-2 focus-visible:outline-ring" data-testid="entry-chat-menu" aria-label={`Chats for ${description || "Untitled"}`} onClick={() => { setOpen(true); setQuery(""); setPage(0); setSelectedKey(null); setMobileView("list") }}>
       <span className="min-w-0 flex-1 break-words">{plainTitle(description || "") || "Untitled"}</span><ChevronDown className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
     </button>
     <Dialog open={open} onOpenChange={setOpen}>
@@ -263,7 +263,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
         </DialogHeader>
         <div className="flex min-h-0 flex-1">
           <aside className={`${mobileView === "list" ? "flex" : "hidden"} min-h-0 w-full flex-col bg-muted/40 sm:flex sm:w-72 sm:shrink-0 sm:border-r`} aria-label="Chats in this entry">
-            <label className="mx-2 mt-2 flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground focus-within:bg-accent hover:bg-accent/60">
+            <label className="mx-2 mt-2 flex h-8 max-sm:h-11 shrink-0 items-center gap-2 rounded-md px-2 text-muted-foreground focus-within:bg-accent hover:bg-accent/60">
               <Search className="size-3.5 shrink-0" />
               <input className="min-w-0 flex-1 bg-transparent text-[16px] text-foreground outline-none placeholder:text-muted-foreground sm:text-sm" aria-label="Search entry chats" placeholder="Search chats" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} />
             </label>
@@ -271,7 +271,7 @@ export function EntryChats({ description, sources, start, end, labels, inferred 
               {filtered.slice(currentPage * CHAT_PAGE_SIZE, currentPage * CHAT_PAGE_SIZE + CHAT_PAGE_SIZE).map((source) => {
                 const active = selected && conversationKey(selected) === conversationKey(source)
                 const factor = factorOf(source)
-                return <button key={conversationKey(source)} type="button" aria-current={active ? "true" : undefined} className={`flex w-full min-w-0 cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent" : "hover:bg-accent/60"}`} onClick={() => { setSelectedKey(conversationKey(source)); setMobileView("chat") }}>
+                return <button key={conversationKey(source)} type="button" aria-current={active ? "true" : undefined} className={`flex w-full min-w-0 max-sm:min-h-11 cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-ring ${active ? "bg-accent" : "hover:bg-accent/60"}`} onClick={() => { setSelectedKey(conversationKey(source)); setMobileView("chat") }}>
                   <SourceLogo source={source.agent} agent={source.agent} className="mt-0.5 size-4" />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-2" title={`${source.machineLabel} · ${source.model || source.agent || source.source} · ${format(source.spans[0].start, "HH:mm")}–${format(source.spans.at(-1)!.end, "HH:mm")} · ${formatDuration(source.durationSeconds)}`}>
