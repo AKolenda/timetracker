@@ -5,7 +5,12 @@ export const DEFAULT_AGENT_TIME_GAP_MINUTES = 15
 
 // The Agent Time desktop service is intentionally private to the local network.
 // Deployments may override this, but the VM can work without any cloud configuration.
-const REQUEST_TIMEOUT_MS = 5_000
+// A machine that is off fails fast; one that answers gets longer to send its (large) history.
+const CONNECT_TIMEOUT_MS = 5_000
+const BODY_TIMEOUT_MS = 30_000
+// A machine that misses one read keeps showing its last answer for a while instead of dropping out.
+const LAST_GOOD_MAX_AGE_MS = 10 * 60_000
+const lastGood = new Map<string, { payload: AgentTimePayload; at: number }>()
 const MAX_GAP_MINUTES = 24 * 60
 
 /** An open T3 Code project: `name` matches interval projects, `title` is what T3 Code shows. */
@@ -22,6 +27,8 @@ type AgentTimePayload = {
   /** The machine's T3 Code environment, empty when it doesn't report one. */
   t3EnvironmentId?: string
   intervals: AgentTimeInterval[]
+  /** Machines that didn't answer and have no recent copy, so their activity is missing. */
+  offline?: string[]
 }
 
 type AgentTimeInterval = {
@@ -80,6 +87,8 @@ export type AgentTimeImportData = {
   t3Projects: T3Project[]
   gapMinutes: number
   intervals: AgentTimeBlock[]
+  /** Names of machines that didn't answer, so their activity is missing. */
+  offline?: string[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -150,23 +159,36 @@ export async function fetchAgentTime(dbHosts: string[] = [], labels: Record<stri
 
   if (!allUrls.length) throw new Error("Add an Agent Time machine in Settings to see its activity.")
 
+  const offline: string[] = []
   const payloads = await Promise.all(
     allUrls.map(async (url): Promise<AgentTimePayload | null> => {
+      const machineLabel = labels[url] || new URL(url).hostname
+      const controller = new AbortController()
+      let timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS)
       try {
         const response = await fetch(url, {
           cache: "no-store",
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          signal: controller.signal,
           headers: process.env.AGENT_TIME_API_KEY
             ? { Authorization: `Bearer ${process.env.AGENT_TIME_API_KEY}` }
             : undefined,
         })
+        clearTimeout(timer)
+        timer = setTimeout(() => controller.abort(), BODY_TIMEOUT_MS)
         if (response.ok) {
           const payload = payloadFromUnknown(await response.json())
-          return { ...payload, intervals: payload.intervals.map((interval) => ({ ...interval, hostUrl: url, machineLabel: labels[url] || new URL(url).hostname, t3EnvironmentId: payload.t3EnvironmentId || undefined })) }
+          const tagged = { ...payload, intervals: payload.intervals.map((interval) => ({ ...interval, hostUrl: url, machineLabel, t3EnvironmentId: payload.t3EnvironmentId || undefined })) }
+          lastGood.set(url, { payload: tagged, at: Date.now() })
+          return tagged
         }
       } catch {
-        // Ignore errors for individual URLs to remain resilient if one VM goes offline
+        // One machine being off or slow must not hide the others.
+      } finally {
+        clearTimeout(timer)
       }
+      const cached = lastGood.get(url)
+      if (cached && Date.now() - cached.at < LAST_GOOD_MAX_AGE_MS) return cached.payload
+      offline.push(machineLabel)
       return null
     })
   )
@@ -186,6 +208,7 @@ export async function fetchAgentTime(dbHosts: string[] = [], labels: Record<stri
     projects: [...new Set(validPayloads.flatMap((p) => p.projects))],
     t3Projects: [...new Map(validPayloads.flatMap((p) => p.t3Projects).map((project) => [project.name, project])).values()],
     intervals: validPayloads.flatMap((p) => p.intervals),
+    offline,
   }
 }
 
@@ -316,6 +339,7 @@ export function toImportData(
       : payload.projects)].sort((a, b) => a.localeCompare(b)),
     t3Projects: [...payload.t3Projects].sort((a, b) => a.name.localeCompare(b.name)),
     gapMinutes: options.gapMinutes,
+    offline: payload.offline ?? [],
     intervals: blocks
       .map((block) => ({
         id: blockId(block.project, block.start, block.end),
