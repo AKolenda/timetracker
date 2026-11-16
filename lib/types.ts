@@ -45,6 +45,8 @@ export interface TimeEntry {
   /** Share of the duration charged; 1 when unset. */
   billFactor?: number
   date: string
+  /** Entries in one project with the same label bill as a single invoice line. */
+  invoiceLine?: string | null
 }
 
 export interface Expense {
@@ -152,6 +154,8 @@ export interface InvoiceLineItem {
   amount: number
   type: "time" | "expense"
   sourceId: string | null
+  /** Every time entry a grouped line bills; absent on lines that bill one entry. */
+  sourceIds?: string[] | null
 }
 
 export interface AppData {

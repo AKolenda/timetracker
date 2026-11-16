@@ -85,6 +85,7 @@ import { subtractRanges, occupiedProjectRanges, entryOverlapDetails, type TimeRa
 import { conversationKey, groupConversationSources } from "@/lib/agent-time-chats"
 import { billedSeconds, formatBillFactor, normalizeBillFactor, sourcesBillFactor } from "@/lib/billing"
 import { invoicedSourceIds } from "@/lib/invoice-estimates"
+import { agentPreferenceStorageKey, mobileFixtureRequested, persistIgnoredAgentRanges, savedIgnoredAgentRanges, type IgnoredAgentRange } from "@/lib/agent-skips"
 import { intervalIsSettled } from "@/lib/summary-jobs"
 import { splitAgentRange } from "@/lib/agent-time-intervals"
 import { PERSONAL_AGENT_PROJECT, adoptableLocalMappings, linkAgentFolders, resolveAgentMappings } from "@/lib/agent-import-projects"
@@ -149,12 +150,6 @@ type AgentImportPlan = {
 type LogRow =
   | { kind: "entry"; entry: TimeEntry; date: string; sortKey: string }
   | { kind: "draft"; slice: AgentImportSlice; date: string; sortKey: string }
-type IgnoredAgentRange = {
-  id: string
-  agentProject: string
-  start: number
-  end: number
-}
 const HARD_AGENT_TIME_START_DATE = "2026-08-30"
 /** Agent Time older than this never becomes a draft, so a backlog can't pile up or come back. */
 const AGENT_DRAFT_WINDOW_DAYS = 7
@@ -162,7 +157,7 @@ const AGENT_DRAFT_WINDOW_DAYS = 7
 const AGENT_TIME_REFRESH_MS = 30_000
 const LOG_PAGE_SIZE = 100
 const DAILY_AGENT_GAP_KEY = "timetracker-agent-time-gap-today"
-const IGNORED_AGENT_RANGES_KEY = "timetracker-agent-time-ignored-ranges"
+
 
 /** The chat that best represents a draft: the longest one with a title, else the longest overall. */
 function primaryConversation(slice: AgentImportSlice) {
@@ -187,18 +182,6 @@ function demoFixtureRequested() {
     new URLSearchParams(window.location.search).get("fixture") === "demo"
 }
 
-function mobileFixtureRequested() {
-  return typeof window !== "undefined" &&
-    process.env.NEXT_PUBLIC_E2E_FIXTURES === "true" &&
-    new URLSearchParams(window.location.search).get("fixture") === "mobile"
-}
-
-function agentPreferenceStorageKey(key: string) {
-  if (!mobileFixtureRequested()) return key
-  const fixtureSession = new URLSearchParams(window.location.search).get("fixtureSession") || "default"
-  return `${key}:fixture:${fixtureSession}`
-}
-
 function savedDailyAgentGap(today: string) {
   if (typeof window === "undefined") return "15"
   try {
@@ -215,35 +198,6 @@ function savedDailyAgentGap(today: string) {
     // Invalid preferences use the daily default.
   }
   return "15"
-}
-
-function savedIgnoredAgentRanges() {
-  if (typeof window === "undefined") return []
-  try {
-    const saved = JSON.parse(localStorage.getItem(agentPreferenceStorageKey(IGNORED_AGENT_RANGES_KEY)) ?? "[]") as unknown
-    if (!Array.isArray(saved)) return []
-    return saved.filter((range): range is IgnoredAgentRange => {
-      if (!range || typeof range !== "object") return false
-      const candidate = range as Partial<IgnoredAgentRange>
-      return typeof candidate.id === "string" &&
-        typeof candidate.agentProject === "string" &&
-        typeof candidate.start === "number" &&
-        Number.isFinite(candidate.start) &&
-        typeof candidate.end === "number" &&
-        Number.isFinite(candidate.end) &&
-        candidate.end > candidate.start
-    })
-  } catch {
-    return []
-  }
-}
-
-function persistIgnoredAgentRanges(ranges: IgnoredAgentRange[]) {
-  try {
-    localStorage.setItem(agentPreferenceStorageKey(IGNORED_AGENT_RANGES_KEY), JSON.stringify(ranges))
-  } catch {
-    // Ignoring still applies until this page is refreshed.
-  }
 }
 
 function buildAgentImportPlan(

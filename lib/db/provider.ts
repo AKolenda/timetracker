@@ -29,6 +29,9 @@ export interface DataProvider {
   createTimeEntry(entry: Omit<TimeEntry, "id">): Promise<TimeEntry>
   updateTimeEntry(id: string, updates: Partial<TimeEntry>): Promise<void>
   deleteTimeEntry(id: string): Promise<void>
+  /** Applies the same change to every listed entry in one request. */
+  updateTimeEntries(ids: string[], updates: Partial<TimeEntry>): Promise<void>
+  deleteTimeEntries(ids: string[]): Promise<void>
 
   // Expenses
   getExpenses(): Promise<Expense[]>
