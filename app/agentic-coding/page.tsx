@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
 import Link from "next/link"
 import {
@@ -9,13 +9,13 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Download,
+  ExternalLink,
   LoaderCircle,
   RefreshCw,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import {
   Command,
   CommandEmpty,
@@ -32,7 +32,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Select,
@@ -42,10 +41,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Fact, FactBox } from "@/components/fact-list"
 import { PageHeader } from "@/components/page-header"
 import { HeaderSearch } from "@/components/header-search"
 import { SheetAction, SheetSection } from "@/components/more-sheet"
-import type { AgentTimeBlock, AgentTimeImportData } from "@/lib/agent-time"
+import type { AgentTimeImportData } from "@/lib/agent-time"
 import { PERSONAL_AGENT_PROJECT, resolveAgentMappings } from "@/lib/agent-import-projects"
 import { occupiedProjectRanges } from "@/lib/agent-time-overlap"
 import { conversationKey } from "@/lib/agent-time-chats"
@@ -58,11 +58,12 @@ import {
   type Billing,
   type InsightTurn,
   type JournalDay,
+  type JournalThread,
   type ProjectLedger,
 } from "@/lib/agentic-insights"
 import { formatClock, formatCurrency } from "@/lib/format"
 import { useStore } from "@/lib/store"
-import type { Client, Project } from "@/lib/types"
+import type { Project } from "@/lib/types"
 
 const AGENT_TIME_START_DATE = "2026-08-30"
 // The API clips turns at `from`, so ask from a day earlier: a turn that started before the first
@@ -72,10 +73,11 @@ const LOCAL_MAPPINGS_KEY = "timetracker-agent-time-project-mappings"
 const THREADS_SHOWN = 6
 const JOURNAL_ROWS_SHOWN = 7
 const LEFT_OPEN_HOURS = LEFT_OPEN_SECONDS / 3600
-
-// Hatching marks time inside turns left open: visible, but not working time.
-const HATCH =
-  "bg-[repeating-linear-gradient(135deg,color-mix(in_oklab,var(--muted-foreground)_55%,transparent)_0_2px,transparent_2px_6px)]"
+// Clients take these in ledger order; time not billed to anyone stays gray.
+const CLIENT_COLORS = ["var(--chart-1)", "var(--chart-3)", "var(--chart-4)", "var(--chart-2)"]
+const UNBILLED_COLOR = "var(--chart-5)"
+const DAY_MS = 24 * 60 * 60 * 1000
+const LIVE_REFRESH_MS = 60_000
 
 const RANGE_LABELS: Record<string, string> = {
   today: "today",
@@ -94,8 +96,31 @@ function mobileFixtureRequested() {
 
 const hours = (seconds: number) => `${formatClock(seconds)} h`
 
-/** `live` lists only the turns still running; `intervals` marks a whole merged block live if any turn in it is. */
-type AgentTimeResponse = AgentTimeImportData & { live?: AgentTimeBlock[] }
+type ThreadInfo = { startedAt: number; link?: string }
+
+/** T3 Code's own share link; it opens the thread on whichever machine runs it. */
+const t3ThreadLink = (environmentId: string, threadId: string) =>
+  `https://app.t3.codes/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`
+
+function OpenInT3({ link, className = "" }: { link: string | undefined; className?: string }) {
+  if (!link) return <span aria-hidden className={`size-8 shrink-0 ${className}`} />
+  return (
+    <a
+      href={link}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="Open in T3 Code"
+      title="Open in T3 Code"
+      className={`inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${className}`}
+    >
+      <ExternalLink aria-hidden className="size-3.5" />
+    </a>
+  )
+}
+
+const startedLabel = (time: number) =>
+  Number.isFinite(time) ? format(new Date(time), new Date(time).toDateString() === new Date().toDateString() ? "h:mm a" : "EEE, MMM d, h:mm a") : "Unknown"
+
 
 type ViewState = "loading" | "unavailable" | "empty" | "filtered" | "ready"
 
@@ -175,223 +200,275 @@ function AgenticEmptyState({
   )
 }
 
-function LiveDot({ className = "" }: { className?: string }) {
+type ChartDay = { dayStart: number; day: JournalDay | undefined }
+
+/** One bar per day in the range, split by billing group, newest on the right. Click a bar to pick that day. */
+function DayChart({
+  days,
+  selected,
+  onSelect,
+  groupOrder,
+  colorFor,
+}: {
+  days: ChartDay[]
+  selected: number | null
+  onSelect: (dayStart: number) => void
+  groupOrder: string[]
+  colorFor: (key: string) => string
+}) {
+  const max = Math.max(1, ...days.map(({ day }) => day?.workingSeconds ?? 0))
+  // Past two weeks the bars get narrow: drop the figures above them, label Mondays only,
+  // and scroll sideways if needed, starting at the newest day.
+  const dense = days.length > 14
+  const scroller = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth
+  }, [days.length])
   return (
-    <span
-      role="img"
-      title="Running now"
-      aria-label="Running now"
-      className={`inline-block size-1.5 shrink-0 rounded-full bg-emerald-500 ring-3 ring-emerald-500/20 ${className}`}
-    />
+    <div ref={scroller} className="overflow-x-auto">
+      <div
+        className={`flex items-end px-2 pt-3 sm:px-3 ${dense ? "gap-0.5" : "gap-1 sm:gap-2"}`}
+        style={dense ? { minWidth: `${days.length * 1.5}rem` } : undefined}
+      >
+        {days.map(({ dayStart, day }) => {
+          const seconds = day?.workingSeconds ?? 0
+          const groups = groupOrder.filter((key) => (day?.groups.get(key) ?? 0) > 0)
+          const isSelected = dayStart === selected
+          const date = new Date(dayStart)
+          return (
+            <button
+              key={dayStart}
+              type="button"
+              disabled={!day}
+              aria-pressed={isSelected}
+              aria-label={`${format(date, "EEEE, MMM d")}: ${seconds >= 60 ? hours(seconds) : "no activity"}`}
+              title={`${format(date, "EEE, MMM d")}: ${hours(seconds)}`}
+              onClick={() => onSelect(dayStart)}
+              className={`flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 rounded-md px-1 pt-1 pb-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default ${
+                isSelected ? "bg-primary/10" : "enabled:hover:bg-muted/60"
+              }`}
+              data-testid="agentic-chart-day"
+            >
+              {!dense && (
+                <span className="text-center text-[11px] text-muted-foreground tabular-nums sm:text-xs">
+                  {seconds >= 60 ? formatClock(seconds) : "\u00a0"}
+                </span>
+              )}
+              <span className="flex h-28 flex-col justify-end sm:h-32" aria-hidden>
+                <span
+                  className="flex flex-col-reverse overflow-hidden rounded-sm"
+                  style={{ height: `${(seconds / max) * 100}%`, minHeight: seconds > 0 ? 3 : 0 }}
+                >
+                  {groups.map((key) => (
+                    <span key={key} className="basis-0" style={{ flexGrow: day?.groups.get(key) ?? 0, background: colorFor(key) }} />
+                  ))}
+                </span>
+              </span>
+              <span
+                className={`text-center text-[11px] whitespace-nowrap sm:text-xs ${dense ? "-mx-4 h-4" : "truncate"} ${isSelected ? "text-foreground sm:font-medium" : "text-muted-foreground"}`}
+              >
+                {dense ? (date.getDay() === 1 ? format(date, "MMM d") : "") : format(date, "EEE d")}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
-function LedgerRow({
-  row,
-  project,
-  client,
-  scaleSeconds,
+/** A thread on the picked day. Click it to see when it ran. */
+function DayThread({
+  thread,
+  dayStart,
+  tag,
+  info,
   folderTitle,
-  open,
-  onToggle,
 }: {
-  row: ProjectLedger
-  project: Project | undefined
-  client: Client | undefined
-  scaleSeconds: number
+  thread: JournalThread
+  dayStart: number
+  tag: { label: string; billed: boolean }
+  info: ThreadInfo
   folderTitle: (folder: string) => string
-  open: boolean
-  onToggle: () => void
 }) {
-  const [showAll, setShowAll] = useState(false)
-  const covered = Math.max(0, row.workingSeconds - row.untrackedSeconds)
-  const pct = (seconds: number) => `${(seconds / scaleSeconds) * 100}%`
-  const hasUntracked = row.untrackedSeconds >= 60
-  const threads = showAll ? row.threads : row.threads.slice(0, THREADS_SHOWN)
-  const folders = new Set(row.threads.map((thread) => thread.folder))
+  const [open, setOpen] = useState(false)
+  const first = thread.spans[0]
+  const last = thread.spans[thread.spans.length - 1]
   return (
-    <div className="border-b last:border-b-0" data-testid="agentic-ledger-row">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={onToggle}
-        className="grid w-full cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-3 text-left hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4 md:grid-cols-[1rem_minmax(0,1.2fr)_minmax(0,2fr)_6rem_7rem_7rem]"
-      >
-        <ChevronRight aria-hidden className={`size-4 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`} />
-        <span className="min-w-0">
-          <span className="block truncate font-medium">{client?.name ?? project?.name ?? "Project"}</span>
-          <span className="block truncate text-xs text-muted-foreground">
-            {project ? `${project.name}, ${formatCurrency(project.rate, project.currency).replace(/\.00$/, "")}/h` : ""}
+    <div className="border-b border-dashed last:border-b-0">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-2 text-left text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <ChevronRight aria-hidden className={`size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`} />
+          <span className="min-w-0 flex-1 truncate">{thread.title || "Untitled thread"}</span>
+          <span className={`max-w-28 shrink-0 truncate rounded-md px-1.5 py-px text-xs sm:max-w-40 ${tag.billed ? "bg-primary/15 text-foreground" : "bg-muted text-muted-foreground"}`}>
+            {tag.label}
           </span>
-        </span>
-        <span className="col-span-2 col-start-2 row-start-2 min-w-0 md:col-span-1 md:col-start-auto md:row-start-auto">
-          <span className="flex h-2.5 overflow-hidden rounded-sm bg-muted" aria-hidden>
-            <span className="h-full bg-primary" style={{ width: pct(covered) }} />
-            <span className="h-full bg-primary/35" style={{ width: pct(row.untrackedSeconds) }} />
-            <span className={`h-full ${HATCH}`} style={{ width: pct(row.leftOpenSeconds) }} />
+          <span className="w-24 shrink-0 text-right text-xs text-muted-foreground tabular-nums max-sm:hidden">
+            {format(new Date(first.start), "h:mm a")}
+            {thread.live ? " – now" : ""}
           </span>
-          <span className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-            <span><span className="font-medium text-foreground tabular-nums">{hours(row.workingSeconds)}</span> working</span>
-            <span className="tabular-nums md:hidden">{hours(row.trackedSeconds)} tracked</span>
-            {row.leftOpenTurns > 0 && (
-              <span className="tabular-nums">+ {hours(row.leftOpenSeconds)} in {row.leftOpenTurns} {row.leftOpenTurns === 1 ? "turn" : "turns"} left open</span>
-            )}
-          </span>
-        </span>
-        <span className="hidden text-right text-sm tabular-nums md:block">{hours(row.trackedSeconds)}</span>
-        <span className="hidden text-right tabular-nums md:block">
-          {hasUntracked ? <span className="font-semibold">{hours(row.untrackedSeconds)}</span> : <span className="text-sm text-muted-foreground">All tracked</span>}
-        </span>
-        <span className="text-right tabular-nums">
-          {hasUntracked && project ? (
-            <span className="font-semibold">{formatCurrency((row.billableUntrackedSeconds / 3600) * project.rate, project.currency)}</span>
-          ) : (
-            <span className="text-sm text-muted-foreground">{project ? formatCurrency(0, project.currency) : "—"}</span>
-          )}
-          <span className="block text-xs font-normal text-muted-foreground md:hidden">
-            {hasUntracked ? `${hours(row.untrackedSeconds)} not tracked` : "All tracked"}
-          </span>
-        </span>
-      </button>
+          <span className="w-14 shrink-0 text-right tabular-nums">{hours(thread.workingSeconds)}</span>
+        </button>
+        <OpenInT3 link={info.link} />
+      </div>
       {open && (
-        <div className="border-t bg-muted/20 px-3 py-1.5 sm:px-4 md:pl-11" data-testid="agentic-ledger-threads">
-          {threads.map((thread) => (
-            <div key={thread.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b border-dashed py-2 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_12rem_5rem]">
-              <span className="flex min-w-0 items-center gap-2">
-                {thread.live && <LiveDot />}
-                <span className="truncate" title={`${thread.title || "Untitled thread"}\nT3 thread ${thread.threadId}`}>
-                  {thread.title || "Untitled thread"}
-                </span>
-                {folders.size > 1 && <span className="max-w-32 shrink-0 truncate rounded-md bg-muted px-1.5 py-px text-xs text-muted-foreground">{folderTitle(thread.folder)}</span>}
-              </span>
-              <span className="col-start-1 row-start-2 text-xs text-muted-foreground md:col-start-auto md:row-start-auto md:text-right">
-                {thread.leftOpenTurns > 0 ? `+ ${hours(thread.leftOpenSeconds)} left open (${thread.leftOpenTurns})` : ""}
-              </span>
-              <span className="row-span-2 text-right tabular-nums md:row-span-1">{hours(thread.workingSeconds)}</span>
-            </div>
-          ))}
-          {row.threads.length > THREADS_SHOWN && (
-            <Button variant="ghost" size="xs" className="my-1 text-muted-foreground" onClick={() => setShowAll((value) => !value)}>
-              {showAll ? "Show fewer" : `Show ${row.threads.length - THREADS_SHOWN} more threads`}
-            </Button>
+        <dl className="mb-2 ml-5.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">Chat started</dt>
+          <dd className="tabular-nums">{startedLabel(info.startedAt)}</dd>
+          {thread.live && (
+            <>
+              <dt className="text-muted-foreground">Status</dt>
+              <dd className="font-medium">Running now</dd>
+            </>
           )}
-        </div>
+          <dt className="text-muted-foreground">Ran</dt>
+          <dd className="grid gap-1.5 tabular-nums">
+            <span>
+              {format(new Date(first.start), "h:mm a")} – {format(new Date(last.end), "h:mm a")}
+              {thread.spans.length > 1 && <span className="text-muted-foreground">, in {thread.spans.length} stretches</span>}
+            </span>
+            <span className="relative block h-2.5 max-w-80 rounded-sm bg-muted" aria-hidden>
+              {thread.spans.map((span) => (
+                <span
+                  key={span.start}
+                  className={`absolute inset-y-0 min-w-0.5 rounded-[2px] ${tag.billed ? "bg-primary" : "bg-muted-foreground/60"}`}
+                  style={{ left: `${((span.start - dayStart) / DAY_MS) * 100}%`, width: `${((span.end - span.start) / DAY_MS) * 100}%` }}
+                />
+              ))}
+            </span>
+            <span className="flex max-w-80 justify-between text-[10px] text-muted-foreground" aria-hidden>
+              <span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span>
+            </span>
+          </dd>
+          <dt className="text-muted-foreground">Folder</dt>
+          <dd className="truncate">{folderTitle(thread.folder)}</dd>
+          <dt className="text-muted-foreground">T3 thread</dt>
+          <dd className="truncate font-mono text-muted-foreground">{thread.threadId}</dd>
+          {info.link && (
+            <dd className="col-start-2 pt-1">
+              <Button asChild size="xs" variant="outline">
+                <a href={info.link} target="_blank" rel="noreferrer">
+                  <ExternalLink data-icon="inline-start" />
+                  Open in T3 Code
+                </a>
+              </Button>
+            </dd>
+          )}
+        </dl>
       )}
     </div>
   )
 }
 
-function JournalDayCard({
+function DayDetail({
   day,
-  open,
-  onToggle,
-  groupLabel,
   folderTag,
+  folderTitle,
+  infoFor,
 }: {
   day: JournalDay
-  open: boolean
-  onToggle: () => void
-  groupLabel: (key: string) => string
   folderTag: (folder: string) => { label: string; billed: boolean }
+  folderTitle: (folder: string) => string
+  infoFor: (key: string) => ThreadInfo
 }) {
   const [showAll, setShowAll] = useState(false)
-  const dayEnd = new Date(day.dayStart)
-  dayEnd.setDate(dayEnd.getDate() + 1)
-  const length = dayEnd.getTime() - day.dayStart
-  const position = (start: number, end: number) => ({
-    left: `${((start - day.dayStart) / length) * 100}%`,
-    width: `${((end - start) / length) * 100}%`,
-  })
   const visible = day.threads.filter((thread) => thread.workingSeconds >= 60)
   const threads = showAll ? visible : visible.slice(0, JOURNAL_ROWS_SHOWN)
-  const groups = [...day.groups].filter(([, seconds]) => seconds >= 60).sort(([a], [b]) => (a === "unbilled" ? 1 : b === "unbilled" ? -1 : 0))
-  const leftOpen = day.leftOpen
-  const track = (children: React.ReactNode) => (
-    <span className="relative block h-3.5 rounded-sm bg-muted" aria-hidden>
-      {[25, 50, 75].map((left) => <span key={left} className="absolute inset-y-0 w-px bg-foreground/5" style={{ left: `${left}%` }} />)}
-      {children}
-    </span>
-  )
   return (
-    <div className="rounded-lg border bg-card" data-testid="agentic-day">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={onToggle}
-        className="flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
-      >
-        <ChevronRight aria-hidden className={`size-4 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`} />
-        <span className="font-medium">{format(new Date(day.dayStart), "EEE, MMM d")}</span>
-        <span className="order-last flex basis-full flex-wrap gap-1.5 pl-7 sm:order-none sm:flex-1 sm:basis-auto sm:pl-0">
-          {groups.map(([key, seconds]) => (
-            <span key={key} className={`max-w-full truncate rounded-md px-1.5 py-px text-xs ${key === "unbilled" ? "bg-muted text-muted-foreground" : "bg-primary/15 text-foreground"}`}>
-              {groupLabel(key)} <span className="tabular-nums">{hours(seconds)}</span>
-            </span>
-          ))}
+    <section className="rounded-lg border bg-card px-3 py-3 sm:px-4" aria-label={format(new Date(day.dayStart), "EEEE, MMM d")} data-testid="agentic-day">
+      <div className="mb-1 flex items-baseline gap-2.5">
+        <h2 className="font-semibold">{format(new Date(day.dayStart), "EEE, MMM d")}</h2>
+        <span className="flex-1 text-sm text-muted-foreground">
+          {visible.length} {visible.length === 1 ? "thread" : "threads"}
         </span>
-        <span className="ml-auto flex items-baseline gap-3">
-          {leftOpen.turns > 0 && <span className="text-xs text-muted-foreground tabular-nums">+ {hours(leftOpen.seconds)} left open</span>}
-          <span className="font-semibold tabular-nums">{hours(day.workingSeconds)}</span>
-        </span>
-      </button>
-      {open && (
-        <div className="border-t px-3 pt-1 pb-2.5 sm:px-4">
-          <div className="grid grid-cols-1 gap-4 pt-1 text-[11px] text-muted-foreground sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]" aria-hidden>
-            <span className="hidden sm:block" />
-            <span className="flex justify-between"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></span>
-            <span className="hidden sm:block" />
-          </div>
-          {threads.map((thread) => {
-            const tag = folderTag(thread.folder)
-            return (
-              <div key={thread.key} className="grid grid-cols-[minmax(0,1fr)_4rem] items-center gap-x-4 gap-y-1 py-1.5 text-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate" title={`${thread.title || "Untitled thread"}\nT3 thread ${thread.threadId}`}>{thread.title || "Untitled thread"}</span>
-                  <span className={`max-w-28 shrink-0 truncate rounded-md px-1.5 py-px text-xs sm:max-w-40 ${tag.billed ? "bg-primary/15 text-foreground" : "bg-muted text-muted-foreground"}`}>{tag.label}</span>
-                  {thread.live && <LiveDot />}
-                </span>
-                <span className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-auto">
-                  {track(thread.spans.map((span) => (
-                    <span
-                      key={span.start}
-                      title={`${format(new Date(span.start), "h:mm a")} – ${format(new Date(span.end), "h:mm a")}`}
-                      className={`absolute inset-y-0.5 min-w-0.5 rounded-[2px] ${tag.billed ? "bg-violet-500" : "bg-muted-foreground/60"}`}
-                      style={position(span.start, span.end)}
-                    />
-                  )))}
-                </span>
-                <span className="text-right tabular-nums sm:row-start-auto">{hours(thread.workingSeconds)}</span>
-              </div>
-            )
-          })}
-          {leftOpen.turns > 0 && (
-            <div className="mt-1 grid grid-cols-[minmax(0,1fr)_4rem] items-center gap-x-4 gap-y-1 border-t border-dashed pt-2 text-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.6fr)_4rem]">
-              <span className="text-amber-600 dark:text-amber-400">
-                {leftOpen.turns} {leftOpen.turns === 1 ? "turn" : "turns"} left open
-                {leftOpen.closedTogether ? `, ${leftOpen.closedTogether.turns} closed together ${format(new Date(leftOpen.closedTogether.end), "EEE h:mm a")}` : ""}
-              </span>
-              <span className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-auto">
-                {track(leftOpen.spans.map((span) => (
-                  <span key={span.start} className="absolute inset-y-[3px] rounded-[2px] border border-amber-500/70" style={position(span.start, span.end)} />
-                )))}
-              </span>
-              <span className="text-right text-muted-foreground tabular-nums">{hours(leftOpen.seconds)}</span>
-            </div>
-          )}
-          {visible.length > JOURNAL_ROWS_SHOWN && (
-            <Button variant="ghost" size="xs" className="mt-1 text-muted-foreground" onClick={() => setShowAll((value) => !value)}>
-              {showAll ? "Show fewer" : `Show ${visible.length - JOURNAL_ROWS_SHOWN} shorter threads`}
-            </Button>
-          )}
-        </div>
+        <span className="font-semibold tabular-nums">{hours(day.workingSeconds)}</span>
+      </div>
+      {threads.map((thread) => (
+        <DayThread key={thread.key} thread={thread} dayStart={day.dayStart} tag={folderTag(thread.folder)} info={infoFor(thread.key)} folderTitle={folderTitle} />
+      ))}
+      {day.leftOpen.turns > 0 && (
+        <p className="mt-1 flex justify-between gap-3 border-t border-dashed pt-2 text-sm text-warning-foreground">
+          <span>
+            {day.leftOpen.turns} {day.leftOpen.turns === 1 ? "turn" : "turns"} left open, not counted
+          </span>
+          <span className="tabular-nums">{hours(day.leftOpen.seconds)}</span>
+        </p>
       )}
+      {visible.length > JOURNAL_ROWS_SHOWN && (
+        <Button variant="ghost" size="xs" className="mt-1 text-muted-foreground" onClick={() => setShowAll((value) => !value)}>
+          {showAll ? "Show fewer" : `Show ${visible.length - JOURNAL_ROWS_SHOWN} shorter threads`}
+        </Button>
+      )}
+    </section>
+  )
+}
+
+/** The legend's client, opened: its numbers and threads for the range. */
+function ClientDetail({
+  row,
+  project,
+  folderTitle,
+  infoFor,
+}: {
+  row: ProjectLedger
+  project: Project | undefined
+  folderTitle: (folder: string) => string
+  infoFor: (key: string) => ThreadInfo
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const threads = showAll ? row.threads : row.threads.slice(0, THREADS_SHOWN)
+  const folders = new Set(row.threads.map((thread) => thread.folder))
+  const hasUntracked = row.untrackedSeconds >= 60
+  return (
+    <div className="grid gap-4">
+      <FactBox>
+        <Fact label="Working time" value={hours(row.workingSeconds)} />
+        <Fact label="Tracked" value={hours(row.trackedSeconds)} />
+        <Fact label="Not tracked yet" value={hasUntracked ? hours(row.untrackedSeconds) : "All tracked"} />
+        {project && (
+          <Fact
+            label={`At ${formatCurrency(project.rate, project.currency).replace(/\.00$/, "")}/h`}
+            value={formatCurrency(hasUntracked ? (row.billableUntrackedSeconds / 3600) * project.rate : 0, project.currency)}
+          />
+        )}
+        {row.leftOpenTurns > 0 && (
+          <Fact
+            label="Left open, not counted"
+            value={`${hours(row.leftOpenSeconds)} in ${row.leftOpenTurns} ${row.leftOpenTurns === 1 ? "turn" : "turns"}`}
+            tone="warning"
+          />
+        )}
+      </FactBox>
+      <div>
+        <h3 className="mb-1 text-sm text-muted-foreground">Threads</h3>
+        {threads.map((thread) => (
+          <div key={thread.key} className="flex items-center gap-2 border-b border-dashed py-1 text-sm last:border-b-0">
+            <span className="min-w-0 flex-1 truncate" title={`${thread.title || "Untitled thread"}\nT3 thread ${thread.threadId}`}>
+              {thread.title || "Untitled thread"}
+            </span>
+            {folders.size > 1 && <span className="max-w-32 shrink-0 truncate rounded-md bg-muted px-1.5 py-px text-xs text-muted-foreground">{folderTitle(thread.folder)}</span>}
+            <span className="shrink-0 tabular-nums">{hours(thread.workingSeconds)}</span>
+            <OpenInT3 link={infoFor(thread.key).link} />
+          </div>
+        ))}
+        {row.threads.length > THREADS_SHOWN && (
+          <Button variant="ghost" size="xs" className="mt-1 text-muted-foreground" onClick={() => setShowAll((value) => !value)}>
+            {showAll ? "Show fewer" : `Show ${row.threads.length - THREADS_SHOWN} more threads`}
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
 
 export default function AgenticCodingPage() {
   const { data } = useStore()
-  const [agentTime, setAgentTime] = useState<AgentTimeResponse | null>(null)
+  const [agentTime, setAgentTime] = useState<AgentTimeImportData | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [project, setProject] = useState("all")
@@ -400,8 +477,10 @@ export default function AgenticCodingPage() {
   const [phoneProjectOpen, setPhoneProjectOpen] = useState(false)
   const [range, setRange] = useState("7d")
   const [search, setSearch] = useState("")
-  const [openRows, setOpenRows] = useState<Set<string> | null>(null)
-  const [openDays, setOpenDays] = useState<Set<number> | null>(null)
+  const [pickedDay, setPickedDay] = useState<number | null>(null)
+  // A legend entry opened in the dialog: "project:<id>" or "unbilled".
+  const [groupDetail, setGroupDetail] = useState<string | null>(null)
+  const [runningOpen, setRunningOpen] = useState(false)
   const [leftOpenDialog, setLeftOpenDialog] = useState(false)
   // Choices made in this browser in the import flow; "Personal" lives only here.
   const [localMappings] = useState<Record<string, string>>(() => {
@@ -420,10 +499,10 @@ export default function AgenticCodingPage() {
     try {
       const fixture = mobileFixtureRequested() ? "&fixture=mobile" : ""
       const response = await fetch(
-        `/api/agent-time?gapMinutes=0&includeLive=true&withLive=true&t3Only=true&from=${AGENT_TIME_FETCH_FROM}${fixture}`
+        `/api/agent-time?gapMinutes=0&includeLive=true&t3Only=true&from=${AGENT_TIME_FETCH_FROM}${fixture}`
       )
       if (!response.ok) throw new Error("Agent Time is not available")
-      setAgentTime((await response.json()) as AgentTimeResponse)
+      setAgentTime((await response.json()) as AgentTimeImportData)
       setLoadError(null)
       if (showToast) toast.success("Agentic coding activity refreshed")
     } catch (error) {
@@ -440,6 +519,13 @@ export default function AgenticCodingPage() {
     const id = window.setTimeout(() => void loadAgentTime(), 0)
     return () => window.clearTimeout(id)
   }, [loadAgentTime])
+  // Keep "Running now" current while the page is open; skip hidden tabs.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadAgentTime()
+    }, LIVE_REFRESH_MS)
+    return () => window.clearInterval(id)
+  }, [loadAgentTime])
 
   // Counted from when Agent Time was last read, so a tab left open rolls over at the next refresh.
   const fetchedAt = agentTime?.fetchedAt
@@ -454,11 +540,6 @@ export default function AgenticCodingPage() {
 
   const savedChatFactors = data.settings.agentTimeChatBillFactors
   const chatFactors = useMemo(() => savedChatFactors || {}, [savedChatFactors])
-  const liveThreads = useMemo(
-    () => new Set((agentTime?.live ?? []).flatMap((block) =>
-      (block.sourceIntervals ?? []).map((source) => `${source.hostUrl ?? ""}|${source.conversationId || block.id}|${Date.parse(source.start)}`))),
-    [agentTime]
-  )
 
   // Each T3 Code turn, clipped to the range. Fixture data mixes in other sources, which are never billed.
   const allTurns = useMemo<InsightTurn[]>(
@@ -479,14 +560,33 @@ export default function AgenticCodingPage() {
             start,
             end,
             leftOpen: (end - start) / 1000 > LEFT_OPEN_SECONDS,
-            // Only the running turn itself is live, not the thread's earlier turns.
-            live: liveThreads.has(`${threadKey}|${start}`),
+            // Older collectors don't mark single turns, so fall back to the merged block.
+            live: source.live ?? block.live,
             billFactor: normalizeBillFactor(chatFactors[conversationKey(source)] ?? 1),
           }]
         })
       ) ?? [],
-    [agentTime, liveThreads, chatFactors]
+    [agentTime, chatFactors]
   )
+
+  // Where each thread lives in T3 Code, and when it first ran, keyed like the turns.
+  const threadInfo = useMemo(() => {
+    const info = new Map<string, ThreadInfo>()
+    for (const block of agentTime?.intervals ?? []) {
+      for (const source of block.sourceIntervals ?? []) {
+        const threadId = source.conversationId || block.id
+        const key = `${source.hostUrl ?? ""}|${threadId}`
+        const start = Date.parse(source.start)
+        const current = info.get(key)
+        info.set(key, {
+          startedAt: Math.min(current?.startedAt ?? Infinity, Number.isFinite(start) ? start : Infinity),
+          link: current?.link ?? (source.t3EnvironmentId && source.conversationId ? t3ThreadLink(source.t3EnvironmentId, source.conversationId) : undefined),
+        })
+      }
+    }
+    return info
+  }, [agentTime])
+  const infoFor = useCallback((key: string): ThreadInfo => threadInfo.get(key) ?? { startedAt: Infinity }, [threadInfo])
 
   const turns = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -536,8 +636,30 @@ export default function AgenticCodingPage() {
   const leftOpenSeconds =
     ledger.reduce((total, row) => total + row.leftOpenSeconds, 0) +
     unbilled.reduce((total, folder) => total + folder.leftOpenSeconds, 0)
-  const runningThreads = useMemo(() => new Set(turns.filter((turn) => turn.live).map((turn) => turn.threadKey)).size, [turns])
-  const scaleSeconds = Math.max(1, ...ledger.map((row) => row.workingSeconds + row.leftOpenSeconds))
+  // Threads with a turn running right now, newest turn first.
+  const running = useMemo(() => {
+    const byThread = new Map<string, InsightTurn>()
+    for (const turn of turns) {
+      if (!turn.live) continue
+      const current = byThread.get(turn.threadKey)
+      if (!current || turn.start < current.start) byThread.set(turn.threadKey, turn)
+    }
+    return [...byThread.values()].sort((a, b) => b.start - a.start)
+  }, [turns])
+  const workingSeconds = journal.reduce((total, day) => total + day.workingSeconds, 0)
+  const unbilledSeconds = unbilled.reduce((total, folder) => total + folder.workingSeconds, 0)
+  // What hasn't been tracked yet, priced at each project's rate and summed per currency.
+  const untracked = useMemo(() => {
+    let seconds = 0
+    const amounts = new Map<Project["currency"], number>()
+    for (const row of ledger) {
+      if (row.untrackedSeconds < 60) continue
+      seconds += row.untrackedSeconds
+      const p = projectsById.get(row.projectId)
+      if (p) amounts.set(p.currency, (amounts.get(p.currency) ?? 0) + (row.billableUntrackedSeconds / 3600) * p.rate)
+    }
+    return { seconds, money: [...amounts].map(([currency, amount]) => formatCurrency(amount, currency)).join(" + ") }
+  }, [ledger, projectsById])
 
   const clientLabel = useCallback(
     (projectId: string) => {
@@ -546,6 +668,37 @@ export default function AgenticCodingPage() {
     },
     [projectsById, clientsById]
   )
+  // Ordered by client name so a client keeps its color when the range or filters change.
+  const groupOrder = useMemo(
+    () => [
+      ...ledger
+        .map((row) => row.projectId)
+        .sort((a, b) => clientLabel(a).localeCompare(clientLabel(b)) || a.localeCompare(b))
+        .map((projectId) => `project:${projectId}`),
+      "unbilled",
+    ],
+    [ledger, clientLabel]
+  )
+  const colorFor = useCallback(
+    (key: string) => (key === "unbilled" ? UNBILLED_COLOR : CLIENT_COLORS[groupOrder.indexOf(key) % CLIENT_COLORS.length]),
+    [groupOrder]
+  )
+  // Every day in the range gets a bar, including days without activity.
+  const chartDays = useMemo<ChartDay[]>(() => {
+    const byDay = new Map(journal.map((day) => [day.dayStart, day]))
+    const last = fetchedAt ? new Date(fetchedAt) : new Date()
+    last.setHours(0, 0, 0, 0)
+    const days: ChartDay[] = []
+    for (const cursor = new Date(rangeStart); cursor.getTime() <= last.getTime(); cursor.setDate(cursor.getDate() + 1)) {
+      days.push({ dayStart: cursor.getTime(), day: byDay.get(cursor.getTime()) })
+    }
+    // Long ranges start at the first day with activity rather than a run of empty bars.
+    const first = days.length > 14 ? days.findIndex(({ day }) => day) : 0
+    return first > 0 ? days.slice(first) : days
+  }, [journal, rangeStart, fetchedAt])
+  // The picked day while it's still in view, otherwise the newest day with activity.
+  const selectedDay = journal.find((day) => day.dayStart === pickedDay) ?? journal[0]
+
   const groupLabel = useCallback(
     (key: string) => (key === "unbilled" ? "Not billed" : clientLabel(key.slice("project:".length))),
     [clientLabel]
@@ -571,17 +724,11 @@ export default function AgenticCodingPage() {
         ? "empty"
         : "filtered"
 
-  // Until someone toggles them, the top client and the two newest days start open.
-  const rowsOpen = openRows ?? new Set(ledger.slice(0, 1).map((row) => row.projectId))
-  const daysOpen = openDays ?? new Set(journal.slice(0, 2).map((day) => day.dayStart))
-  const toggle = <T,>(current: Set<T>, value: T) => {
-    const next = new Set(current)
-    if (next.has(value)) next.delete(value)
-    else next.add(value)
-    return next
-  }
+  const detailRow = ledger.find((row) => `project:${row.projectId}` === groupDetail)
+  const detailProject = detailRow ? projectsById.get(detailRow.projectId) : undefined
+  const rangeLabel = range === "all" ? "all activity" : RANGE_LABELS[range]
 
-  // The range and project filters render in the desktop filter card and, on phones, in the More sheet.
+  // The range and project filters render in the desktop toolbar and, on phones, in the More sheet.
   const rangeSelect = (id: string, testId: string) => (
     <Select value={range} onValueChange={setRange}>
       <SelectTrigger id={id} data-testid={testId} className="w-full">
@@ -668,29 +815,19 @@ export default function AgenticCodingPage() {
         }
       />
 
-      <Card className="mb-6 rounded-lg max-sm:hidden">
-        <CardContent className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[180px_minmax(0,240px)_minmax(0,1fr)] lg:items-end">
-          <div className="grid min-w-0 gap-2">
-            <Label htmlFor="agent-range">Date range</Label>
-            {rangeSelect("agent-range", "agentic-range")}
-          </div>
-          <div className="grid min-w-0 gap-2">
-            <Label htmlFor="agent-project">T3 project</Label>
-            {projectPicker("agent-project", "agentic-project-picker", projectOpen, setProjectOpen)}
-          </div>
-          <div className="grid min-w-0 gap-2 sm:col-span-2 lg:col-span-1">
-            <Label htmlFor="agent-search">Search threads</Label>
-            <Input
-              id="agent-search"
-              data-testid="agentic-search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Thread title, thread ID, project…"
-              className="min-w-0"
-            />
-          </div>
-        </CardContent>
-      </Card>
+      <div className="mb-5 flex min-w-0 items-center gap-2 max-sm:hidden">
+        <div className="w-40 shrink-0">{rangeSelect("agent-range", "agentic-range")}</div>
+        <div className="w-52 min-w-0 shrink">{projectPicker("agent-project", "agentic-project-picker", projectOpen, setProjectOpen)}</div>
+        <Input
+          id="agent-search"
+          aria-label="Search threads"
+          data-testid="agentic-search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search threads"
+          className="min-w-0 max-w-72 flex-1"
+        />
+      </div>
 
       {loadError && (
         <div
@@ -724,100 +861,158 @@ export default function AgenticCodingPage() {
           onRetry={() => void loadAgentTime(true)}
         />
       ) : (
-        <div className="grid min-w-0 gap-6">
-          <div className="grid gap-3">
-            {runningThreads > 0 && (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="agentic-running">
-                <LiveDot />
-                {runningThreads} {runningThreads === 1 ? "thread" : "threads"} running now
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
+          {leftOpenTurns.length > 0 && (
+            <div className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm" data-testid="agentic-left-open">
+              <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <p className="min-w-0 flex-1">
+                <span className="font-medium">
+                  {leftOpenTurns.length} {leftOpenTurns.length === 1 ? "turn" : "turns"} stayed open over {LEFT_OPEN_HOURS} hours straight, {hours(leftOpenSeconds)} in all.
+                </span>{" "}
+                <span className="text-muted-foreground">They aren’t counted as working time. The import still offers them, so skip them there. Tracked and invoiced entries aren’t changed.</span>
               </p>
-            )}
-            {leftOpenTurns.length > 0 && (
-              <div className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm" data-testid="agentic-left-open">
-                <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                <p className="min-w-0 flex-1">
-                  <span className="font-medium">
-                    {leftOpenTurns.length} {leftOpenTurns.length === 1 ? "turn" : "turns"} stayed open over {LEFT_OPEN_HOURS} hours straight, {hours(leftOpenSeconds)} in all.
-                  </span>{" "}
-                  <span className="text-muted-foreground">They’re hatched below and not counted as working time. The import still offers them, so skip them there. Tracked and invoiced entries aren’t changed.</span>
-                </p>
-                <Button size="sm" variant="outline" onClick={() => setLeftOpenDialog(true)}>
-                  Show turns
-                </Button>
-              </div>
-            )}
+              <Button size="sm" variant="outline" onClick={() => setLeftOpenDialog(true)}>
+                Show turns
+              </Button>
+            </div>
+          )}
 
-            {ledger.length > 0 && (
-              <div className="rounded-lg border bg-card" data-testid="agentic-ledger">
-                <div className="hidden grid-cols-[1rem_minmax(0,1.2fr)_minmax(0,2fr)_6rem_7rem_7rem] gap-x-3 border-b px-4 py-2 text-xs text-muted-foreground md:grid">
-                  <span />
-                  <span>Client</span>
-                  <span>Working time, {range === "all" ? "all activity" : RANGE_LABELS[range]}</span>
-                  <span className="text-right">Tracked</span>
-                  <span className="text-right">Not tracked yet</span>
-                  <span className="text-right">At rate</span>
-                </div>
-                {ledger.map((row) => {
-                  const p = projectsById.get(row.projectId)
-                  return (
-                    <LedgerRow
-                      key={row.projectId}
-                      row={row}
-                      project={p}
-                      client={p ? clientsById.get(p.clientId) : undefined}
-                      scaleSeconds={scaleSeconds}
-                      folderTitle={folderTitle}
-                      open={rowsOpen.has(row.projectId)}
-                      onToggle={() => setOpenRows(toggle(rowsOpen, row.projectId))}
-                    />
-                  )
-                })}
-              </div>
-            )}
-
-            {unbilled.length > 0 && (
-              <div className="grid gap-2" data-testid="agentic-unbilled">
-                <div className="flex items-baseline justify-between gap-3 text-sm text-muted-foreground">
-                  <span>Not billed</span>
-                  <Link href="/tracker?importAgentTime=1" className="text-xs underline-offset-2 hover:text-foreground hover:underline">
-                    Link folders to projects in the import
-                  </Link>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {unbilled.map((folder) => (
-                    <div key={folder.folder} className="flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 text-sm">
-                      <span className="min-w-0">
-                        <span className="block truncate" title={folder.folder}>{folderTitle(folder.folder)}</span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {folder.billing.kind === "personal" ? "Personal" : "Not linked"}
-                          {folder.leftOpenTurns > 0
-                            ? `, + ${hours(folder.leftOpenSeconds)} left open`
-                            : `, ${folder.threadCount} ${folder.threadCount === 1 ? "thread" : "threads"}`}
-                        </span>
-                      </span>
-                      <span className="shrink-0 tabular-nums">{hours(folder.workingSeconds)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+          <div className="flex flex-wrap items-end gap-x-8 gap-y-2" data-testid="agentic-summary">
+            <div>
+              <p className="text-xs text-muted-foreground">Not tracked yet</p>
+              <p className="text-2xl font-semibold tabular-nums">
+                {untracked.seconds < 60 ? (
+                  "All tracked"
+                ) : untracked.money ? (
+                  <>
+                    {untracked.money} <span className="text-sm font-normal text-muted-foreground">· {hours(untracked.seconds)}</span>
+                  </>
+                ) : (
+                  hours(untracked.seconds)
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Agent time, {rangeLabel}</p>
+              <p className="text-base leading-8 tabular-nums">{hours(workingSeconds)}</p>
+            </div>
+            <button
+              type="button"
+              disabled={running.length === 0}
+              onClick={() => setRunningOpen(true)}
+              className="-mx-2 cursor-pointer rounded-md px-2 text-left enabled:hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default"
+              data-testid="agentic-running"
+            >
+              <span className="block text-xs text-muted-foreground">Running now</span>
+              <span className="flex items-center gap-1 text-base leading-8 tabular-nums">
+                {running.length === 0 ? "Nothing" : `${running.length} ${running.length === 1 ? "thread" : "threads"}`}
+                {running.length > 0 && <ChevronRight aria-hidden className="size-4 text-muted-foreground" />}
+              </span>
+            </button>
           </div>
 
-          <section className="grid gap-2" aria-label="Work by day" data-testid="agentic-journal">
-            <h2 className="text-sm text-muted-foreground">By day</h2>
-            {journal.map((day) => (
-              <JournalDayCard
-                key={day.dayStart}
-                day={day}
-                open={daysOpen.has(day.dayStart)}
-                onToggle={() => setOpenDays(toggle(daysOpen, day.dayStart))}
-                groupLabel={groupLabel}
-                folderTag={folderTag}
-              />
-            ))}
-          </section>
+          <div className="min-w-0 rounded-lg border bg-card" data-testid="agentic-chart">
+            <DayChart
+              days={chartDays}
+              selected={selectedDay?.dayStart ?? null}
+              onSelect={setPickedDay}
+              groupOrder={groupOrder}
+              colorFor={colorFor}
+            />
+            <div className="flex flex-wrap gap-1 border-t px-1.5 py-1.5 sm:px-2.5">
+              {[
+                ...ledger.map((row) => {
+                  const p = projectsById.get(row.projectId)
+                  const owed = row.untrackedSeconds >= 60 && p ? formatCurrency((row.billableUntrackedSeconds / 3600) * p.rate, p.currency) : null
+                  return { key: `project:${row.projectId}`, label: clientLabel(row.projectId), note: owed ? `${owed} not tracked` : "all tracked" }
+                }),
+                ...(unbilled.length > 0 ? [{ key: "unbilled", label: "Not billed", note: hours(unbilledSeconds) }] : []),
+              ].map((entry) => (
+                <button
+                  key={entry.key}
+                  type="button"
+                  onClick={() => setGroupDetail(entry.key)}
+                  className="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-xs hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none max-sm:min-h-11"
+                  data-testid="agentic-legend"
+                >
+                  <span aria-hidden className="size-2 shrink-0 rounded-[2px]" style={{ background: colorFor(entry.key) }} />
+                  <span className="font-medium">{entry.label}</span>
+                  <span className="text-muted-foreground tabular-nums">{entry.note}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {selectedDay && <DayDetail key={selectedDay.dayStart} day={selectedDay} folderTag={folderTag} folderTitle={folderTitle} infoFor={infoFor} />}
         </div>
       )}
+
+      <Dialog open={runningOpen && running.length > 0} onOpenChange={setRunningOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Running now</DialogTitle>
+            <DialogDescription>Threads with a turn in progress, newest first. Updates every minute.</DialogDescription>
+          </DialogHeader>
+          <div>
+            {running.map((turn) => {
+              const tag = folderTag(turn.folder)
+              const info = infoFor(turn.threadKey)
+              return (
+                <div key={turn.threadKey} className="flex items-center gap-2 border-b border-dashed py-1.5 text-sm last:border-b-0">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{turn.title || "Untitled thread"}</span>
+                    <span className="block truncate text-xs text-muted-foreground tabular-nums">
+                      Active since {format(new Date(turn.start), "h:mm a")}
+                      {Number.isFinite(info.startedAt) ? `, chat started ${startedLabel(info.startedAt)}` : ""}
+                    </span>
+                  </span>
+                  <span className={`max-w-28 shrink-0 truncate rounded-md px-1.5 py-px text-xs ${tag.billed ? "bg-primary/15 text-foreground" : "bg-muted text-muted-foreground"}`}>
+                    {tag.label}
+                  </span>
+                  <OpenInT3 link={info.link} />
+                </div>
+              )
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={groupDetail !== null} onOpenChange={(open) => !open && setGroupDetail(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{groupDetail ? groupLabel(groupDetail) : ""}</DialogTitle>
+            <DialogDescription>
+              {detailRow
+                ? `${detailProject ? `${detailProject.name}, ` : ""}${rangeLabel}`
+                : `Folders not linked to a client project, ${rangeLabel}. They aren’t in any client’s totals.`}
+            </DialogDescription>
+          </DialogHeader>
+          {detailRow ? (
+            <ClientDetail key={detailRow.projectId} row={detailRow} project={detailProject} folderTitle={folderTitle} infoFor={infoFor} />
+          ) : groupDetail === "unbilled" ? (
+            <div>
+              {unbilled.map((folder) => (
+                <div key={folder.folder} className="flex items-center gap-3 border-b border-dashed py-2 text-sm last:border-b-0">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate" title={folder.folder}>{folderTitle(folder.folder)}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {folder.billing.kind === "personal" ? "Personal" : "Not linked"}, {folder.threadCount} {folder.threadCount === 1 ? "thread" : "threads"}
+                      {folder.leftOpenTurns > 0 ? `, + ${hours(folder.leftOpenSeconds)} left open` : ""}
+                    </span>
+                  </span>
+                  <span className="shrink-0 tabular-nums">{hours(folder.workingSeconds)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <Button asChild size="sm" variant={groupDetail === "unbilled" ? "outline" : "default"} className="justify-self-start">
+            <Link href="/tracker?importAgentTime=1">
+              <Download data-icon="inline-start" />
+              {groupDetail === "unbilled" ? "Link folders to projects in the import" : "Review & import time"}
+            </Link>
+          </Button>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={leftOpenDialog} onOpenChange={setLeftOpenDialog}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
