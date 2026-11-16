@@ -19,6 +19,8 @@ type AgentTimePayload = {
   timezone: string
   projects: string[]
   t3Projects: T3Project[]
+  /** The machine's T3 Code environment, empty when it doesn't report one. */
+  t3EnvironmentId?: string
   intervals: AgentTimeInterval[]
 }
 
@@ -36,6 +38,7 @@ type AgentTimeInterval = {
   conversation_summary: string
   hostUrl?: string
   machineLabel?: string
+  t3EnvironmentId?: string
 }
 
 export type AgentTimeSourceInterval = {
@@ -51,6 +54,10 @@ export type AgentTimeSourceInterval = {
   conversationSummary?: string
   hostUrl?: string
   machineLabel?: string
+  /** True while this turn is still running. */
+  live?: boolean
+  /** The T3 Code environment the thread lives in, for linking to it. */
+  t3EnvironmentId?: string
 }
 
 export type AgentTimeBlock = {
@@ -125,6 +132,7 @@ function payloadFromUnknown(value: unknown): AgentTimePayload {
           ? [{ name: project.name, title: typeof project.title === "string" ? project.title : "" }]
           : [])
       : [],
+    t3EnvironmentId: typeof value.t3_environment_id === "string" ? value.t3_environment_id.trim() : "",
     intervals: value.intervals.filter(isValidInterval).map((interval) => ({
       ...interval,
       source: interval.source || interval.agent,
@@ -154,7 +162,7 @@ export async function fetchAgentTime(dbHosts: string[] = [], labels: Record<stri
         })
         if (response.ok) {
           const payload = payloadFromUnknown(await response.json())
-          return { ...payload, intervals: payload.intervals.map((interval) => ({ ...interval, hostUrl: url, machineLabel: labels[url] || new URL(url).hostname })) }
+          return { ...payload, intervals: payload.intervals.map((interval) => ({ ...interval, hostUrl: url, machineLabel: labels[url] || new URL(url).hostname, t3EnvironmentId: payload.t3EnvironmentId || undefined })) }
         }
       } catch {
         // Ignore errors for individual URLs to remain resilient if one VM goes offline
@@ -335,6 +343,8 @@ export function toImportData(
           conversationSummary: interval.conversation_summary,
           hostUrl: interval.hostUrl,
           machineLabel: interval.machineLabel,
+          live: interval.live,
+          t3EnvironmentId: interval.t3EnvironmentId,
         })),
         live: block.intervals.some((interval) => interval.live),
       }))
