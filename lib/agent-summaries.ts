@@ -1,10 +1,10 @@
 import "server-only"
 import Anthropic from "@anthropic-ai/sdk"
-import { spawn } from "node:child_process"
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises"
-import { homedir, tmpdir } from "node:os"
+import { homedir } from "node:os"
 import path from "node:path"
 import { createSummaryJobs } from "./summary-jobs"
+import { isMissingCommand, run as runCli } from "./ai-text"
 import { readTranscript } from "@/lib/agent-transcripts"
 
 export type SummaryProvider = "codex" | "claude" | "api"
@@ -52,23 +52,6 @@ Editorial rules:
 - Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
 - If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.`
 
-/** Runs a CLI with stdin closed; Codex otherwise waits for more input from the pipe. */
-function run(command: string, args: string[]) {
-  return new Promise<{ stdout: string }>((resolve, reject) => {
-    const child = spawn(command, args, { cwd: tmpdir(), stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1" } })
-    let stdout = ""
-    let stderr = ""
-    const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error(`${command} timed out`)) }, CLI_TIMEOUT_MS)
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString() })
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString() })
-    child.on("error", (error) => { clearTimeout(timer); reject(error) })
-    child.on("close", (code) => {
-      clearTimeout(timer)
-      if (code === 0) resolve({ stdout })
-      else reject(new Error(`${command} exited with ${code}: ${stderr.trim().slice(-300)}`))
-    })
-  })
-}
 let cache: Record<string, string> | null = null
 let cacheWrite: Promise<void> = Promise.resolve()
 let queue: Promise<unknown> = Promise.resolve()
@@ -116,12 +99,8 @@ function cleanTitle(text: string) {
     .slice(0, 80) ?? ""
 }
 
-function isMissingCommand(error: unknown) {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT"
-}
-
 async function viaCodex(excerpt: string) {
-  const { stdout } = await run("codex", [
+  const { stdout } = await runCli("codex", [
     "exec",
     "--model", CODEX_MODEL,
     "-c", `model_reasoning_effort=${JSON.stringify(CODEX_EFFORT)}`,
@@ -132,18 +111,18 @@ async function viaCodex(excerpt: string) {
     "--color", "never",
     "-o", "-",
     `${INSTRUCTIONS} The chat follows.\n\n${excerpt}`,
-  ])
+  ], CLI_TIMEOUT_MS)
   return cleanTitle(stdout)
 }
 
 async function viaClaude(excerpt: string) {
-  const { stdout } = await run("claude", [
+  const { stdout } = await runCli("claude", [
     "-p",
     "--model", CLAUDE_CLI_MODEL,
     "--output-format", "text",
     "--no-session-persistence",
     `${INSTRUCTIONS} The chat follows.\n\n${excerpt}`,
-  ])
+  ], CLI_TIMEOUT_MS)
   return cleanTitle(stdout)
 }
 

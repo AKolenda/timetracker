@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
-import { normalizeBillFactor } from "@/lib/billing"
+import { groupTimeLines, timeLineItem } from "@/lib/invoice-lines"
 import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
 import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
 import {
@@ -152,23 +152,19 @@ export async function POST(request: Request) {
       amount: number
       type: "time" | "expense"
       source_id: string
+      source_ids?: string[] | null
     }> = []
 
-    for (const e of timeEntries ?? []) {
-      const created = new Date(e.start_time as string).getTime()
-      if (sinceMs && created <= sinceMs) continue
-      const proj = projectMap.get(e.project_id as string)
-      if (!proj) continue
-      const hours = (Number(e.duration) * normalizeBillFactor(e.bill_factor ?? 1)) / 3600
-      const amount = parseFloat((hours * proj.rate).toFixed(2))
-      items.push({
-        description: `${proj.name}: ${e.description || "Time entry"} (${(e.date as string).slice(5)})`,
-        quantity: parseFloat(hours.toFixed(2)),
-        unit_price: proj.rate,
-        amount,
-        type: "time",
-        source_id: e.id as string,
-      })
+    const due = (timeEntries ?? [])
+      .filter((e) => !sinceMs || new Date(e.start_time as string).getTime() > sinceMs)
+      .filter((e) => projectMap.has(e.project_id as string))
+      .map((e) => ({ id: e.id as string, projectId: e.project_id as string, description: (e.description as string) || "", date: e.date as string, startTime: e.start_time as string, duration: Number(e.duration), billFactor: e.bill_factor == null ? 1 : Number(e.bill_factor), invoiceLine: (e.invoice_line as string | null) ?? null }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
+    // Entries that share an invoice line label bill as one line, as in the app.
+    for (const line of groupTimeLines(due)) {
+      const proj = projectMap.get(line.entries[0].projectId)!
+      const item = timeLineItem(line, proj.name, proj.rate)
+      items.push({ description: item.description, quantity: item.quantity, unit_price: item.unitPrice, amount: item.amount, type: "time", source_id: item.sourceId!, source_ids: item.sourceIds ?? null })
     }
 
     for (const ex of expenses ?? []) {

@@ -74,7 +74,8 @@ import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import { InvoiceEstimateRow, InvoiceEstimatePreview } from "@/components/invoice-estimates"
 import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-options"
-import { buildInvoiceEstimates, invoicedSourceIds } from "@/lib/invoice-estimates"
+import { buildInvoiceEstimates, invoicedSourceIds, type InvoiceEstimate } from "@/lib/invoice-estimates"
+import { groupTimeLines, timeLineItem } from "@/lib/invoice-lines"
 import { billedSeconds } from "@/lib/billing"
 import { PageHeader } from "@/components/page-header"
 import { HeaderSearch } from "@/components/header-search"
@@ -394,6 +395,15 @@ export default function InvoicesPage() {
     setCreateOpen(true)
   }
 
+  /** From an invoice preview: that client, with everything the preview showed already ticked. */
+  function openCreateFor(estimate: InvoiceEstimate) {
+    openCreate()
+    setSelectedClientId(estimate.clientId)
+    setSelectedEntries(new Set(estimate.lines.flatMap((line) => line.entries.map((entry) => entry.id))))
+    setSelectedExpenses(new Set(estimate.lines.flatMap((line) => (line.expenseId ? [line.expenseId] : []))))
+    setEstimateId(null)
+  }
+
   function openEdit(invoice: Invoice) {
     const currentDueDays = differenceInCalendarDays(
       parseISO(invoice.dueDate),
@@ -503,17 +513,10 @@ export default function InvoicesPage() {
 
   const lineItemsPreview = useMemo(() => {
     const items: Omit<InvoiceLineItem, "id" | "invoiceId">[] = []
-    for (const entry of unbilledEntries) {
-      if (!selectedEntries.has(entry.id)) continue
-      const hours = billedSeconds(entry) / 3600
-      items.push({
-        description: `${entry.projectName}: ${entry.description || "Time entry"} (${format(new Date(entry.date), "MMM d")})`,
-        quantity: parseFloat(hours.toFixed(2)),
-        unitPrice: entry.rate,
-        amount: parseFloat((hours * entry.rate).toFixed(2)),
-        type: "time",
-        sourceId: entry.id,
-      })
+    // Entries that share an invoice line label bill as one line; oldest work first.
+    const picked = unbilledEntries.filter((entry) => selectedEntries.has(entry.id)).sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
+    for (const line of groupTimeLines(picked)) {
+      items.push(timeLineItem(line, line.entries[0].projectName, line.entries[0].rate))
     }
     for (const expense of unbilledExpenses) {
       if (!selectedExpenses.has(expense.id)) continue
@@ -1017,7 +1020,7 @@ export default function InvoicesPage() {
 
         </CardContent>
       </Card>
-      <InvoiceEstimatePreview selected={invoiceEstimates.find((estimate) => estimate.id === estimateId)} onClose={() => setEstimateId(null)} />
+      <InvoiceEstimatePreview selected={invoiceEstimates.find((estimate) => estimate.id === estimateId)} onClose={() => setEstimateId(null)} onCreateInvoice={openCreateFor} />
 
       {/* Create Invoice Dialog — full-width responsive */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

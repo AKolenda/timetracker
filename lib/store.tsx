@@ -74,6 +74,9 @@ interface StoreContext {
   updateTimeEntry: (id: string, updates: Partial<TimeEntry>) => Promise<void>
   syncAgentTimeTitles: (entries: Pick<TimeEntry, "id" | "description" | "agentTimeTitleStatus">[]) => void
   deleteTimeEntry: (id: string) => Promise<void>
+  /** One request for many entries, such as grouping them onto one invoice line. */
+  updateTimeEntries: (ids: string[], updates: Partial<TimeEntry>) => Promise<void>
+  deleteTimeEntries: (ids: string[]) => Promise<void>
 
   addExpense: (expense: Omit<Expense, "id">) => Promise<Expense>
   updateExpense: (id: string, updates: Partial<Expense>) => Promise<void>
@@ -344,6 +347,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  const updateTimeEntries = useCallback(async (ids: string[], updates: Partial<TimeEntry>) => {
+    if (!ids.length) return
+    if (updates.description !== undefined) updates = { ...updates, agentTimeTitleStatus: null }
+    if (!mobileTestFixtureRequested()) await getDataProvider().updateTimeEntries(ids, updates)
+    const picked = new Set(ids)
+    setData((d) => ({ ...d, timeEntries: d.timeEntries.map((t) => (picked.has(t.id) ? { ...t, ...updates } : t)) }))
+  }, [])
+
+  const deleteTimeEntries = useCallback(async (ids: string[]) => {
+    if (!ids.length) return
+    if (!mobileTestFixtureRequested()) await getDataProvider().deleteTimeEntries(ids)
+    const picked = new Set(ids)
+    setData((d) => ({ ...d, timeEntries: d.timeEntries.filter((t) => !picked.has(t.id)) }))
+  }, [])
+
   // --- Expenses ---
   const addExpense = useCallback(
     async (expense: Omit<Expense, "id">) => {
@@ -577,6 +595,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         updateTimeEntry,
         syncAgentTimeTitles,
         deleteTimeEntry,
+        updateTimeEntries,
+        deleteTimeEntries,
         addExpense,
         updateExpense,
         deleteExpense,

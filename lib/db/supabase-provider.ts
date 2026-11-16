@@ -62,6 +62,7 @@ export function rowToTimeEntry(row: Record<string, unknown>): TimeEntry {
     billable: row.billable as boolean,
     billFactor: row.bill_factor == null ? 1 : normalizeBillFactor(Number(row.bill_factor)),
     date: row.date as string,
+    invoiceLine: typeof row.invoice_line === "string" && row.invoice_line.trim() ? row.invoice_line : null,
   }
 }
 
@@ -151,7 +152,25 @@ function rowToLineItem(row: Record<string, unknown>): InvoiceLineItem {
     amount: Number(row.amount),
     type: row.type as InvoiceLineItem["type"],
     sourceId: row.source_id as string | null,
+    sourceIds: Array.isArray(row.source_ids) ? (row.source_ids as string[]) : null,
   }
+}
+
+function timeEntryRow(updates: Partial<TimeEntry>) {
+  const row: Record<string, unknown> = {}
+  if (updates.agentTimeTitleStatus !== undefined) row.agent_time_title_status = updates.agentTimeTitleStatus
+  if (updates.description !== undefined || updates.startTime !== undefined || updates.endTime !== undefined) row.agent_time_title_status = null
+  if (updates.agentTimeSources !== undefined) row.agent_time_sources = updates.agentTimeSources
+  if (updates.description !== undefined) row.description = updates.description
+  if (updates.projectId !== undefined) row.project_id = updates.projectId
+  if (updates.startTime !== undefined) row.start_time = updates.startTime
+  if (updates.endTime !== undefined) row.end_time = updates.endTime
+  if (updates.duration !== undefined) row.duration = updates.duration
+  if (updates.billable !== undefined) row.billable = updates.billable
+  if (updates.billFactor !== undefined) row.bill_factor = normalizeBillFactor(updates.billFactor)
+  if (updates.date !== undefined) row.date = updates.date
+  if (updates.invoiceLine !== undefined) row.invoice_line = updates.invoiceLine?.trim() || null
+  return row
 }
 
 export class SupabaseProvider implements DataProvider {
@@ -313,6 +332,7 @@ export class SupabaseProvider implements DataProvider {
         date: entry.date,
         agent_time_sources: entry.agentTimeSources ?? [],
         agent_time_title_status: entry.agentTimeTitleStatus ?? null,
+        invoice_line: entry.invoiceLine?.trim() || null,
       })
       .select()
       .single()
@@ -324,27 +344,27 @@ export class SupabaseProvider implements DataProvider {
     id: string,
     updates: Partial<TimeEntry>
   ): Promise<void> {
-    const row: Record<string, unknown> = {}
-    if (updates.agentTimeTitleStatus !== undefined) row.agent_time_title_status = updates.agentTimeTitleStatus
-    if (updates.description !== undefined || updates.startTime !== undefined || updates.endTime !== undefined) row.agent_time_title_status = null
-    if (updates.agentTimeSources !== undefined) row.agent_time_sources = updates.agentTimeSources
-    if (updates.description !== undefined) row.description = updates.description
-    if (updates.projectId !== undefined) row.project_id = updates.projectId
-    if (updates.startTime !== undefined) row.start_time = updates.startTime
-    if (updates.endTime !== undefined) row.end_time = updates.endTime
-    if (updates.duration !== undefined) row.duration = updates.duration
-    if (updates.billable !== undefined) row.billable = updates.billable
-    if (updates.billFactor !== undefined) row.bill_factor = normalizeBillFactor(updates.billFactor)
-    if (updates.date !== undefined) row.date = updates.date
     const { error } = await this.db
       .from("time_entries")
-      .update(row)
+      .update(timeEntryRow(updates))
       .eq("id", id)
     if (error) throw error
   }
 
   async deleteTimeEntry(id: string): Promise<void> {
     const { error } = await this.db.from("time_entries").delete().eq("id", id)
+    if (error) throw error
+  }
+
+  async updateTimeEntries(ids: string[], updates: Partial<TimeEntry>): Promise<void> {
+    if (!ids.length) return
+    const { error } = await this.db.from("time_entries").update(timeEntryRow(updates)).in("id", ids)
+    if (error) throw error
+  }
+
+  async deleteTimeEntries(ids: string[]): Promise<void> {
+    if (!ids.length) return
+    const { error } = await this.db.from("time_entries").delete().in("id", ids)
     if (error) throw error
   }
 
@@ -556,6 +576,7 @@ export class SupabaseProvider implements DataProvider {
       amount: item.amount,
       type: item.type,
       source_id: item.sourceId,
+      ...(item.sourceIds?.length ? { source_ids: item.sourceIds } : {}),
     }))
 
     let items: InvoiceLineItem[] = []
