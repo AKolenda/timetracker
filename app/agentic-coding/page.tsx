@@ -11,6 +11,7 @@ import {
   Download,
   ExternalLink,
   LoaderCircle,
+  MonitorOff,
   RefreshCw,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -78,6 +79,9 @@ const CLIENT_COLORS = ["var(--chart-1)", "var(--chart-3)", "var(--chart-4)", "va
 const UNBILLED_COLOR = "var(--chart-5)"
 const DAY_MS = 24 * 60 * 60 * 1000
 const LIVE_REFRESH_MS = 60_000
+
+const listJoin = (names: string[]) =>
+  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
 
 const RANGE_LABELS: Record<string, string> = {
   today: "today",
@@ -828,6 +832,15 @@ export default function AgenticCodingPage() {
           className="min-w-0 max-w-72 flex-1"
         />
       </div>
+
+      {agentTime && !loadError && (agentTime.offline?.length ?? 0) > 0 && (
+        <p className="mb-4 flex items-center gap-2 text-sm text-muted-foreground" data-testid="agentic-offline">
+          <MonitorOff aria-hidden className="size-4 shrink-0" />
+          <span className="min-w-0">
+            {listJoin(agentTime.offline ?? [])} {agentTime.offline?.length === 1 ? "isn’t" : "aren’t"} answering, so {agentTime.offline?.length === 1 ? "its" : "their"} threads are missing until {agentTime.offline?.length === 1 ? "it’s" : "they’re"} back.
+          </span>
+        </p>
+      )}
 
       {loadError && (
         <div
