@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   accountLine: { flexDirection: "row", marginTop: 2 },
-  accountLabel: { width: 50, fontSize: 9, color: COLORS.gray500 },
+  accountLabel: { width: 92, paddingRight: 8, fontSize: 9, color: COLORS.gray500 },
   accountValue: { flex: 1, fontSize: 9 },
   accountNotes: { marginTop: 5, fontSize: 8, color: COLORS.gray500 },
 })
@@ -207,7 +207,7 @@ export function InvoicePdfDocument({
         </View>
 
         {doc.notes ? (
-          <View style={styles.box} wrap={false}>
+          <View style={styles.box}>
             <Text style={styles.notes}>{doc.notes}</Text>
           </View>
         ) : null}

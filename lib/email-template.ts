@@ -102,8 +102,22 @@ function boxRow(cells: string[]): string {
     </table>`
 }
 
+function isLightColor(color: string): boolean {
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim())?.[1]
+  if (!hex) return false
+  const full = hex.length === 3 ? hex.replace(/./g, "$&$&") : hex
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16))
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150
+}
+
 export function buildEmailHtml(data: EmailInvoiceData): string {
-  const accent = data.template.accentColor || "#111827"
+  const accent = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(data.template.accentColor?.trim() ?? "")
+    ? data.template.accentColor.trim()
+    : "#111827"
+  // The amount sits on the accent colour, so a light accent gets dark text.
+  const light = isLightColor(accent)
+  const amountColor = light ? "#000000" : "#ffffff"
+  const amountNoteColor = light ? "#374151" : "#d1d5db"
   const dueLabel =
     data.dueDate === data.issueDate ? "Due on receipt" : data.dueDate
   const vars = {
@@ -202,8 +216,8 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
         </div>
 
         <div style="background:${accent};border-radius:8px;padding:24px 16px;text-align:center;margin-top:2px;">
-          <p style="margin:0;font-size:32px;font-weight:700;color:#ffffff;${MONO}">${escapeHtml(doc.amount)}</p>
-          <p style="margin:4px 0 0;font-size:14px;color:#d1d5db;">${escapeHtml(doc.amountNote)}</p>
+          <p style="margin:0;font-size:32px;font-weight:700;color:${amountColor};${MONO}">${escapeHtml(doc.amount)}</p>
+          <p style="margin:4px 0 0;font-size:14px;color:${amountNoteColor};">${escapeHtml(doc.amountNote)}</p>
         </div>
 
         ${boxRow([
