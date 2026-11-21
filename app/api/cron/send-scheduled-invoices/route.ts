@@ -304,6 +304,7 @@ export async function POST(request: Request) {
         quantity: i.quantity,
         unitPrice: i.unit_price,
         amount: i.amount,
+        type: i.type,
       })),
       client: { name: client.name, email: recipient, address: client.address ?? "" },
       gst: invoiceGst({ status: "draft" }, gstLock.gstNumber, gstLock.gstZeroRated),

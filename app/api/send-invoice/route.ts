@@ -157,6 +157,7 @@ export async function POST(request: Request) {
       quantity: Number(item.quantity),
       unitPrice: Number(item.unit_price),
       amount: Number(item.amount),
+      type: item.type === "expense" ? ("expense" as const) : ("time" as const),
     })),
     client: {
       name: client.name,

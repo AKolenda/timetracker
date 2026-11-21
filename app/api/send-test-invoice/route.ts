@@ -108,12 +108,14 @@ export async function POST(request: Request) {
         quantity: 3.5,
         unitPrice: 150,
         amount: 525,
+        type: "time",
       },
       {
         description: "Sample Project: Implementation",
         quantity: 5,
         unitPrice: 150,
         amount: 750,
+        type: "time",
       },
     ],
     client: {

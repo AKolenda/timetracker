@@ -1,18 +1,14 @@
 import { formatCurrency } from "./format"
-import {
-  INVOICE_CURRENCY,
-  formatWithCode,
-  paymentAccounts,
-  rateNote,
-  type SecondaryTotal,
-} from "./invoice-currency"
-import { gstNumberLine, gstTaxLabel, type InvoiceGst } from "./invoice-gst"
+import type { SecondaryTotal } from "./invoice-currency"
+import { buildInvoiceDocument } from "./invoice-document"
+import type { InvoiceGst } from "./invoice-gst"
 
 export interface EmailLineItem {
   description: string
   quantity: number
   unitPrice: number
   amount: number
+  type?: "time" | "expense"
 }
 
 export interface EmailInvoiceData {
@@ -87,6 +83,25 @@ export function buildSubject(data: EmailInvoiceData): string {
   })
 }
 
+const BOX =
+  "background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;"
+const MONO = "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"
+const MUTED = "color:#6b7280;"
+
+/** Two boxes side by side, or one full-width box. */
+function boxRow(cells: string[]): string {
+  if (cells.length === 1) return `<div style="${BOX}margin-top:10px;">${cells[0]}</div>`
+  return `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border-spacing:0;margin-top:10px;">
+      <tr>${cells
+        .map(
+          (cell, index) =>
+            `<td class="tt-col" style="width:50%;vertical-align:top;${index ? "padding-left:5px;" : "padding-right:5px;"}"><div style="${BOX}">${cell}</div></td>`
+        )
+        .join("")}</tr>
+    </table>`
+}
+
 export function buildEmailHtml(data: EmailInvoiceData): string {
   const accent = data.template.accentColor || "#111827"
   const dueLabel =
@@ -100,146 +115,109 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
   }
 
   const greetingHtml = data.template.greeting?.trim()
-    ? `<div style="margin:24px 0;font-size:14px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.greeting, vars))}</div>`
+    ? `<div style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.greeting, vars))}</div>`
     : ""
 
   const signatureHtml = data.template.signature?.trim()
-    ? `<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:13px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.signature, vars))}</div>`
+    ? `<div style="margin-top:20px;font-size:13px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.signature, vars))}</div>`
     : ""
 
-  const itemsHtml = data.lineItems
-    .map(
-      (item) => `
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;">
-          ${escapeHtml(item.description)}
-        </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;">
-          ${item.quantity}
-        </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;">
-          ${formatCurrency(item.unitPrice)}
-        </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;text-align:right;font-weight:500;">
-          ${formatCurrency(item.amount)}
-        </td>
-      </tr>`
-    )
-    .join("")
+  const doc = buildInvoiceDocument({
+    ...data,
+    business: data.business,
+    client: data.client,
+    gst: data.gst ?? null,
+    secondary: data.secondary ?? null,
+    remittance: data.remittance ?? {},
+  })
 
-  const secondary = data.secondary ?? null
-  const gstNumber = gstNumberLine(data.gst ?? null)
-  const taxLabel = gstTaxLabel(data.gst ?? null, data.tax)
-  const money = (amount: number) =>
-    secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
+  const line = (text: string, style = "") =>
+    `<p style="margin:2px 0 0;font-size:13px;${MUTED}${style}">${nl2br(text)}</p>`
 
-  const accounts = paymentAccounts(data.remittance ?? {}, data.total, secondary)
-  const remittanceHtml = accounts.length
-    ? `
-      <div style="margin-top:24px;padding:16px;border:2px dashed #d1d5db;border-radius:8px;">
-        <p style="margin:0 0 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#6b7280;">
-          ${accounts.length > 1 ? "Payment Options" : "Remittance Information"}
-        </p>
-        ${accounts
-          .map((account, index) => {
-            const heading = account.heading
-              ? `<p style="margin:${index ? "16px" : "0"} 0 6px;font-size:14px;font-weight:700;">${escapeHtml(account.heading)}<span style="float:right;font-family:monospace;">${escapeHtml(account.amount)}</span></p>`
-              : ""
-            const lines = account.lines
-              .map(
-                (line) =>
-                  `<p style="margin:4px 0;font-size:14px;"><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml(line.value)}</p>`
-              )
-              .join("")
-            const notes = account.notes
-              ? `<p style="margin:4px 0;font-size:14px;">${escapeHtml(account.notes)}</p>`
-              : ""
-            return heading + lines + notes
-          })
-          .join("")}
-      </div>`
-    : ""
-
-  const secondaryTotalHtml = secondary
-    ? `
+  const itemsHtml = doc.items.length
+    ? `<div style="${BOX}margin-top:10px;padding-top:4px;padding-bottom:4px;">${doc.items
+        .map(
+          (item, index) => `
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;${index ? "border-top:1px solid #e5e7eb;" : ""}">
           <tr>
-            <td style="padding:4px 0;font-size:14px;color:#6b7280;">Total in ${escapeHtml(secondary.currency)}</td>
-            <td style="padding:4px 0;font-size:14px;font-weight:600;text-align:right;font-family:monospace;">${formatWithCode(secondary.amount, secondary.currency)}</td>
+            <td style="padding:10px 0;font-size:14px;vertical-align:top;">
+              ${escapeHtml(item.description)}
+              ${item.detail ? `<div style="margin-top:2px;font-size:12px;${MUTED}${MONO}">${escapeHtml(item.detail)}</div>` : ""}
+            </td>
+            <td style="padding:10px 0 10px 12px;font-size:14px;text-align:right;vertical-align:top;white-space:nowrap;${MONO}">${escapeHtml(item.amount)}</td>
           </tr>
+        </table>`
+        )
+        .join("")}</div>`
+    : ""
+
+  const row = (label: string, value: string, valueStyle = "") => `
           <tr>
-            <td colspan="2" style="padding:0 0 4px;font-size:11px;color:#9ca3af;text-align:right;">${escapeHtml(rateNote(secondary))}</td>
+            <td style="padding:3px 0;font-size:13px;${MUTED}">${escapeHtml(label)}</td>
+            <td style="padding:3px 0 3px 12px;font-size:13px;text-align:right;white-space:nowrap;${MONO}${valueStyle}">${escapeHtml(value)}</td>
           </tr>`
+
+  const totalsHtml = `
+      <div style="${BOX}margin-top:10px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+          ${doc.totals.map((r) => row(r.label, r.value)).join("")}
+          <tr>
+            <td style="padding:10px 0 2px;border-top:1px solid #e5e7eb;font-size:16px;font-weight:700;">${escapeHtml(doc.total.label)}</td>
+            <td style="padding:10px 0 2px 12px;border-top:1px solid #e5e7eb;font-size:16px;font-weight:700;text-align:right;white-space:nowrap;${MONO}">${escapeHtml(doc.total.value)}</td>
+          </tr>
+          ${doc.converted ? row(doc.converted.label, doc.converted.value, "font-weight:600;") : ""}
+        </table>
+        ${doc.converted ? `<p style="margin:2px 0 0;font-size:11px;color:#9ca3af;text-align:right;">${escapeHtml(doc.converted.note)}</p>` : ""}
+      </div>`
+
+  const accountsHtml = doc.accounts.length
+    ? boxRow(
+        doc.accounts.map((account) => {
+          const heading = account.heading
+            ? `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:8px;"><tr><td style="font-size:14px;font-weight:700;">${escapeHtml(account.heading)}</td><td style="font-size:14px;font-weight:700;text-align:right;white-space:nowrap;${MONO}">${escapeHtml(account.amount)}</td></tr></table>`
+            : ""
+          const lines = account.lines
+            .map(
+              (l) =>
+                `<tr><td style="padding:2px 12px 2px 0;font-size:13px;${MUTED}white-space:nowrap;vertical-align:top;">${escapeHtml(l.label)}</td><td style="padding:2px 0;font-size:13px;${l.mono ? MONO : ""}">${escapeHtml(l.value)}</td></tr>`
+            )
+            .join("")
+          const notes = account.notes ? line(account.notes, "font-size:12px;margin-top:8px;") : ""
+          return `${heading}<table role="presentation" cellpadding="0" cellspacing="0">${lines}</table>${notes}`
+        })
+      )
     : ""
 
+  // Phones stack paired boxes; email apps that ignore <style> keep them side by side.
   return `
-    <div style="max-width:600px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;padding:24px;">
-      <div style="padding-bottom:16px;border-bottom:2px solid ${accent};">
-        <h1 style="margin:0;font-size:20px;color:${accent};">${escapeHtml(data.business.name)}</h1>
-        ${data.business.email ? `<p style="margin:4px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(data.business.email)}</p>` : ""}
-        ${data.business.phone ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(data.business.phone)}</p>` : ""}
-        ${gstNumber ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(gstNumber)}</p>` : ""}
+    <style>@media (max-width:480px){.tt-col{display:block!important;width:100%!important;padding:0!important}.tt-col+.tt-col{padding-top:10px!important}}</style>
+    <div style="background:#f3f4f6;padding:24px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;">
+      <div style="max-width:540px;margin:0 auto;">
+        ${greetingHtml}
+
+        <div style="text-align:center;padding:4px 0 8px;">
+          <p style="margin:0;font-size:18px;font-weight:700;color:#000;">${escapeHtml(doc.business.name)}</p>
+          ${doc.business.contact ? line(doc.business.contact, "font-size:12px;") : ""}
+          ${doc.business.address ? line(doc.business.address, "font-size:12px;") : ""}
+        </div>
+
+        <div style="background:${accent};border-radius:8px;padding:24px 16px;text-align:center;margin-top:2px;">
+          <p style="margin:0;font-size:32px;font-weight:700;color:#ffffff;${MONO}">${escapeHtml(doc.amount)}</p>
+          <p style="margin:4px 0 0;font-size:14px;color:#d1d5db;">${escapeHtml(doc.amountNote)}</p>
+        </div>
+
+        ${boxRow([
+          `<p style="margin:0;font-size:14px;font-weight:700;color:#000;">${escapeHtml(doc.client.name)}</p>${doc.client.lines.map((l) => line(l)).join("")}`,
+          `<p style="margin:0;font-size:14px;font-weight:700;color:#000;${MONO}">${escapeHtml(doc.invoice.number)}</p>${doc.invoice.lines.map((l) => line(l)).join("")}`,
+        ])}
+
+        ${itemsHtml}
+        ${totalsHtml}
+        ${doc.notes ? `<div style="${BOX}margin-top:10px;font-size:13px;color:#374151;">${nl2br(doc.notes)}</div>` : ""}
+        ${accountsHtml}
+
+        ${signatureHtml}
       </div>
-
-      ${greetingHtml}
-
-      <div style="padding:16px 0;">
-        <table style="width:100%;">
-          <tr>
-            <td style="vertical-align:top;">
-              <p style="margin:0;font-size:12px;color:#6b7280;">Bill To</p>
-              <p style="margin:4px 0 0;font-size:15px;font-weight:600;">${escapeHtml(data.client.name)}</p>
-              ${data.client.email ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(data.client.email)}</p>` : ""}
-              ${data.client.address ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${nl2br(data.client.address)}</p>` : ""}
-            </td>
-            <td style="vertical-align:top;text-align:right;">
-              <p style="margin:0;font-size:24px;font-weight:700;font-family:monospace;color:${accent};">${escapeHtml(data.invoiceNumber)}</p>
-              <p style="margin:4px 0 0;font-size:13px;color:#6b7280;">
-                Issued: ${escapeHtml(data.issueDate)}<br/>
-                Due: ${escapeHtml(dueLabel)}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </div>
-
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr style="background:#f9fafb;">
-            <th style="padding:8px 12px;text-align:left;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Description</th>
-            <th style="padding:8px 12px;text-align:right;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Qty</th>
-            <th style="padding:8px 12px;text-align:right;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Rate</th>
-            <th style="padding:8px 12px;text-align:right;font-size:12px;font-weight:600;color:#6b7280;border-bottom:2px solid #e5e7eb;">Amount</th>
-          </tr>
-        </thead>
-        <tbody>${itemsHtml}</tbody>
-      </table>
-
-      <div style="margin-top:16px;margin-left:auto;width:${secondary || data.gst ? 320 : 250}px;max-width:100%;">
-        <table style="width:100%;">
-          <tr>
-            <td style="padding:4px 0;font-size:14px;color:#6b7280;">Subtotal</td>
-            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.subtotal)}</td>
-          </tr>
-          <tr>
-            <td style="padding:4px 0;font-size:14px;color:#6b7280;">${escapeHtml(taxLabel)}</td>
-            <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.tax)}</td>
-          </tr>
-          <tr style="border-top:2px solid ${accent};">
-            <td style="padding:8px 0;font-size:16px;font-weight:700;">Total</td>
-            <td style="padding:8px 0;font-size:16px;font-weight:700;text-align:right;font-family:monospace;color:${accent};">${money(data.total)}</td>
-          </tr>${secondaryTotalHtml}
-        </table>
-      </div>
-
-      ${data.notes ? `<div style="margin-top:24px;padding:12px;background:#f9fafb;border-radius:6px;"><p style="margin:0;font-size:13px;color:#374151;white-space:pre-line;">${escapeHtml(data.notes)}</p></div>` : ""}
-
-      ${remittanceHtml}
-
-      ${signatureHtml}
-
-      <p style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:11px;color:#9ca3af;text-align:center;">
-        Generated by ${escapeHtml(data.business.name)}
-      </p>
     </div>
   `
 }

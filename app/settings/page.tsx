@@ -39,14 +39,10 @@ import {
 } from "@/components/ui/select"
 import { SheetAction } from "@/components/more-sheet"
 import { PageHeader } from "@/components/page-header"
-import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-options"
 import { useStore } from "@/lib/store"
-import { formatCurrency } from "@/lib/format"
 import {
   INVOICE_CURRENCY,
-  formatWithCode,
   parseSecondaryRemittance,
-  paymentAccounts,
   routingLabel,
   secondaryTotal,
 } from "@/lib/invoice-currency"
@@ -57,7 +53,9 @@ import {
   type Settings,
 } from "@/lib/types"
 import { getBrowserTimezone, listTimezones } from "@/lib/datetime"
-import { gstNumberLine, gstTaxLabel, invoiceGst } from "@/lib/invoice-gst"
+import { invoiceGst } from "@/lib/invoice-gst"
+import { buildInvoiceDocument } from "@/lib/invoice-document"
+import { InvoiceDocumentView } from "@/components/invoice-document"
 import {
   parseWeekendSendRule,
   WEEKEND_SEND_RULE_LABELS,
@@ -309,15 +307,29 @@ export default function SettingsPage() {
     sampleQuote
   )
   // The sample shows GST the way a non-resident client sees it.
-  const sampleGst = invoiceGst({ status: "draft" }, form.gstNumber, true)
-  const sampleGstNumber = gstNumberLine(sampleGst)
-  const sampleTaxLabel = gstTaxLabel(sampleGst, 0)
-  const sampleMoney = (amount: number) =>
-    sampleSecondary
-      ? formatWithCode(amount, INVOICE_CURRENCY)
-      : formatCurrency(amount)
-  const sampleAccounts = paymentAccounts(
-    {
+  const sampleDoc = buildInvoiceDocument({
+    invoiceNumber: `${form.invoicePrefix}${form.nextInvoiceNumber}`,
+    issueDate: "2026-05-08",
+    dueDate: "2026-06-07",
+    subtotal: 1289.99,
+    tax: 0,
+    total: 1289.99,
+    notes: "",
+    lineItems: [
+      { description: "Website Redesign: Homepage layout (May 1)", quantity: 3.5, unitPrice: 150, amount: 525, type: "time" },
+      { description: "Website Redesign: API integration (May 3)", quantity: 5, unitPrice: 150, amount: 750, type: "time" },
+      { description: "Domain renewal (expense)", quantity: 1, unitPrice: 14.99, amount: 14.99, type: "expense" },
+    ],
+    business: {
+      name: senderName,
+      email: form.businessEmail,
+      phone: form.businessPhone,
+      address: form.businessAddress,
+    },
+    client: { name: "Client Name", email: "client@example.com" },
+    gst: invoiceGst({ status: "draft" }, form.gstNumber, true),
+    secondary: sampleSecondary,
+    remittance: {
       firstName: form.remittanceFirstName,
       lastName: form.remittanceLastName,
       bankName: form.remittanceBankName,
@@ -325,9 +337,7 @@ export default function SettingsPage() {
       accountNumber: form.remittanceAccountNumber,
       notes: form.remittanceNotes,
     },
-    1289.99,
-    sampleSecondary
-  )
+  })
 
   const browserTimezone = getBrowserTimezone()
   const timezoneValue = form.timezone || browserTimezone
@@ -1286,141 +1296,11 @@ export default function SettingsPage() {
 
       {/* Email Preview Dialog — full PDF-size */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto p-0 sm:max-w-4xl">
+        <DialogContent className="max-h-[90vh] w-[95vw] gap-0 overflow-y-auto p-0 sm:max-w-4xl">
           <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-3">
             <DialogTitle>Invoice Email Preview</DialogTitle>
           </div>
-          <div className="mx-auto w-full max-w-[8.5in] bg-white px-[0.75in] py-[0.5in] text-black dark:bg-white">
-            <div className="border-b-2 border-black pb-4">
-              <h1 className="text-2xl font-bold">{senderName}</h1>
-              {form.businessEmail && (
-                <p className="mt-1 text-sm text-gray-500">
-                  {form.businessEmail}
-                </p>
-              )}
-              {form.businessPhone && (
-                <p className="text-sm text-gray-500">{form.businessPhone}</p>
-              )}
-              {form.businessAddress && (
-                <p className="mt-1 text-sm whitespace-pre-line text-gray-500">
-                  {form.businessAddress}
-                </p>
-              )}
-              {sampleGstNumber && (
-                <p className="mt-1 text-sm text-gray-500">{sampleGstNumber}</p>
-              )}
-            </div>
-
-            <div className="mt-8 flex justify-between">
-              <div>
-                <p className="text-xs font-medium tracking-wider text-gray-400 uppercase">
-                  Bill To
-                </p>
-                <p className="mt-2 text-lg font-semibold">Client Name</p>
-                <p className="text-sm text-gray-500">client@example.com</p>
-              </div>
-              <div className="text-right">
-                <p className="font-mono text-3xl font-bold">
-                  {form.invoicePrefix}
-                  {form.nextInvoiceNumber}
-                </p>
-                <p className="mt-2 text-sm text-gray-500">
-                  Issued: May 8, 2026
-                  <br />
-                  Due: Jun 7, 2026
-                </p>
-              </div>
-            </div>
-
-            <table className="mt-8 w-full border-collapse">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                    Description
-                  </th>
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                    Qty
-                  </th>
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                    Rate
-                  </th>
-                  <th className="border-b-2 border-gray-200 px-4 py-3 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                    Amount
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="border-b border-gray-200 px-4 py-3 text-sm">
-                    Website Redesign: Homepage layout (May 1)
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
-                    3.50
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
-                    $150.00
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm font-medium">
-                    $525.00
-                  </td>
-                </tr>
-                <tr>
-                  <td className="border-b border-gray-200 px-4 py-3 text-sm">
-                    Website Redesign: API integration (May 3)
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
-                    5.00
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
-                    $150.00
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm font-medium">
-                    $750.00
-                  </td>
-                </tr>
-                <tr>
-                  <td className="border-b border-gray-200 px-4 py-3 text-sm">
-                    Domain renewal (expense)
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
-                    1
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm">
-                    $14.99
-                  </td>
-                  <td className="border-b border-gray-200 px-4 py-3 text-right font-mono text-sm font-medium">
-                    $14.99
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-
-            <div
-              className={`mt-6 ml-auto ${sampleSecondary ? "w-full max-w-sm" : "w-72"}`}
-            >
-              <div className="flex justify-between py-2 text-sm">
-                <span className="text-gray-500">Subtotal</span>
-                <span className="font-mono">{sampleMoney(1289.99)}</span>
-              </div>
-              <div className="flex justify-between gap-3 py-2 text-sm">
-                <span className="text-gray-500">{sampleTaxLabel}</span>
-                <span className="font-mono">{sampleMoney(0)}</span>
-              </div>
-              <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
-                <span>Total</span>
-                <span className="font-mono">{sampleMoney(1289.99)}</span>
-              </div>
-              {sampleSecondary && (
-                <SecondaryTotalRow secondary={sampleSecondary} />
-              )}
-            </div>
-
-            <PaymentOptions accounts={sampleAccounts} />
-
-            <p className="mt-10 border-t border-gray-200 pt-4 text-center text-xs text-gray-400">
-              Generated by {senderName}
-            </p>
-          </div>
+          <InvoiceDocumentView doc={sampleDoc} />
         </DialogContent>
       </Dialog>
     </>
