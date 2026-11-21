@@ -75,8 +75,7 @@ const emptyForm = {
   invoiceScheduleAnchor: "" as string,
   invoiceScheduleAutoSend: true,
   showSecondaryCurrency: false,
-  // Clients so far are all outside Canada.
-  gstZeroRated: true,
+  gstZeroRated: false,
 }
 
 export default function ClientsPage() {
@@ -238,10 +237,12 @@ export default function ClientsPage() {
       invoiceScheduleEnabled: form.invoiceScheduleEnabled,
       invoiceScheduleAutoSend: form.invoiceScheduleAutoSend,
       lastInvoiceSent: null as string | null,
-      gstZeroRated: form.gstZeroRated,
       // Sent only when it changes, so saving other client fields never depends on it.
       ...(form.showSecondaryCurrency !== (editing?.showSecondaryCurrency ?? false)
         ? { showSecondaryCurrency: form.showSecondaryCurrency }
+        : {}),
+      ...(form.gstZeroRated !== (editing?.gstZeroRated ?? false)
+        ? { gstZeroRated: form.gstZeroRated }
         : {}),
     }
     if (editing) {
@@ -840,7 +841,7 @@ export default function ClientsPage() {
                   Outside Canada (GST zero-rated)
                 </Label>
                 <p className="text-xs text-muted-foreground">
-                  Invoices show GST (Canada) at 0% with the zero-rating reason. Put their full address, including the country, above.
+                  Invoices show GST (Canada) at 0%, zero-rated. Put their full address, including the country, above.
                 </p>
               </div>
             </div>

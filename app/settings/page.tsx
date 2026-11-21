@@ -57,7 +57,7 @@ import {
   type Settings,
 } from "@/lib/types"
 import { getBrowserTimezone, listTimezones } from "@/lib/datetime"
-import { gstNumberLine, gstTaxLine, invoiceGst } from "@/lib/invoice-gst"
+import { gstNumberLine, gstTaxLabel, invoiceGst } from "@/lib/invoice-gst"
 import {
   parseWeekendSendRule,
   WEEKEND_SEND_RULE_LABELS,
@@ -311,7 +311,7 @@ export default function SettingsPage() {
   // The sample shows GST the way a non-resident client sees it.
   const sampleGst = invoiceGst({ status: "draft" }, form.gstNumber, true)
   const sampleGstNumber = gstNumberLine(sampleGst)
-  const sampleTaxLine = gstTaxLine(sampleGst, 0)
+  const sampleTaxLabel = gstTaxLabel(sampleGst, 0)
   const sampleMoney = (amount: number) =>
     sampleSecondary
       ? formatWithCode(amount, INVOICE_CURRENCY)
@@ -1403,7 +1403,7 @@ export default function SettingsPage() {
                 <span className="font-mono">{sampleMoney(1289.99)}</span>
               </div>
               <div className="flex justify-between gap-3 py-2 text-sm">
-                <span className="text-gray-500">{sampleTaxLine.label}</span>
+                <span className="text-gray-500">{sampleTaxLabel}</span>
                 <span className="font-mono">{sampleMoney(0)}</span>
               </div>
               <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
@@ -1414,9 +1414,6 @@ export default function SettingsPage() {
                 <SecondaryTotalRow secondary={sampleSecondary} />
               )}
             </div>
-            {sampleTaxLine.note && (
-              <p className="mt-3 text-right text-xs text-gray-500">{sampleTaxLine.note}</p>
-            )}
 
             <PaymentOptions accounts={sampleAccounts} />
 

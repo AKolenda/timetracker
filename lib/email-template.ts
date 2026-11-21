@@ -6,7 +6,7 @@ import {
   rateNote,
   type SecondaryTotal,
 } from "./invoice-currency"
-import { gstNumberLine, gstTaxLine, type InvoiceGst } from "./invoice-gst"
+import { gstNumberLine, gstTaxLabel, type InvoiceGst } from "./invoice-gst"
 
 export interface EmailLineItem {
   description: string
@@ -129,7 +129,7 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
 
   const secondary = data.secondary ?? null
   const gstNumber = gstNumberLine(data.gst ?? null)
-  const taxLine = gstTaxLine(data.gst ?? null, data.tax)
+  const taxLabel = gstTaxLabel(data.gst ?? null, data.tax)
   const money = (amount: number) =>
     secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
 
@@ -214,14 +214,14 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
         <tbody>${itemsHtml}</tbody>
       </table>
 
-      <div style="margin-top:16px;margin-left:auto;width:${secondary ? 320 : 250}px;max-width:100%;">
+      <div style="margin-top:16px;margin-left:auto;width:${secondary || data.gst ? 320 : 250}px;max-width:100%;">
         <table style="width:100%;">
           <tr>
             <td style="padding:4px 0;font-size:14px;color:#6b7280;">Subtotal</td>
             <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.subtotal)}</td>
           </tr>
           <tr>
-            <td style="padding:4px 0;font-size:14px;color:#6b7280;">${escapeHtml(taxLine.label)}</td>
+            <td style="padding:4px 0;font-size:14px;color:#6b7280;">${escapeHtml(taxLabel)}</td>
             <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.tax)}</td>
           </tr>
           <tr style="border-top:2px solid ${accent};">
@@ -230,7 +230,6 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
           </tr>${secondaryTotalHtml}
         </table>
       </div>
-      ${taxLine.note ? `<p style="margin:12px 0 0;font-size:12px;color:#6b7280;text-align:right;">${escapeHtml(taxLine.note)}</p>` : ""}
 
       ${data.notes ? `<div style="margin-top:24px;padding:12px;background:#f9fafb;border-radius:6px;"><p style="margin:0;font-size:13px;color:#374151;white-space:pre-line;">${escapeHtml(data.notes)}</p></div>` : ""}
 

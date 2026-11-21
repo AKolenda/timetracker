@@ -103,7 +103,7 @@ import {
   type FxLock,
 } from "@/lib/invoice-currency"
 import { fetchQuote, useExchangeRate } from "@/lib/use-exchange-rate"
-import { gstNumberLine, gstTaxLine, invoiceGst, liveGst, type GstLock } from "@/lib/invoice-gst"
+import { gstLockToIssue, gstNumberLine, gstTaxLabel, invoiceGst, type GstLock } from "@/lib/invoice-gst"
 import { cn } from "@/lib/utils"
 import type { Client, Invoice, InvoiceLineItem, Settings, TimeEntry, Expense } from "@/lib/types"
 
@@ -476,7 +476,9 @@ export default function InvoicesPage() {
     nextStatus: Invoice["status"]
   ): Partial<GstLock> {
     if (invoice.status !== "draft" || nextStatus === "draft") return {}
-    return liveGst(data.settings.gstNumber, getClient(invoice.clientId)?.gstZeroRated)
+    return (
+      gstLockToIssue(invoice, data.settings.gstNumber, getClient(invoice.clientId)?.gstZeroRated) ?? {}
+    )
   }
 
   function clearItemsError() {
@@ -1553,7 +1555,7 @@ function InvoicePreview({
     secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
   const gst = invoiceGst(invoice, settings.gstNumber, client?.gstZeroRated)
   const gstNumber = gstNumberLine(gst)
-  const taxLine = gstTaxLine(gst, invoice.tax)
+  const taxLabel = gstTaxLabel(gst, invoice.tax)
   const accounts = paymentAccounts(
     {
       firstName: settings.remittanceFirstName,
@@ -1717,7 +1719,7 @@ function InvoicePreview({
             <span className="font-mono">{money(invoice.subtotal)}</span>
           </div>
           <div className="flex justify-between gap-3 py-2 text-sm">
-            <span className="text-gray-500">{taxLine.label}</span>
+            <span className="text-gray-500">{taxLabel}</span>
             <span className="font-mono">{money(invoice.tax)}</span>
           </div>
           <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
@@ -1726,9 +1728,6 @@ function InvoicePreview({
           </div>
           {secondary && <SecondaryTotalRow secondary={secondary} />}
         </div>
-        {taxLine.note && (
-          <p className="mt-3 text-xs text-gray-500 sm:text-right">{taxLine.note}</p>
-        )}
 
         {invoice.notes && (
           <div className="mt-8 rounded-md bg-gray-50 p-4">

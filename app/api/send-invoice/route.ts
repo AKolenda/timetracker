@@ -7,7 +7,7 @@ import {
   type EmailInvoiceData,
 } from "@/lib/email-template"
 import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
-import { invoiceGst, liveGst, type GstLock } from "@/lib/invoice-gst"
+import { gstLockToIssue, invoiceGst, type GstLock } from "@/lib/invoice-gst"
 import {
   INVOICE_CURRENCY,
   needsFxLock,
@@ -129,18 +129,14 @@ export async function POST(request: Request) {
   }
   const fx = newLock ?? lockedFx
 
-  // A draft takes today's GST number and client treatment; a reissue keeps what it was sent with.
+  // Issuing a draft saves today's GST number and client treatment; saved details never change.
+  const saved = { gstNumber: invoice.gst_number ?? null, gstZeroRated: !!invoice.gst_zero_rated }
   const gstLock: GstLock | null =
     invoice.status === "draft"
-      ? liveGst(settings?.gst_number, client.gst_zero_rated)
+      ? gstLockToIssue(saved, settings?.gst_number, client.gst_zero_rated)
       : null
-  const gst = invoiceGst(
-    gstLock
-      ? { status: "sent", ...gstLock }
-      : { status: "sent", gstNumber: invoice.gst_number, gstZeroRated: invoice.gst_zero_rated },
-    null,
-    null
-  )
+  const printed = gstLock ?? saved
+  const gst = invoiceGst({ status: "sent", ...printed }, null, null)
 
   const fromAddress =
     settings?.email_from_address ||
@@ -240,7 +236,7 @@ export async function POST(request: Request) {
       .update({ last_invoice_sent: new Date().toISOString() })
       .eq("id", invoice.client_id)
 
-    return NextResponse.json({ success: true, fx: newLock, gst: gstLock })
+    return NextResponse.json({ success: true, fx: newLock, gst: printed })
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Unknown error" },

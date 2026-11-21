@@ -14,9 +14,6 @@ export interface GstLock {
   gstZeroRated: boolean
 }
 
-export const GST_ZERO_RATED_NOTE =
-  "Zero-rated supply of services to a non-resident of Canada (Excise Tax Act, Sch. VI, Part V)."
-
 export function normalizeGstNumber(value: unknown): string {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
 }
@@ -30,9 +27,23 @@ export function liveGst(
   return { gstNumber: number || null, gstZeroRated: !!number && !!clientZeroRated }
 }
 
+function savedGst(invoice: Pick<Invoice, "gstNumber" | "gstZeroRated">): GstLock | null {
+  const number = normalizeGstNumber(invoice.gstNumber)
+  return number ? { gstNumber: number, gstZeroRated: !!invoice.gstZeroRated } : null
+}
+
+/** The details to save when a draft is issued, or null when it already has them. */
+export function gstLockToIssue(
+  invoice: Pick<Invoice, "gstNumber" | "gstZeroRated">,
+  settingsNumber: unknown,
+  clientZeroRated: boolean | null | undefined
+): GstLock | null {
+  return savedGst(invoice) ? null : liveGst(settingsNumber, clientZeroRated)
+}
+
 /**
- * What an invoice prints. A draft follows today's settings and client; an issued invoice
- * keeps what it was issued with, so invoices from before GST registration stay unchanged.
+ * What an invoice prints. Saved details never change; an unsaved draft follows today's
+ * settings and client; an issued invoice with none, from before registration, shows none.
  */
 export function invoiceGst(
   invoice: Pick<Invoice, "status" | "gstNumber" | "gstZeroRated">,
@@ -40,22 +51,16 @@ export function invoiceGst(
   clientZeroRated: boolean | null | undefined
 ): InvoiceGst | null {
   const lock =
-    invoice.status === "draft"
-      ? liveGst(settingsNumber, clientZeroRated)
-      : { gstNumber: normalizeGstNumber(invoice.gstNumber) || null, gstZeroRated: !!invoice.gstZeroRated }
-  return lock.gstNumber ? { number: lock.gstNumber, zeroRated: lock.gstZeroRated } : null
+    savedGst(invoice) ??
+    (invoice.status === "draft" ? liveGst(settingsNumber, clientZeroRated) : null)
+  return lock?.gstNumber ? { number: lock.gstNumber, zeroRated: lock.gstZeroRated } : null
 }
 
-/** The totals row label and the reason printed under the totals. */
-export function gstTaxLine(
-  gst: InvoiceGst | null,
-  tax: number
-): { label: string; note: string | null } {
-  if (!gst) return { label: "Tax", note: null }
-  if (gst.zeroRated && Number(tax) === 0) {
-    return { label: "GST (Canada) 0% · zero-rated", note: GST_ZERO_RATED_NOTE }
-  }
-  return { label: "GST (Canada)", note: null }
+/** The label for the totals row that holds the tax amount. */
+export function gstTaxLabel(gst: InvoiceGst | null, tax: number): string {
+  // A manual tax amount isn't recorded as GST, so it keeps the plain label.
+  if (!gst || Number(tax) !== 0) return "Tax"
+  return gst.zeroRated ? "GST (Canada) 0% · zero-rated" : "GST (Canada) 0%"
 }
 
 export function gstNumberLine(gst: InvoiceGst | null): string | null {
