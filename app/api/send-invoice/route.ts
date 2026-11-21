@@ -7,6 +7,7 @@ import {
   type EmailInvoiceData,
 } from "@/lib/email-template"
 import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
+import { gstLockToIssue, invoiceGst, type GstLock } from "@/lib/invoice-gst"
 import {
   INVOICE_CURRENCY,
   needsFxLock,
@@ -128,6 +129,15 @@ export async function POST(request: Request) {
   }
   const fx = newLock ?? lockedFx
 
+  // Issuing a draft saves today's GST number and client treatment; saved details never change.
+  const saved = { gstNumber: invoice.gst_number ?? null, gstZeroRated: !!invoice.gst_zero_rated }
+  const gstLock: GstLock | null =
+    invoice.status === "draft"
+      ? gstLockToIssue(saved, settings?.gst_number, client.gst_zero_rated)
+      : null
+  const printed = gstLock ?? saved
+  const gst = invoiceGst({ status: "sent", ...printed }, null, null)
+
   const fromAddress =
     settings?.email_from_address ||
     settings?.business_email ||
@@ -147,11 +157,14 @@ export async function POST(request: Request) {
       quantity: Number(item.quantity),
       unitPrice: Number(item.unit_price),
       amount: Number(item.amount),
+      type: item.type === "expense" ? ("expense" as const) : ("time" as const),
     })),
     client: {
       name: client.name,
       email: recipientEmail,
+      address: client.address ?? "",
     },
+    gst,
     business: {
       name: businessName,
       email: settings?.business_email ?? "",
@@ -213,6 +226,9 @@ export async function POST(request: Request) {
               fx_rate_date: newLock.fxRateDate,
             }
           : {}),
+        ...(gstLock
+          ? { gst_number: gstLock.gstNumber, gst_zero_rated: gstLock.gstZeroRated }
+          : {}),
       })
       .eq("id", invoiceId)
 
@@ -221,7 +237,7 @@ export async function POST(request: Request) {
       .update({ last_invoice_sent: new Date().toISOString() })
       .eq("id", invoice.client_id)
 
-    return NextResponse.json({ success: true, fx: newLock })
+    return NextResponse.json({ success: true, fx: newLock, gst: printed })
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Unknown error" },

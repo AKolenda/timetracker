@@ -180,3 +180,9 @@ alter table public.invoices add column if not exists fx_rate_date date;
 
 -- 014: Agent Time folders linked to a project.
 alter table public.projects add column if not exists agent_folders text[] not null default '{}';
+
+-- 017: GST/HST number on invoices; non-resident clients are zero-rated; each invoice keeps what it was issued with.
+alter table public.settings add column if not exists gst_number text not null default '';
+alter table public.clients add column if not exists gst_zero_rated boolean not null default false;
+alter table public.invoices add column if not exists gst_number text;
+alter table public.invoices add column if not exists gst_zero_rated boolean not null default false;

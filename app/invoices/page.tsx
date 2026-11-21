@@ -73,7 +73,6 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import { InvoiceEstimateRow, InvoiceEstimatePreview } from "@/components/invoice-estimates"
-import { PaymentOptions, SecondaryTotalRow } from "@/components/invoice-payment-options"
 import { buildInvoiceEstimates, invoicedSourceIds, type InvoiceEstimate } from "@/lib/invoice-estimates"
 import { groupTimeLines, timeLineItem } from "@/lib/invoice-lines"
 import { billedSeconds } from "@/lib/billing"
@@ -95,7 +94,6 @@ import {
   formatRateDate,
   formatWithCode,
   needsFxLock,
-  paymentAccounts,
   secondaryCurrencyFor,
   secondaryTotal,
   toFxLock,
@@ -103,6 +101,9 @@ import {
   type FxLock,
 } from "@/lib/invoice-currency"
 import { fetchQuote, useExchangeRate } from "@/lib/use-exchange-rate"
+import { gstLockToIssue, invoiceGst, type GstLock } from "@/lib/invoice-gst"
+import { buildInvoiceDocument } from "@/lib/invoice-document"
+import { InvoiceDocumentView } from "@/components/invoice-document"
 import { cn } from "@/lib/utils"
 import type { Client, Invoice, InvoiceLineItem, Settings, TimeEntry, Expense } from "@/lib/types"
 
@@ -469,6 +470,17 @@ export default function InvoicesPage() {
     return toFxLock(currency, await fetchQuote(INVOICE_CURRENCY, currency))
   }
 
+  /** Issuing a draft saves the GST details it prints, so they never change after it is sent. */
+  function issueGstLock(
+    invoice: Invoice,
+    nextStatus: Invoice["status"]
+  ): Partial<GstLock> {
+    if (invoice.status !== "draft" || nextStatus === "draft") return {}
+    return (
+      gstLockToIssue(invoice, data.settings.gstNumber, getClient(invoice.clientId)?.gstZeroRated) ?? {}
+    )
+  }
+
   function clearItemsError() {
     setCreateErrors((current) => (current.items ? { ...current, items: undefined } : current))
   }
@@ -616,6 +628,7 @@ export default function InvoicesPage() {
     }
     const updates: Partial<Invoice> = {
       ...fxLock,
+      ...(original ? issueGstLock(original, editInvoice.status) : {}),
       status: editInvoice.status,
       notes: editNotes,
       tax: taxAmount,
@@ -663,7 +676,8 @@ export default function InvoicesPage() {
         throw new Error(body.error || "Failed to send")
       }
       const fx = (body.fx ?? null) as FxLock | null
-      await updateInvoice(invoice.id, { status: "sent", ...(fx ?? {}) })
+      const gst = (body.gst ?? null) as GstLock | null
+      await updateInvoice(invoice.id, { status: "sent", ...(fx ?? {}), ...(gst ?? {}) })
       toast.success(
         `${invoice.status === "sent" ? "Invoice reissued" : "Invoice sent"} to ${email}`
       )
@@ -720,7 +734,11 @@ export default function InvoicesPage() {
       toast.error(err instanceof Error ? err.message : "Couldn't get the exchange rate")
       return
     }
-    await updateInvoice(id, { status, ...fxLock })
+    await updateInvoice(id, {
+      status,
+      ...fxLock,
+      ...(invoice ? issueGstLock(invoice, status) : {}),
+    })
     toast.success(`Status updated to ${status}`)
   }
 
@@ -1465,7 +1483,7 @@ export default function InvoicesPage() {
         open={!!previewInvoice}
         onOpenChange={(open) => !open && setPreviewInvoice(null)}
       >
-        <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto p-0 sm:max-w-4xl">
+        <DialogContent className="max-h-[90vh] w-[95vw] gap-0 overflow-y-auto p-0 sm:max-w-4xl">
           {previewInvoice && (
             <InvoicePreview
               invoice={previewInvoice}
@@ -1533,10 +1551,18 @@ function InvoicePreview({
     settings.secondaryRemittance,
     quote
   )
-  const money = (amount: number) =>
-    secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
-  const accounts = paymentAccounts(
-    {
+  const doc = buildInvoiceDocument({
+    ...invoice,
+    business: {
+      name: settings.businessName || "Your Name",
+      email: settings.businessEmail,
+      phone: settings.businessPhone,
+      address: settings.businessAddress,
+    },
+    client: { name: client?.name ?? "—", email: client?.email, address: client?.address },
+    gst: invoiceGst(invoice, settings.gstNumber, client?.gstZeroRated),
+    secondary,
+    remittance: {
       firstName: settings.remittanceFirstName,
       lastName: settings.remittanceLastName,
       bankName: settings.remittanceBankName,
@@ -1544,9 +1570,7 @@ function InvoicePreview({
       accountNumber: settings.remittanceAccountNumber,
       notes: settings.remittanceNotes,
     },
-    invoice.total,
-    secondary
-  )
+  })
 
   return (
     <>
@@ -1576,150 +1600,7 @@ function InvoicePreview({
           It&apos;s fixed when the invoice is sent.
         </p>
       )}
-      <div className="mx-auto w-full max-w-[8.5in] bg-white px-4 py-6 text-black sm:px-[0.75in] sm:py-[0.5in] dark:bg-white">
-        <div className="flex flex-col gap-4 border-b-2 border-black pb-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-bold">
-              {settings.businessName || "Your Name"}
-            </h2>
-            {settings.businessEmail && (
-              <p className="mt-1 text-sm text-gray-500">
-                {settings.businessEmail}
-              </p>
-            )}
-            {settings.businessPhone && (
-              <p className="text-sm text-gray-500">{settings.businessPhone}</p>
-            )}
-            {settings.businessAddress && (
-              <p className="mt-1 text-sm whitespace-pre-line text-gray-500">
-                {settings.businessAddress}
-              </p>
-            )}
-          </div>
-          <div className="sm:text-right">
-            <p className="font-mono text-3xl font-bold">
-              {invoice.invoiceNumber}
-            </p>
-            <p className="mt-2 text-xs font-medium tracking-wider text-gray-400 uppercase">
-              Total Due
-            </p>
-            <p className="font-mono text-xl font-bold">
-              {money(invoice.total)}
-            </p>
-            {secondary && (
-              <p className="font-mono text-sm text-gray-500">
-                or {formatWithCode(secondary.amount, secondary.currency)}
-              </p>
-            )}
-            <p className="text-sm text-gray-500">
-              {invoice.dueDate === invoice.issueDate
-                ? "Due on receipt"
-                : `Due ${format(parseISO(invoice.dueDate), "MMM d, yyyy")}`}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:justify-between">
-          <div>
-            <p className="text-xs font-medium tracking-wider text-gray-400 uppercase">
-              Bill To
-            </p>
-            <p className="mt-2 text-lg font-semibold">{client?.name ?? "—"}</p>
-            {client?.email && (
-              <p className="text-sm text-gray-500">{client.email}</p>
-            )}
-            {client?.address && (
-              <p className="text-sm whitespace-pre-line text-gray-500">
-                {client.address}
-              </p>
-            )}
-          </div>
-          <div className="sm:text-right">
-            <p className="text-sm text-gray-500">
-              <span className="font-medium text-gray-700">Issued:</span>{" "}
-              {format(new Date(invoice.issueDate), "MMM d, yyyy")}
-            </p>
-            {invoice.dueDate === invoice.issueDate ? (
-              <p className="mt-1 text-sm font-medium text-gray-700">
-                Due on receipt
-              </p>
-            ) : (
-              <p className="mt-1 text-sm text-gray-500">
-                <span className="font-medium text-gray-700">Due:</span>{" "}
-                {invoiceDueLabel(invoice)}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <table className="mt-8 w-full border-collapse">
-          <thead>
-            <tr className="bg-gray-50">
-              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-left text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                Description
-              </th>
-              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                Qty
-              </th>
-              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                Rate
-              </th>
-              <th className="border-b-2 border-gray-200 px-2 py-3 sm:px-4 text-right text-xs font-semibold tracking-wider text-gray-500 uppercase">
-                Amount
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoice.lineItems.map((item) => (
-              <tr key={item.id}>
-                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-sm">
-                  {item.description}
-                </td>
-                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-right font-mono text-sm">
-                  {item.quantity}
-                </td>
-                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-right font-mono text-sm">
-                  {formatCurrency(item.unitPrice)}
-                </td>
-                <td className="border-b border-gray-200 px-2 py-3 sm:px-4 text-right font-mono text-sm font-medium">
-                  {formatCurrency(item.amount)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className={`mt-6 ml-auto ${secondary ? "w-full max-w-sm" : "w-72"}`}>
-          <div className="flex justify-between py-2 text-sm">
-            <span className="text-gray-500">Subtotal</span>
-            <span className="font-mono">{money(invoice.subtotal)}</span>
-          </div>
-          <div className="flex justify-between py-2 text-sm">
-            <span className="text-gray-500">Tax</span>
-            <span className="font-mono">{money(invoice.tax)}</span>
-          </div>
-          <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
-            <span>Total</span>
-            <span className="font-mono">{money(invoice.total)}</span>
-          </div>
-          {secondary && <SecondaryTotalRow secondary={secondary} />}
-        </div>
-
-        {invoice.notes && (
-          <div className="mt-8 rounded-md bg-gray-50 p-4">
-            <p className="text-xs font-medium text-gray-500">Notes</p>
-            <p className="mt-1 text-sm whitespace-pre-line text-gray-700">
-              {invoice.notes}
-            </p>
-          </div>
-        )}
-
-        <PaymentOptions accounts={accounts} />
-
-        <p className="mt-10 border-t border-gray-200 pt-4 text-center text-xs text-gray-400">
-          Generated by {settings.businessName || "TimeTracker"}
-        </p>
-      </div>
+      <InvoiceDocumentView doc={doc} />
     </>
   )
 }

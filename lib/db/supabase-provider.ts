@@ -15,6 +15,7 @@ import { parseAgentTimeHosts, parseAgentTimeHostLabels } from "../agent-time-hos
 import { normalizeBillFactor } from "../billing"
 import { parseWeekendSendRule } from "../invoice-schedule"
 import { parseSecondaryRemittance } from "../invoice-currency"
+import { normalizeGstNumber } from "../invoice-gst"
 
 function rowToClient(row: Record<string, unknown>): Client {
   return {
@@ -31,6 +32,7 @@ function rowToClient(row: Record<string, unknown>): Client {
     invoiceScheduleAutoSend: (row.invoice_schedule_auto_send as boolean) ?? true,
     lastInvoiceSent: row.last_invoice_sent as string | null,
     showSecondaryCurrency: (row.show_secondary_currency as boolean) ?? false,
+    gstZeroRated: (row.gst_zero_rated as boolean) ?? false,
     createdAt: row.created_at as string,
   }
 }
@@ -91,6 +93,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     businessEmail: row.business_email as string,
     businessPhone: row.business_phone as string,
     businessAddress: row.business_address as string,
+    gstNumber: normalizeGstNumber(row.gst_number),
     remittanceFirstName: row.remittance_first_name as string,
     remittanceLastName: row.remittance_last_name as string,
     remittanceBankName: row.remittance_bank_name as string,
@@ -138,6 +141,8 @@ function rowToInvoice(
     fxCurrency: (row.fx_currency as string | null) ?? null,
     fxRate: row.fx_rate == null ? null : Number(row.fx_rate),
     fxRateDate: (row.fx_rate_date as string | null) ?? null,
+    gstNumber: (row.gst_number as string | null) ?? null,
+    gstZeroRated: (row.gst_zero_rated as boolean) ?? false,
     createdAt: row.created_at as string,
   }
 }
@@ -212,6 +217,7 @@ export class SupabaseProvider implements DataProvider {
         invoice_schedule_enabled: client.invoiceScheduleEnabled ?? false,
         invoice_schedule_auto_send: client.invoiceScheduleAutoSend ?? true,
         ...(client.showSecondaryCurrency ? { show_secondary_currency: true } : {}),
+        ...(client.gstZeroRated ? { gst_zero_rated: true } : {}),
       })
       .select()
       .single()
@@ -240,6 +246,8 @@ export class SupabaseProvider implements DataProvider {
       row.last_invoice_sent = updates.lastInvoiceSent
     if (updates.showSecondaryCurrency !== undefined)
       row.show_secondary_currency = updates.showSecondaryCurrency
+    if (updates.gstZeroRated !== undefined)
+      row.gst_zero_rated = updates.gstZeroRated
     const { error } = await this.db.from("clients").update(row).eq("id", id)
     if (error) throw error
   }
@@ -433,6 +441,8 @@ export class SupabaseProvider implements DataProvider {
       row.business_phone = updates.businessPhone
     if (updates.businessAddress !== undefined)
       row.business_address = updates.businessAddress
+    if (updates.gstNumber !== undefined)
+      row.gst_number = normalizeGstNumber(updates.gstNumber)
     if (updates.remittanceFirstName !== undefined)
       row.remittance_first_name = updates.remittanceFirstName
     if (updates.remittanceLastName !== undefined)
@@ -602,6 +612,8 @@ export class SupabaseProvider implements DataProvider {
     if (updates.fxCurrency !== undefined) row.fx_currency = updates.fxCurrency
     if (updates.fxRate !== undefined) row.fx_rate = updates.fxRate
     if (updates.fxRateDate !== undefined) row.fx_rate_date = updates.fxRateDate
+    if (updates.gstNumber !== undefined) row.gst_number = updates.gstNumber
+    if (updates.gstZeroRated !== undefined) row.gst_zero_rated = updates.gstZeroRated
     const { error } = await this.db.from("invoices").update(row).eq("id", id)
     if (error) throw error
   }

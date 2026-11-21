@@ -8,27 +8,21 @@ import {
   StyleSheet,
   pdf,
 } from "@react-pdf/renderer"
-import { format } from "date-fns"
 
-import { formatCurrency } from "./format"
-import {
-  INVOICE_CURRENCY,
-  formatWithCode,
-  paymentAccounts,
-  rateNote,
-  type SecondaryTotal,
-} from "./invoice-currency"
+import type { SecondaryTotal } from "./invoice-currency"
+import { buildInvoiceDocument } from "./invoice-document"
+import { invoiceGst } from "./invoice-gst"
 import type { Client, Invoice, Settings } from "./types"
 
-// Tailwind gray palette → hex, matching the on-screen InvoicePreview
+// Tailwind gray palette → hex, matching the on-screen InvoiceDocumentView
 const COLORS = {
   black: "#000000",
+  white: "#ffffff",
   gray700: "#374151",
   gray500: "#6b7280",
   gray400: "#9ca3af",
   gray300: "#d1d5db",
   gray200: "#e5e7eb",
-  gray50: "#f9fafb",
 }
 
 const styles = StyleSheet.create({
@@ -36,208 +30,76 @@ const styles = StyleSheet.create({
     paddingHorizontal: 54, // 0.75in
     paddingVertical: 36, // 0.5in
     fontFamily: "Helvetica",
-    fontSize: 9,
+    fontSize: 9.5,
     color: COLORS.black,
     lineHeight: 1.4,
   },
+  // Large text sets its own line height; the page's 1.4 resolves against 9.5pt and overlaps it.
+  header: { alignItems: "center", marginBottom: 10 },
+  businessName: { fontSize: 15, lineHeight: 1.2, fontFamily: "Helvetica-Bold" },
+  businessMeta: { marginTop: 2, fontSize: 8.5, color: COLORS.gray500, textAlign: "center" },
 
-  // Header
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.black,
-    paddingBottom: 12,
-  },
-  // Large text sets its own line height; the page's 1.4 resolves against 9pt and overlaps it.
-  businessName: { fontSize: 18, lineHeight: 1.2, fontFamily: "Helvetica-Bold", marginBottom: 6 },
-  headerRight: { alignItems: "flex-end" },
-  businessMeta: { marginTop: 2, fontSize: 9, color: COLORS.gray500 },
-  invoiceNumberBig: {
-    fontSize: 24,
-    lineHeight: 1.2,
-    fontFamily: "Courier-Bold",
-    textAlign: "right",
-  },
-  headerTotalLabel: {
-    marginTop: 8,
-    fontSize: 8,
-    color: COLORS.gray400,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    textAlign: "right",
-  },
-  headerTotalValue: {
-    marginTop: 2,
-    fontSize: 16,
-    lineHeight: 1.2,
-    fontFamily: "Courier-Bold",
-    textAlign: "right",
-  },
-  headerSecondary: {
-    marginTop: 1,
-    fontSize: 10,
-    lineHeight: 1.2,
-    fontFamily: "Courier",
-    color: COLORS.gray500,
-    textAlign: "right",
-  },
-  headerDueBadge: {
-    marginTop: 2,
-    fontSize: 9,
-    color: COLORS.gray500,
-    textAlign: "right",
-  },
-
-  // Bill-to / dates
-  metaRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 14,
-  },
-  sectionLabel: {
-    fontSize: 8,
-    color: COLORS.gray400,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  clientName: {
-    marginTop: 6,
-    marginBottom: 3,
-    fontSize: 13,
-    lineHeight: 1.2,
-    fontFamily: "Helvetica-Bold",
-  },
-  clientMeta: { fontSize: 9, color: COLORS.gray500 },
-  dateBlock: { textAlign: "right" },
-  dateLine: { fontSize: 9, color: COLORS.gray500, marginTop: 2 },
-  dateLabel: { color: COLORS.gray700, fontFamily: "Helvetica-Bold" },
-
-  // Line-items table
-  table: { marginTop: 14 },
-  tableHeader: {
-    flexDirection: "row",
-    backgroundColor: COLORS.gray50,
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.gray200,
-  },
-  tableRow: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.gray200,
-  },
-  th: {
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    fontSize: 8,
-    fontFamily: "Helvetica-Bold",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    color: COLORS.gray500,
-  },
-  td: { paddingVertical: 5, paddingHorizontal: 8, fontSize: 9 },
-  colDesc: { flex: 1 },
-  colNum: { width: 70, textAlign: "right" },
-  mono: { fontFamily: "Courier" },
-  bold: { fontFamily: "Helvetica-Bold" },
-
-  // Totals
-  totals: { marginTop: 14, marginLeft: "auto", width: 220 },
-  totalsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 4,
-  },
-  totalsLabel: { fontSize: 10, color: COLORS.gray500 },
-  totalsValue: { fontSize: 10, fontFamily: "Courier" },
-  grandTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: 2,
-    borderTopColor: COLORS.black,
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  grandTotalLabel: { fontSize: 14, lineHeight: 1.2, fontFamily: "Helvetica-Bold" },
-  grandTotalValue: {
-    fontSize: 14,
-    lineHeight: 1.2,
-    fontFamily: "Courier-Bold",
-  },
-  secondaryTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 6,
-  },
-  secondaryTotalValue: { fontSize: 10, fontFamily: "Courier-Bold" },
-  rateNote: {
-    marginTop: 2,
-    fontSize: 7,
-    color: COLORS.gray400,
-    textAlign: "right",
-  },
-
-  // Notes
-  notes: {
-    marginTop: 14,
-    backgroundColor: COLORS.gray50,
-    borderRadius: 4,
-    padding: 12,
-  },
-  notesLabel: {
-    fontSize: 8,
-    fontFamily: "Helvetica-Bold",
-    color: COLORS.gray500,
-  },
-  notesBody: { marginTop: 4, fontSize: 9, color: COLORS.gray700 },
-
-  // Remittance
-  remittance: {
-    marginTop: 14,
+  box: {
     borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: COLORS.gray300,
+    borderColor: COLORS.gray200,
     borderRadius: 6,
-    padding: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 7,
   },
-  remittanceLabel: {
-    marginBottom: 8,
-    fontSize: 8,
-    fontFamily: "Helvetica-Bold",
-    color: COLORS.gray500,
-    textTransform: "uppercase",
-    letterSpacing: 1,
+  amountBox: {
+    marginTop: 7,
+    backgroundColor: COLORS.black,
+    borderRadius: 6,
+    paddingVertical: 16,
+    alignItems: "center",
   },
-  remittanceAccounts: { flexDirection: "row", gap: 16 },
-  remittanceAccount: { flex: 1 },
-  remittanceHeading: {
+  amount: { fontSize: 24, lineHeight: 1.2, fontFamily: "Courier-Bold", color: COLORS.white },
+  amountNote: { marginTop: 3, fontSize: 9.5, color: COLORS.gray300 },
+
+  pair: { flexDirection: "row", gap: 7 },
+  half: { flex: 1 },
+  strong: { fontSize: 10, fontFamily: "Helvetica-Bold" },
+  strongMono: { fontSize: 10, fontFamily: "Courier-Bold" },
+  muted: { fontSize: 9, color: COLORS.gray500 },
+
+  item: { flexDirection: "row", justifyContent: "space-between", gap: 10, paddingVertical: 6 },
+  itemRule: { borderTopWidth: 1, borderTopColor: COLORS.gray200 },
+  itemText: { flex: 1 },
+  itemDetail: { marginTop: 1, fontSize: 8, fontFamily: "Courier", color: COLORS.gray500 },
+  mono: { fontFamily: "Courier" },
+
+  row: { flexDirection: "row", justifyContent: "space-between", gap: 10, paddingVertical: 2 },
+  rowLabel: { fontSize: 9.5, color: COLORS.gray500 },
+  totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 4,
-    fontSize: 10,
-    fontFamily: "Helvetica-Bold",
-  },
-  remittanceLine: { fontSize: 9, marginTop: 2 },
-  remittanceMuted: { color: COLORS.gray500 },
-  remittanceNotes: { marginTop: 8, fontSize: 8, color: COLORS.gray500 },
-
-  // Footer
-  footer: {
-    marginTop: 12,
     borderTopWidth: 1,
     borderTopColor: COLORS.gray200,
-    paddingTop: 12,
-    textAlign: "center",
-    fontSize: 8,
-    color: COLORS.gray400,
+    marginTop: 4,
+    paddingTop: 6,
   },
+  totalText: { fontSize: 12, lineHeight: 1.2, fontFamily: "Helvetica-Bold" },
+  totalValue: { fontSize: 12, lineHeight: 1.2, fontFamily: "Courier-Bold" },
+  rateNote: { marginTop: 2, fontSize: 7, color: COLORS.gray400, textAlign: "right" },
+  notes: { fontSize: 9, color: COLORS.gray700 },
+
+  accountHeading: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 5,
+  },
+  accountLine: { flexDirection: "row", marginTop: 2 },
+  accountLabel: { paddingRight: 8, fontSize: 9, color: COLORS.gray500 },
+  accountValue: { flex: 1, fontSize: 9 },
+  accountNotes: { marginTop: 5, fontSize: 8, color: COLORS.gray500 },
 })
 
-function fmtDate(value: string): string {
-  // Mirror the preview's "MMM d, yyyy" formatting; tolerate bad input.
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? value : format(d, "MMM d, yyyy")
+/** Room for the longest label in an account, like the preview's max-content column. */
+function labelWidth(lines: Array<{ label: string }>): number {
+  const longest = Math.max(0, ...lines.map((line) => line.label.length))
+  return Math.min(110, longest * 4.8 + 10)
 }
 
 export function InvoicePdfDocument({
@@ -252,10 +114,18 @@ export function InvoicePdfDocument({
   secondary?: SecondaryTotal | null
 }) {
   const businessName = settings.businessName || "Your Name"
-  const money = (amount: number) =>
-    secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
-  const accounts = paymentAccounts(
-    {
+  const doc = buildInvoiceDocument({
+    ...invoice,
+    business: {
+      name: businessName,
+      email: settings.businessEmail,
+      phone: settings.businessPhone,
+      address: settings.businessAddress,
+    },
+    client: { name: client?.name ?? "—", email: client?.email, address: client?.address },
+    gst: invoiceGst(invoice, settings.gstNumber, client?.gstZeroRated),
+    secondary,
+    remittance: {
       firstName: settings.remittanceFirstName,
       lastName: settings.remittanceLastName,
       bankName: settings.remittanceBankName,
@@ -263,10 +133,7 @@ export function InvoicePdfDocument({
       accountNumber: settings.remittanceAccountNumber,
       notes: settings.remittanceNotes,
     },
-    invoice.total,
-    secondary
-  )
-  const dueOnReceipt = invoice.dueDate === invoice.issueDate
+  })
 
   return (
     <Document
@@ -275,180 +142,109 @@ export function InvoicePdfDocument({
       subject={`Invoice ${invoice.invoiceNumber}`}
     >
       <Page size="LETTER" style={styles.page}>
-        {/* Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.businessName}>{businessName}</Text>
-            {settings.businessEmail ? (
-              <Text style={styles.businessMeta}>{settings.businessEmail}</Text>
-            ) : null}
-            {settings.businessPhone ? (
-              <Text style={styles.businessMeta}>{settings.businessPhone}</Text>
-            ) : null}
-            {settings.businessAddress ? (
-              <Text style={styles.businessMeta}>
-                {settings.businessAddress}
-              </Text>
-            ) : null}
+          <Text style={styles.businessName}>{doc.business.name}</Text>
+          {doc.business.contact ? (
+            <Text style={styles.businessMeta}>{doc.business.contact}</Text>
+          ) : null}
+          {doc.business.address ? (
+            <Text style={styles.businessMeta}>{doc.business.address}</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.amountBox} wrap={false}>
+          <Text style={styles.amount}>{doc.amount}</Text>
+          <Text style={styles.amountNote}>{doc.amountNote}</Text>
+        </View>
+
+        <View style={styles.pair} wrap={false}>
+          <View style={[styles.box, styles.half]}>
+            <Text style={styles.strong}>{doc.client.name}</Text>
+            {doc.client.lines.map((line) => (
+              <Text key={line} style={styles.muted}>{line}</Text>
+            ))}
           </View>
-          <View style={styles.headerRight}>
-            <Text style={styles.invoiceNumberBig}>
-              {invoice.invoiceNumber}
-            </Text>
-            <Text style={styles.headerTotalLabel}>Total Due</Text>
-            <Text style={styles.headerTotalValue}>
-              {money(invoice.total)}
-            </Text>
-            {secondary ? (
-              <Text style={styles.headerSecondary}>
-                or {formatWithCode(secondary.amount, secondary.currency)}
-              </Text>
-            ) : null}
-            <Text style={styles.headerDueBadge}>
-              {dueOnReceipt
-                ? "Due on receipt"
-                : `Due ${fmtDate(invoice.dueDate)}`}
-            </Text>
+          <View style={[styles.box, styles.half]}>
+            <Text style={styles.strongMono}>{doc.invoice.number}</Text>
+            {doc.invoice.lines.map((line) => (
+              <Text key={line} style={styles.muted}>{line}</Text>
+            ))}
           </View>
         </View>
 
-        {/* Bill To + dates */}
-        <View style={styles.metaRow}>
-          <View>
-            <Text style={styles.sectionLabel}>Bill To</Text>
-            <Text style={styles.clientName}>{client?.name ?? "—"}</Text>
-            {client?.email ? (
-              <Text style={styles.clientMeta}>{client.email}</Text>
-            ) : null}
-            {client?.address ? (
-              <Text style={styles.clientMeta}>{client.address}</Text>
-            ) : null}
-          </View>
-          <View style={styles.dateBlock}>
-            <Text style={styles.dateLine}>
-              <Text style={styles.dateLabel}>Issued: </Text>
-              {fmtDate(invoice.issueDate)}
-            </Text>
-            {dueOnReceipt ? (
-              <Text style={styles.dateLine}>
-                <Text style={styles.dateLabel}>Due on receipt</Text>
-              </Text>
-            ) : (
-              <Text style={styles.dateLine}>
-                <Text style={styles.dateLabel}>Due: </Text>
-                {fmtDate(invoice.dueDate)}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* Line items */}
-        <View style={styles.table}>
-          <View style={styles.tableHeader}>
-            <Text style={[styles.th, styles.colDesc]}>Description</Text>
-            <Text style={[styles.th, styles.colNum]}>Qty</Text>
-            <Text style={[styles.th, styles.colNum]}>Rate</Text>
-            <Text style={[styles.th, styles.colNum]}>Amount</Text>
-          </View>
-          {invoice.lineItems.map((item) => (
-            <View style={styles.tableRow} key={item.id} wrap={false}>
-              <Text style={[styles.td, styles.colDesc]}>
-                {item.description}
-              </Text>
-              <Text style={[styles.td, styles.colNum, styles.mono]}>
-                {item.quantity}
-              </Text>
-              <Text style={[styles.td, styles.colNum, styles.mono]}>
-                {formatCurrency(item.unitPrice)}
-              </Text>
-              <Text
-                style={[styles.td, styles.colNum, styles.mono, styles.bold]}
+        {doc.items.length ? (
+          <View style={[styles.box, { paddingVertical: 4 }]}>
+            {doc.items.map((item, index) => (
+              <View
+                key={index}
+                style={index ? [styles.item, styles.itemRule] : styles.item}
+                wrap={false}
               >
-                {formatCurrency(item.amount)}
-              </Text>
+                <View style={styles.itemText}>
+                  <Text>{item.description}</Text>
+                  {item.detail ? <Text style={styles.itemDetail}>{item.detail}</Text> : null}
+                </View>
+                <Text style={styles.mono}>{item.amount}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.box} wrap={false}>
+          {doc.totals.map((row) => (
+            <View key={row.label} style={styles.row}>
+              <Text style={styles.rowLabel}>{row.label}</Text>
+              <Text style={styles.mono}>{row.value}</Text>
             </View>
           ))}
-        </View>
-
-        {/* Totals */}
-        <View style={styles.totals}>
-          <View style={styles.totalsRow}>
-            <Text style={styles.totalsLabel}>Subtotal</Text>
-            <Text style={styles.totalsValue}>
-              {money(invoice.subtotal)}
-            </Text>
+          <View style={styles.totalRow}>
+            <Text style={styles.totalText}>{doc.total.label}</Text>
+            <Text style={styles.totalValue}>{doc.total.value}</Text>
           </View>
-          <View style={styles.totalsRow}>
-            <Text style={styles.totalsLabel}>Tax</Text>
-            <Text style={styles.totalsValue}>
-              {money(invoice.tax)}
-            </Text>
-          </View>
-          <View style={styles.grandTotalRow}>
-            <Text style={styles.grandTotalLabel}>Total</Text>
-            <Text style={styles.grandTotalValue}>
-              {money(invoice.total)}
-            </Text>
-          </View>
-          {secondary ? (
+          {doc.converted ? (
             <>
-              <View style={styles.secondaryTotalRow}>
-                <Text style={styles.totalsLabel}>
-                  Total in {secondary.currency}
-                </Text>
-                <Text style={styles.secondaryTotalValue}>
-                  {formatWithCode(secondary.amount, secondary.currency)}
-                </Text>
+              <View style={[styles.row, { marginTop: 3 }]}>
+                <Text style={styles.rowLabel}>{doc.converted.label}</Text>
+                <Text style={{ fontFamily: "Courier-Bold" }}>{doc.converted.value}</Text>
               </View>
-              <Text style={styles.rateNote}>{rateNote(secondary)}</Text>
+              <Text style={styles.rateNote}>{doc.converted.note}</Text>
             </>
           ) : null}
         </View>
 
-        {/* Notes */}
-        {invoice.notes ? (
-          <View style={styles.notes}>
-            <Text style={styles.notesLabel}>Notes</Text>
-            <Text style={styles.notesBody}>{invoice.notes}</Text>
+        {doc.notes ? (
+          <View style={styles.box}>
+            <Text style={styles.notes}>{doc.notes}</Text>
           </View>
         ) : null}
 
-        {/* Remittance */}
-        {accounts.length ? (
-          <View style={styles.remittance} wrap={false}>
-            <Text style={styles.remittanceLabel}>
-              {accounts.length > 1 ? "Payment Options" : "Remittance Information"}
-            </Text>
-            <View style={styles.remittanceAccounts}>
-              {accounts.map((account) => (
-                <View style={styles.remittanceAccount} key={account.heading}>
-                  {account.heading ? (
-                    <View style={styles.remittanceHeading}>
-                      <Text>{account.heading}</Text>
-                      <Text style={styles.mono}>{account.amount}</Text>
-                    </View>
-                  ) : null}
-                  {account.lines.map((line) => (
-                    <Text style={styles.remittanceLine} key={line.label}>
-                      <Text style={styles.remittanceMuted}>{line.label}: </Text>
-                      {line.mono ? (
-                        <Text style={styles.mono}>{line.value}</Text>
-                      ) : (
-                        line.value
-                      )}
+        {doc.accounts.length ? (
+          <View style={styles.pair} wrap={false}>
+            {doc.accounts.map((account, index) => (
+              <View key={account.heading || index} style={[styles.box, styles.half]}>
+                {account.heading ? (
+                  <View style={styles.accountHeading}>
+                    <Text style={styles.strong}>{account.heading}</Text>
+                    <Text style={styles.strongMono}>{account.amount}</Text>
+                  </View>
+                ) : null}
+                {account.lines.map((line) => (
+                  <View key={line.label} style={styles.accountLine}>
+                    <Text style={[styles.accountLabel, { width: labelWidth(account.lines) }]}>
+                      {line.label}
                     </Text>
-                  ))}
-                  {account.notes ? (
-                    <Text style={styles.remittanceNotes}>{account.notes}</Text>
-                  ) : null}
-                </View>
-              ))}
-            </View>
+                    <Text style={line.mono ? [styles.accountValue, styles.mono] : styles.accountValue}>
+                      {line.value}
+                    </Text>
+                  </View>
+                ))}
+                {account.notes ? (
+                  <Text style={styles.accountNotes}>{account.notes}</Text>
+                ) : null}
+              </View>
+            ))}
           </View>
         ) : null}
-
-        {/* Footer */}
-        <Text style={styles.footer}>Generated by {businessName}</Text>
       </Page>
     </Document>
   )
