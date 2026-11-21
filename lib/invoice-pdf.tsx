@@ -91,10 +91,16 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   accountLine: { flexDirection: "row", marginTop: 2 },
-  accountLabel: { width: 92, paddingRight: 8, fontSize: 9, color: COLORS.gray500 },
+  accountLabel: { paddingRight: 8, fontSize: 9, color: COLORS.gray500 },
   accountValue: { flex: 1, fontSize: 9 },
   accountNotes: { marginTop: 5, fontSize: 8, color: COLORS.gray500 },
 })
+
+/** Room for the longest label in an account, like the preview's max-content column. */
+function labelWidth(lines: Array<{ label: string }>): number {
+  const longest = Math.max(0, ...lines.map((line) => line.label.length))
+  return Math.min(110, longest * 4.8 + 10)
+}
 
 export function InvoicePdfDocument({
   invoice,
@@ -224,7 +230,9 @@ export function InvoicePdfDocument({
                 ) : null}
                 {account.lines.map((line) => (
                   <View key={line.label} style={styles.accountLine}>
-                    <Text style={styles.accountLabel}>{line.label}</Text>
+                    <Text style={[styles.accountLabel, { width: labelWidth(account.lines) }]}>
+                      {line.label}
+                    </Text>
                     <Text style={line.mono ? [styles.accountValue, styles.mono] : styles.accountValue}>
                       {line.value}
                     </Text>
