@@ -103,6 +103,7 @@ import {
   type FxLock,
 } from "@/lib/invoice-currency"
 import { fetchQuote, useExchangeRate } from "@/lib/use-exchange-rate"
+import { gstNumberLine, gstTaxLine, invoiceGst, liveGst, type GstLock } from "@/lib/invoice-gst"
 import { cn } from "@/lib/utils"
 import type { Client, Invoice, InvoiceLineItem, Settings, TimeEntry, Expense } from "@/lib/types"
 
@@ -469,6 +470,15 @@ export default function InvoicesPage() {
     return toFxLock(currency, await fetchQuote(INVOICE_CURRENCY, currency))
   }
 
+  /** Issuing a draft saves the GST details it prints, so they never change after it is sent. */
+  function issueGstLock(
+    invoice: Invoice,
+    nextStatus: Invoice["status"]
+  ): Partial<GstLock> {
+    if (invoice.status !== "draft" || nextStatus === "draft") return {}
+    return liveGst(data.settings.gstNumber, getClient(invoice.clientId)?.gstZeroRated)
+  }
+
   function clearItemsError() {
     setCreateErrors((current) => (current.items ? { ...current, items: undefined } : current))
   }
@@ -616,6 +626,7 @@ export default function InvoicesPage() {
     }
     const updates: Partial<Invoice> = {
       ...fxLock,
+      ...(original ? issueGstLock(original, editInvoice.status) : {}),
       status: editInvoice.status,
       notes: editNotes,
       tax: taxAmount,
@@ -663,7 +674,8 @@ export default function InvoicesPage() {
         throw new Error(body.error || "Failed to send")
       }
       const fx = (body.fx ?? null) as FxLock | null
-      await updateInvoice(invoice.id, { status: "sent", ...(fx ?? {}) })
+      const gst = (body.gst ?? null) as GstLock | null
+      await updateInvoice(invoice.id, { status: "sent", ...(fx ?? {}), ...(gst ?? {}) })
       toast.success(
         `${invoice.status === "sent" ? "Invoice reissued" : "Invoice sent"} to ${email}`
       )
@@ -720,7 +732,11 @@ export default function InvoicesPage() {
       toast.error(err instanceof Error ? err.message : "Couldn't get the exchange rate")
       return
     }
-    await updateInvoice(id, { status, ...fxLock })
+    await updateInvoice(id, {
+      status,
+      ...fxLock,
+      ...(invoice ? issueGstLock(invoice, status) : {}),
+    })
     toast.success(`Status updated to ${status}`)
   }
 
@@ -1535,6 +1551,9 @@ function InvoicePreview({
   )
   const money = (amount: number) =>
     secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
+  const gst = invoiceGst(invoice, settings.gstNumber, client?.gstZeroRated)
+  const gstNumber = gstNumberLine(gst)
+  const taxLine = gstTaxLine(gst, invoice.tax)
   const accounts = paymentAccounts(
     {
       firstName: settings.remittanceFirstName,
@@ -1594,6 +1613,9 @@ function InvoicePreview({
               <p className="mt-1 text-sm whitespace-pre-line text-gray-500">
                 {settings.businessAddress}
               </p>
+            )}
+            {gstNumber && (
+              <p className="mt-1 text-sm text-gray-500">{gstNumber}</p>
             )}
           </div>
           <div className="sm:text-right">
@@ -1694,8 +1716,8 @@ function InvoicePreview({
             <span className="text-gray-500">Subtotal</span>
             <span className="font-mono">{money(invoice.subtotal)}</span>
           </div>
-          <div className="flex justify-between py-2 text-sm">
-            <span className="text-gray-500">Tax</span>
+          <div className="flex justify-between gap-3 py-2 text-sm">
+            <span className="text-gray-500">{taxLine.label}</span>
             <span className="font-mono">{money(invoice.tax)}</span>
           </div>
           <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
@@ -1704,6 +1726,9 @@ function InvoicePreview({
           </div>
           {secondary && <SecondaryTotalRow secondary={secondary} />}
         </div>
+        {taxLine.note && (
+          <p className="mt-3 text-xs text-gray-500 sm:text-right">{taxLine.note}</p>
+        )}
 
         {invoice.notes && (
           <div className="mt-8 rounded-md bg-gray-50 p-4">

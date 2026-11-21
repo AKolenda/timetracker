@@ -18,6 +18,7 @@ import {
   rateNote,
   type SecondaryTotal,
 } from "./invoice-currency"
+import { gstNumberLine, gstTaxLine, invoiceGst } from "./invoice-gst"
 import type { Client, Invoice, Settings } from "./types"
 
 // Tailwind gray palette → hex, matching the on-screen InvoicePreview
@@ -177,6 +178,12 @@ const styles = StyleSheet.create({
     color: COLORS.gray400,
     textAlign: "right",
   },
+  taxNote: {
+    marginTop: 8,
+    fontSize: 8,
+    color: COLORS.gray500,
+    textAlign: "right",
+  },
 
   // Notes
   notes: {
@@ -267,6 +274,9 @@ export function InvoicePdfDocument({
     secondary
   )
   const dueOnReceipt = invoice.dueDate === invoice.issueDate
+  const gst = invoiceGst(invoice, settings.gstNumber, client?.gstZeroRated)
+  const gstNumber = gstNumberLine(gst)
+  const taxLine = gstTaxLine(gst, invoice.tax)
 
   return (
     <Document
@@ -289,6 +299,9 @@ export function InvoicePdfDocument({
               <Text style={styles.businessMeta}>
                 {settings.businessAddress}
               </Text>
+            ) : null}
+            {gstNumber ? (
+              <Text style={styles.businessMeta}>{gstNumber}</Text>
             ) : null}
           </View>
           <View style={styles.headerRight}>
@@ -379,7 +392,7 @@ export function InvoicePdfDocument({
             </Text>
           </View>
           <View style={styles.totalsRow}>
-            <Text style={styles.totalsLabel}>Tax</Text>
+            <Text style={styles.totalsLabel}>{taxLine.label}</Text>
             <Text style={styles.totalsValue}>
               {money(invoice.tax)}
             </Text>
@@ -404,6 +417,9 @@ export function InvoicePdfDocument({
             </>
           ) : null}
         </View>
+        {taxLine.note ? (
+          <Text style={styles.taxNote}>{taxLine.note}</Text>
+        ) : null}
 
         {/* Notes */}
         {invoice.notes ? (

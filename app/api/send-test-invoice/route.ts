@@ -3,6 +3,7 @@ import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
 import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
 import { fetchExchangeRate } from "@/lib/exchange-rate"
+import { invoiceGst } from "@/lib/invoice-gst"
 import {
   INVOICE_CURRENCY,
   parseSecondaryRemittance,
@@ -119,6 +120,8 @@ export async function POST(request: Request) {
       name: "Test Recipient",
       email: to,
     },
+    // Shows GST the way a non-resident client sees it.
+    gst: invoiceGst({ status: "draft" }, settings?.gst_number, true),
     business: {
       name: businessName,
       email: businessEmail,

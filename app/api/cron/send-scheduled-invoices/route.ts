@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase"
 import { groupTimeLines, timeLineItem } from "@/lib/invoice-lines"
 import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
 import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
+import { invoiceGst, liveGst } from "@/lib/invoice-gst"
 import {
   INVOICE_CURRENCY,
   parseSecondaryRemittance,
@@ -278,6 +279,8 @@ export async function POST(request: Request) {
       .update({ next_invoice_number: (settings?.next_invoice_number ?? 1) + 1 })
       .eq("id", "default")
 
+    const gstLock = liveGst(settings?.gst_number, client.gst_zero_rated)
+
     if (!client.invoice_schedule_auto_send) {
       results.push({
         clientId: client.id,
@@ -302,7 +305,8 @@ export async function POST(request: Request) {
         unitPrice: i.unit_price,
         amount: i.amount,
       })),
-      client: { name: client.name, email: recipient },
+      client: { name: client.name, email: recipient, address: client.address ?? "" },
+      gst: invoiceGst({ status: "draft" }, gstLock.gstNumber, gstLock.gstZeroRated),
       business: {
         name: businessName,
         email: settings?.business_email ?? "",
@@ -348,6 +352,8 @@ export async function POST(request: Request) {
                 fx_rate_date: fxLock.fxRateDate,
               }
             : {}),
+          gst_number: gstLock.gstNumber,
+          gst_zero_rated: gstLock.gstZeroRated,
         })
         .eq("id", createdInv.id)
 

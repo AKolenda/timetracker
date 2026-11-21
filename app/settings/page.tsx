@@ -57,6 +57,7 @@ import {
   type Settings,
 } from "@/lib/types"
 import { getBrowserTimezone, listTimezones } from "@/lib/datetime"
+import { gstNumberLine, gstTaxLine, invoiceGst } from "@/lib/invoice-gst"
 import {
   parseWeekendSendRule,
   WEEKEND_SEND_RULE_LABELS,
@@ -78,6 +79,7 @@ function generalFields(s: Settings) {
     businessEmail: s.businessEmail,
     businessPhone: s.businessPhone,
     businessAddress: s.businessAddress,
+    gstNumber: s.gstNumber,
     remittanceFirstName: s.remittanceFirstName,
     remittanceLastName: s.remittanceLastName,
     remittanceBankName: s.remittanceBankName,
@@ -306,6 +308,10 @@ export default function SettingsPage() {
     secondaryForm,
     sampleQuote
   )
+  // The sample shows GST the way a non-resident client sees it.
+  const sampleGst = invoiceGst({ status: "draft" }, form.gstNumber, true)
+  const sampleGstNumber = gstNumberLine(sampleGst)
+  const sampleTaxLine = gstTaxLine(sampleGst, 0)
   const sampleMoney = (amount: number) =>
     sampleSecondary
       ? formatWithCode(amount, INVOICE_CURRENCY)
@@ -464,6 +470,20 @@ export default function SettingsPage() {
                 placeholder="123 Main St&#10;City, State ZIP"
                 rows={3}
               />
+            </div>
+            <div className="grid gap-2 sm:max-w-xs">
+              <Label htmlFor="biz-gst">GST/HST number</Label>
+              <Input
+                id="biz-gst"
+                value={form.gstNumber}
+                onChange={(e) => setForm({ ...form, gstNumber: e.target.value })}
+                placeholder="123456789 RT0001"
+                aria-describedby="biz-gst-help"
+                className="font-mono"
+              />
+              <p id="biz-gst-help" className="text-xs text-muted-foreground">
+                Printed on invoices issued from now on. Leave empty if you aren&apos;t registered.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -1286,6 +1306,9 @@ export default function SettingsPage() {
                   {form.businessAddress}
                 </p>
               )}
+              {sampleGstNumber && (
+                <p className="mt-1 text-sm text-gray-500">{sampleGstNumber}</p>
+              )}
             </div>
 
             <div className="mt-8 flex justify-between">
@@ -1379,8 +1402,8 @@ export default function SettingsPage() {
                 <span className="text-gray-500">Subtotal</span>
                 <span className="font-mono">{sampleMoney(1289.99)}</span>
               </div>
-              <div className="flex justify-between py-2 text-sm">
-                <span className="text-gray-500">Tax</span>
+              <div className="flex justify-between gap-3 py-2 text-sm">
+                <span className="text-gray-500">{sampleTaxLine.label}</span>
                 <span className="font-mono">{sampleMoney(0)}</span>
               </div>
               <div className="flex justify-between border-t-2 border-black py-3 text-lg font-bold">
@@ -1391,6 +1414,9 @@ export default function SettingsPage() {
                 <SecondaryTotalRow secondary={sampleSecondary} />
               )}
             </div>
+            {sampleTaxLine.note && (
+              <p className="mt-3 text-right text-xs text-gray-500">{sampleTaxLine.note}</p>
+            )}
 
             <PaymentOptions accounts={sampleAccounts} />
 

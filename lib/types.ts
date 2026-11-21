@@ -16,6 +16,8 @@ export interface Client {
   lastInvoiceSent: string | null
   /** Show the secondary payment account and converted total on this client's invoices. */
   showSecondaryCurrency?: boolean
+  /** Outside Canada: invoices show GST as zero-rated. */
+  gstZeroRated?: boolean
   createdAt: string
 }
 
@@ -76,6 +78,8 @@ export interface Settings {
   businessEmail: string
   businessPhone: string
   businessAddress: string
+  /** GST/HST registration number printed on invoices; empty when not registered. */
+  gstNumber: string
   remittanceFirstName: string
   remittanceLastName: string
   remittanceBankName: string
@@ -122,6 +126,9 @@ export interface Invoice {
   fxCurrency?: string | null
   fxRate?: number | null
   fxRateDate?: string | null
+  /** GST details saved when the invoice is issued; drafts follow settings and the client. */
+  gstNumber?: string | null
+  gstZeroRated?: boolean
   createdAt: string
 }
 
@@ -174,6 +181,7 @@ export const defaultSettings: Settings = {
   businessEmail: "",
   businessPhone: "",
   businessAddress: "",
+  gstNumber: "",
   remittanceFirstName: "",
   remittanceLastName: "",
   remittanceBankName: "",

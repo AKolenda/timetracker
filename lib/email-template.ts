@@ -6,6 +6,7 @@ import {
   rateNote,
   type SecondaryTotal,
 } from "./invoice-currency"
+import { gstNumberLine, gstTaxLine, type InvoiceGst } from "./invoice-gst"
 
 export interface EmailLineItem {
   description: string
@@ -26,7 +27,10 @@ export interface EmailInvoiceData {
   client: {
     name: string
     email: string
+    address?: string
   }
+  /** GST registration and treatment printed on the invoice; null before registration. */
+  gst?: InvoiceGst | null
   business: {
     name: string
     email: string
@@ -124,6 +128,8 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
     .join("")
 
   const secondary = data.secondary ?? null
+  const gstNumber = gstNumberLine(data.gst ?? null)
+  const taxLine = gstTaxLine(data.gst ?? null, data.tax)
   const money = (amount: number) =>
     secondary ? formatWithCode(amount, INVOICE_CURRENCY) : formatCurrency(amount)
 
@@ -171,6 +177,7 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
         <h1 style="margin:0;font-size:20px;color:${accent};">${escapeHtml(data.business.name)}</h1>
         ${data.business.email ? `<p style="margin:4px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(data.business.email)}</p>` : ""}
         ${data.business.phone ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(data.business.phone)}</p>` : ""}
+        ${gstNumber ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(gstNumber)}</p>` : ""}
       </div>
 
       ${greetingHtml}
@@ -182,6 +189,7 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
               <p style="margin:0;font-size:12px;color:#6b7280;">Bill To</p>
               <p style="margin:4px 0 0;font-size:15px;font-weight:600;">${escapeHtml(data.client.name)}</p>
               ${data.client.email ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeHtml(data.client.email)}</p>` : ""}
+              ${data.client.address ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${nl2br(data.client.address)}</p>` : ""}
             </td>
             <td style="vertical-align:top;text-align:right;">
               <p style="margin:0;font-size:24px;font-weight:700;font-family:monospace;color:${accent};">${escapeHtml(data.invoiceNumber)}</p>
@@ -213,7 +221,7 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
             <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.subtotal)}</td>
           </tr>
           <tr>
-            <td style="padding:4px 0;font-size:14px;color:#6b7280;">Tax</td>
+            <td style="padding:4px 0;font-size:14px;color:#6b7280;">${escapeHtml(taxLine.label)}</td>
             <td style="padding:4px 0;font-size:14px;text-align:right;font-family:monospace;">${money(data.tax)}</td>
           </tr>
           <tr style="border-top:2px solid ${accent};">
@@ -222,6 +230,7 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
           </tr>${secondaryTotalHtml}
         </table>
       </div>
+      ${taxLine.note ? `<p style="margin:12px 0 0;font-size:12px;color:#6b7280;text-align:right;">${escapeHtml(taxLine.note)}</p>` : ""}
 
       ${data.notes ? `<div style="margin-top:24px;padding:12px;background:#f9fafb;border-radius:6px;"><p style="margin:0;font-size:13px;color:#374151;white-space:pre-line;">${escapeHtml(data.notes)}</p></div>` : ""}
 

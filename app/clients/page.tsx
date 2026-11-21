@@ -75,6 +75,8 @@ const emptyForm = {
   invoiceScheduleAnchor: "" as string,
   invoiceScheduleAutoSend: true,
   showSecondaryCurrency: false,
+  // Clients so far are all outside Canada.
+  gstZeroRated: true,
 }
 
 export default function ClientsPage() {
@@ -210,6 +212,7 @@ export default function ClientsPage() {
       invoiceScheduleAnchor: client.invoiceScheduleAnchor ?? "",
       invoiceScheduleAutoSend: client.invoiceScheduleAutoSend ?? true,
       showSecondaryCurrency: client.showSecondaryCurrency ?? false,
+      gstZeroRated: client.gstZeroRated ?? false,
     })
     setNameError(null)
     setDialogOpen(true)
@@ -235,6 +238,7 @@ export default function ClientsPage() {
       invoiceScheduleEnabled: form.invoiceScheduleEnabled,
       invoiceScheduleAutoSend: form.invoiceScheduleAutoSend,
       lastInvoiceSent: null as string | null,
+      gstZeroRated: form.gstZeroRated,
       // Sent only when it changes, so saving other client fields never depends on it.
       ...(form.showSecondaryCurrency !== (editing?.showSecondaryCurrency ?? false)
         ? { showSecondaryCurrency: form.showSecondaryCurrency }
@@ -821,6 +825,22 @@ export default function ClientsPage() {
                   {secondaryCurrency
                     ? `Invoices stay in ${INVOICE_CURRENCY} and also show the ${secondaryCurrency} total at the rate on the day they're sent, with your ${secondaryCurrency} account.`
                     : "Add a second account under Settings → Remittance Information first."}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 rounded-md border p-3">
+              <Checkbox
+                id="gst-zero-rated"
+                checked={form.gstZeroRated}
+                onCheckedChange={(v) => setForm({ ...form, gstZeroRated: !!v })}
+                className="mt-0.5"
+              />
+              <div className="grid gap-0.5">
+                <Label htmlFor="gst-zero-rated" className="text-sm font-medium">
+                  Outside Canada (GST zero-rated)
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Invoices show GST (Canada) at 0% with the zero-rating reason. Put their full address, including the country, above.
                 </p>
               </div>
             </div>
