@@ -2,7 +2,13 @@ import { NextResponse } from "next/server"
 import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
 import { groupTimeLines, timeLineItem } from "@/lib/invoice-lines"
-import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
+import {
+  buildEmailHtml,
+  buildEmailText,
+  buildSubject,
+  replyToHeader,
+  type EmailInvoiceData,
+} from "@/lib/email-template"
 import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
 import { invoiceGst, liveGst } from "@/lib/invoice-gst"
 import {
@@ -339,6 +345,8 @@ export async function POST(request: Request) {
         to: recipient,
         subject: buildSubject(emailData),
         html: buildEmailHtml(emailData),
+        text: buildEmailText(emailData),
+        ...replyToHeader(settings?.email_reply_to),
       })
       if (sendErr) throw new Error(sendErr.message)
 

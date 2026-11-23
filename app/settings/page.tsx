@@ -104,6 +104,7 @@ function emailFormatFields(s: Settings) {
     emailSignature: s.emailSignature,
     emailAccentColor: s.emailAccentColor,
     emailFromAddress: s.emailFromAddress,
+    emailReplyTo: s.emailReplyTo,
   }
 }
 
@@ -185,6 +186,7 @@ export default function SettingsPage() {
             form.emailFromAddress ||
             form.businessEmail ||
             "invoices@resend.dev",
+          replyTo: form.emailReplyTo,
           template: {
             subject: form.emailSubject,
             greeting: form.emailGreeting,
@@ -1112,6 +1114,23 @@ export default function SettingsPage() {
               <p className="text-xs text-muted-foreground">
                 Must be on a domain you&apos;ve verified in Resend. Falls back
                 to your business email.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="email-reply-to">Reply-to address</Label>
+              <Input
+                id="email-reply-to"
+                type="email"
+                value={form.emailReplyTo}
+                onChange={(e) =>
+                  setForm({ ...form, emailReplyTo: e.target.value })
+                }
+                placeholder="you@example.com"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Where client replies go. Leave empty to have replies go to the
+                From address.
               </p>
             </div>
             <div className="grid gap-2">
