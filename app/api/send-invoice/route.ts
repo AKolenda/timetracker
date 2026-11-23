@@ -3,7 +3,9 @@ import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
 import {
   buildEmailHtml,
+  buildEmailText,
   buildSubject,
+  replyToHeader,
   type EmailInvoiceData,
 } from "@/lib/email-template"
 import { fetchExchangeRate, rateErrorMessage } from "@/lib/exchange-rate"
@@ -209,6 +211,8 @@ export async function POST(request: Request) {
       to: recipientEmail,
       subject,
       html,
+      text: buildEmailText(data),
+      ...replyToHeader(settings?.email_reply_to),
     })
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })

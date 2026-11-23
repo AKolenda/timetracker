@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server"
 import { Resend } from "resend"
 import { supabase } from "@/lib/supabase"
-import { buildEmailHtml, buildSubject, type EmailInvoiceData } from "@/lib/email-template"
+import {
+  buildEmailHtml,
+  buildEmailText,
+  buildSubject,
+  replyToHeader,
+  type EmailInvoiceData,
+} from "@/lib/email-template"
 import { fetchExchangeRate } from "@/lib/exchange-rate"
 import { invoiceGst } from "@/lib/invoice-gst"
 import {
@@ -13,6 +19,7 @@ import {
 interface TestEmailBody {
   to?: string
   from?: string
+  replyTo?: string
   template?: {
     subject?: string
     greeting?: string
@@ -157,6 +164,8 @@ export async function POST(request: Request) {
       to,
       subject: `[TEST] ${subject}`,
       html,
+      text: buildEmailText(data),
+      ...replyToHeader(body.replyTo ?? settings?.email_reply_to),
     })
     if (error) {
       return NextResponse.json(

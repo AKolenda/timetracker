@@ -110,6 +110,7 @@ function rowToSettings(row: Record<string, unknown>): Settings {
     emailSignature: (row.email_signature as string) ?? "",
     emailAccentColor: (row.email_accent_color as string) ?? "#111827",
     emailFromAddress: (row.email_from_address as string) ?? "",
+    emailReplyTo: (row.email_reply_to as string) ?? "",
     timezone: (row.timezone as string) ?? "",
     defaultInvoiceDueDays: Number(row.default_invoice_due_days ?? 30),
     invoiceWeekendRule: parseWeekendSendRule(row.invoice_weekend_rule),
@@ -475,6 +476,8 @@ export class SupabaseProvider implements DataProvider {
       row.email_accent_color = updates.emailAccentColor
     if (updates.emailFromAddress !== undefined)
       row.email_from_address = updates.emailFromAddress
+    if (updates.emailReplyTo !== undefined)
+      row.email_reply_to = updates.emailReplyTo
     if (updates.timezone !== undefined) row.timezone = updates.timezone
     if (updates.defaultInvoiceDueDays !== undefined)
       row.default_invoice_due_days = updates.defaultInvoiceDueDays

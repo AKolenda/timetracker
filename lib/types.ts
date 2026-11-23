@@ -96,6 +96,8 @@ export interface Settings {
   emailSignature: string
   emailAccentColor: string
   emailFromAddress: string
+  /** Where client replies to invoice emails go; empty sends no Reply-To. */
+  emailReplyTo: string
   timezone: string
   defaultInvoiceDueDays: number
   /** Where a scheduled invoice email that lands on a weekend goes instead. */
@@ -198,6 +200,7 @@ export const defaultSettings: Settings = {
   emailSignature: "Thanks,\n{{businessName}}",
   emailAccentColor: "#111827",
   emailFromAddress: "",
+  emailReplyTo: "",
   timezone: "",
   defaultInvoiceDueDays: 30,
   invoiceWeekendRule: "monday",

@@ -71,6 +71,12 @@ function nl2br(s: string): string {
   return escapeHtml(s).replace(/\n/g, "<br/>")
 }
 
+/** The Reply-To for a send, or nothing when no valid address is set. */
+export function replyToHeader(address: unknown): { replyTo?: string } {
+  const value = typeof address === "string" ? address.trim() : ""
+  return /^[^\s@,/]+@[^\s@,/]+\.[^\s@,/]+$/.test(value) ? { replyTo: value } : {}
+}
+
 export function buildSubject(data: EmailInvoiceData): string {
   const fallback = `Invoice ${data.invoiceNumber} from ${data.business.name}`
   const tpl = data.template.subject?.trim() || fallback
@@ -110,6 +116,62 @@ function isLightColor(color: string): boolean {
   return 0.299 * r + 0.587 * g + 0.114 * b > 150
 }
 
+/** The filled-in greeting and signature, and the invoice laid out for display. */
+function emailParts(data: EmailInvoiceData) {
+  const vars = {
+    invoiceNumber: data.invoiceNumber,
+    businessName: data.business.name,
+    clientName: data.client.name,
+    total: formatCurrency(data.total),
+    dueDate: data.dueDate === data.issueDate ? "Due on receipt" : data.dueDate,
+  }
+  const fill = (template: string | undefined) =>
+    template?.trim() ? applyEmailTemplateVariables(template, vars) : ""
+  return {
+    greeting: fill(data.template.greeting),
+    signature: fill(data.template.signature),
+    doc: buildInvoiceDocument({
+      ...data,
+      gst: data.gst ?? null,
+      secondary: data.secondary ?? null,
+      remittance: data.remittance ?? {},
+    }),
+  }
+}
+
+/** The plain-text alternative sent with every invoice email; spam filters distrust HTML-only mail. */
+export function buildEmailText(data: EmailInvoiceData): string {
+  const { greeting, signature, doc } = emailParts(data)
+  const pair = (label: string, value: string) => `${label}: ${value}`
+  const sections = [
+    greeting,
+    [doc.business.name, doc.business.contact, doc.business.address].filter(Boolean).join("\n"),
+    [`${doc.amount}`, doc.amountNote].join("\n"),
+    [doc.client.name, ...doc.client.lines].join("\n"),
+    [doc.invoice.number, ...doc.invoice.lines].join("\n"),
+    doc.items
+      .map((item) => `${item.description}${item.detail ? ` (${item.detail})` : ""}: ${item.amount}`)
+      .join("\n"),
+    [
+      ...doc.totals.map((r) => pair(r.label, r.value)),
+      pair(doc.total.label, doc.total.value),
+      ...(doc.converted ? [pair(doc.converted.label, doc.converted.value), doc.converted.note] : []),
+    ].join("\n"),
+    doc.notes,
+    ...doc.accounts.map((account) =>
+      [
+        account.heading ? `${account.heading}: ${account.amount}` : "",
+        ...account.lines.map((l) => pair(l.label, l.value)),
+        account.notes,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    ),
+    signature,
+  ]
+  return sections.filter((section) => section.trim()).join("\n\n") + "\n"
+}
+
 export function buildEmailHtml(data: EmailInvoiceData): string {
   const accent = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(data.template.accentColor?.trim() ?? "")
     ? data.template.accentColor.trim()
@@ -118,32 +180,15 @@ export function buildEmailHtml(data: EmailInvoiceData): string {
   const light = isLightColor(accent)
   const amountColor = light ? "#000000" : "#ffffff"
   const amountNoteColor = light ? "#374151" : "#d1d5db"
-  const dueLabel =
-    data.dueDate === data.issueDate ? "Due on receipt" : data.dueDate
-  const vars = {
-    invoiceNumber: data.invoiceNumber,
-    businessName: data.business.name,
-    clientName: data.client.name,
-    total: formatCurrency(data.total),
-    dueDate: dueLabel,
-  }
+  const { greeting, signature, doc } = emailParts(data)
 
-  const greetingHtml = data.template.greeting?.trim()
-    ? `<div style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.greeting, vars))}</div>`
+  const greetingHtml = greeting
+    ? `<div style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#374151;">${nl2br(greeting)}</div>`
     : ""
 
-  const signatureHtml = data.template.signature?.trim()
-    ? `<div style="margin-top:20px;font-size:13px;line-height:1.6;color:#374151;">${nl2br(applyEmailTemplateVariables(data.template.signature, vars))}</div>`
+  const signatureHtml = signature
+    ? `<div style="margin-top:20px;font-size:13px;line-height:1.6;color:#374151;">${nl2br(signature)}</div>`
     : ""
-
-  const doc = buildInvoiceDocument({
-    ...data,
-    business: data.business,
-    client: data.client,
-    gst: data.gst ?? null,
-    secondary: data.secondary ?? null,
-    remittance: data.remittance ?? {},
-  })
 
   const line = (text: string, style = "") =>
     `<p style="margin:2px 0 0;font-size:13px;${MUTED}${style}">${nl2br(text)}</p>`
