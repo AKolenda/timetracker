@@ -186,3 +186,19 @@ alter table public.settings add column if not exists gst_number text not null de
 alter table public.clients add column if not exists gst_zero_rated boolean not null default false;
 alter table public.invoices add column if not exists gst_number text;
 alter table public.invoices add column if not exists gst_zero_rated boolean not null default false;
+
+-- 019: Refuse a second copy of a saved entry (same project, start and end).
+create or replace function public.reject_duplicate_time_entry() returns trigger language plpgsql set search_path = public as $$
+begin
+  if new.end_time is null then return new; end if;
+  perform pg_advisory_xact_lock(hashtext('time_entries:' || new.project_id));
+  if exists (select 1 from public.time_entries where project_id = new.project_id and start_time = new.start_time and end_time = new.end_time) then
+    raise exception 'This time is already saved' using errcode = '23505';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists reject_duplicate_time_entry on public.time_entries;
+create trigger reject_duplicate_time_entry before insert on public.time_entries
+  for each row execute function public.reject_duplicate_time_entry();

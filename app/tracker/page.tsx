@@ -420,6 +420,7 @@ export default function TrackerPage() {
     syncAgentTimeTitles,
     deleteTimeEntry,
     addTimeEntry,
+    refresh,
     updateProject,
     getClient,
     getProject,
@@ -824,6 +825,7 @@ export default function TrackerPage() {
     importInFlight.current = true
     setImporting(true)
     let seconds = 0
+    let alreadySaved = false
     try {
       for (const entry of entries) {
         const current = latestData.current
@@ -844,7 +846,12 @@ export default function TrackerPage() {
             endTime: new Date(gap.end).toISOString(),
             duration,
             date: localDateString(new Date(gap.start), current.settings.timezone),
+          }).catch((error: unknown) => {
+            // Another tab already approved this block; the database refuses a second copy.
+            if ((error as { code?: string } | null)?.code === "23505") return null
+            throw error
           })
+          if (!saved) { alreadySaved = true; continue }
           importedEntries.current.push(saved)
           seconds += duration
         }
@@ -856,6 +863,8 @@ export default function TrackerPage() {
       toast.error("Import could not finish. Any entries already saved are protected from re-import; retry the remaining drafts.")
       return false
     } finally {
+      // Load what the other tab saved, so those drafts stop showing as pending here.
+      if (alreadySaved) await refresh()
       importInFlight.current = false
       setImporting(false)
     }
